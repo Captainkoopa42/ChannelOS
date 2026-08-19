@@ -5,7 +5,13 @@ from datetime import datetime
 from pathlib import Path
 
 from .playback import PlaybackBackend
-from .runtime import ChannelRuntimeError, TelevisionRuntime, TuneDecision
+from .runtime import (
+    ChannelRuntimeError,
+    TelevisionRuntime,
+    TuneDecision,
+    require_aware_utc,
+    utc_now,
+)
 
 
 @dataclass(slots=True)
@@ -46,6 +52,32 @@ class TelevisionSession:
             channel_number,
             now=now,
             return_behavior=return_behavior,
+        )
+        self._apply_selection(decision, play=True)
+        return decision
+
+    def watch_from_beginning(
+        self,
+        channel_number: int,
+        program_started_at: datetime,
+        *,
+        now: datetime | None = None,
+    ) -> TuneDecision:
+        """Tune a channel and place its Viewer Clock at one scheduled program's start."""
+        current_time = require_aware_utc(now or utc_now())
+        started_at = require_aware_utc(program_started_at)
+        if started_at > current_time:
+            raise ChannelRuntimeError("cannot Watch from Beginning before the program has started")
+
+        # Make the target channel authoritative first, then establish a clean LIVE
+        # reference before moving the Viewer Clock backward on that same schedule.
+        # Playback is applied only after the final decision, avoiding a visible live
+        # tune followed by a second decoder seek.
+        self.runtime.tune(channel_number, now=current_time, return_behavior="live")
+        self.runtime.go_live(now=current_time)
+        decision = self.runtime.seek(
+            (started_at - current_time).total_seconds(),
+            now=current_time,
         )
         self._apply_selection(decision, play=True)
         return decision

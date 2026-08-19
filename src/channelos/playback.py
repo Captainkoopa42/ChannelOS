@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,20 @@ class PlaybackUnavailableError(PlaybackError):
 
 VLC_RUNTIME_ENV = "CHANNELOS_VLC_DIR"
 IS_WINDOWS = os.name == "nt"
+
+
+@dataclass(frozen=True, slots=True)
+class NativeVideoSurface:
+    """A native child-window target that a playback backend may render into."""
+
+    platform: str
+    window_id: int
+
+    def __post_init__(self) -> None:
+        if self.platform not in {"windows", "x11", "macos"}:
+            raise ValueError(f"unsupported native video platform: {self.platform!r}")
+        if not isinstance(self.window_id, int) or isinstance(self.window_id, bool) or self.window_id <= 0:
+            raise ValueError("native video window_id must be a positive integer")
 
 
 def _bundled_vlc_runtime_candidates() -> tuple[Path, ...]:
@@ -112,6 +127,13 @@ class PlaybackBackend(ABC):
     @abstractmethod
     def set_rate(self, rate: float) -> None: ...
 
+    def attach_video_surface(self, surface: NativeVideoSurface) -> None:
+        """Attach a native presentation target when this backend supports embedding."""
+
+        raise PlaybackUnavailableError(
+            f"{type(self).__name__} does not support an embedded native video surface"
+        )
+
 
 class LibVLCBackend(PlaybackBackend):
     """Reference playback backend using python-vlc over the native libVLC library."""
@@ -140,6 +162,26 @@ class LibVLCBackend(PlaybackBackend):
             )
             raise PlaybackUnavailableError(
                 f"libVLC could not be initialized{location}."
+            ) from exc
+
+    def attach_video_surface(self, surface: NativeVideoSurface) -> None:
+        """Point libVLC at a ChannelOS-owned native child window."""
+
+        handle = int(surface.window_id)
+        try:
+            if surface.platform == "windows":
+                self._player.set_hwnd(handle)
+            elif surface.platform == "x11":
+                self._player.set_xwindow(handle)
+            elif surface.platform == "macos":
+                self._player.set_nsobject(handle)
+            else:  # guarded by NativeVideoSurface, retained for defensive callers
+                raise PlaybackUnavailableError(
+                    f"libVLC does not support native video platform {surface.platform!r}"
+                )
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise PlaybackUnavailableError(
+                f"libVLC could not attach the {surface.platform} video surface"
             ) from exc
 
     def load(self, path: str | Path) -> None:

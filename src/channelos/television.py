@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from .playback import PlaybackBackend
@@ -12,6 +12,9 @@ from .runtime import (
     require_aware_utc,
     utc_now,
 )
+
+_START_BOUNDARY_PROBE = timedelta(microseconds=1)
+_START_ALIGNMENT_TOLERANCE_SECONDS = 0.001
 
 
 @dataclass(slots=True)
@@ -63,21 +66,46 @@ class TelevisionSession:
         *,
         now: datetime | None = None,
     ) -> TuneDecision:
-        """Tune a channel and place its Viewer Clock at one scheduled program's start."""
+        """Tune a channel and place its Viewer Clock at one scheduled program's exact start."""
         current_time = require_aware_utc(now or utc_now())
         started_at = require_aware_utc(program_started_at)
         if started_at > current_time:
             raise ChannelRuntimeError("cannot Watch from Beginning before the program has started")
 
-        # Make the target channel authoritative first, then establish a clean LIVE
-        # reference before moving the Viewer Clock backward on that same schedule.
-        # Playback is applied only after the final decision, avoiding a visible live
-        # tune followed by a second decoder seek.
+        # Establish the target channel and set the Viewer Clock to the exact
+        # scheduled start. At a fractional-duration boundary, floating-point
+        # timeline math can classify that exact instant as the final microsecond
+        # of the previous occurrence. Preserve the exact Viewer Clock, but probe
+        # one microsecond inside the occurrence only to resolve which asset owns
+        # the boundary. Then normalize playback back to offset 0.000s.
         self.runtime.tune(channel_number, now=current_time, return_behavior="live")
         self.runtime.go_live(now=current_time)
         decision = self.runtime.seek(
             (started_at - current_time).total_seconds(),
             now=current_time,
+        )
+
+        channel_runtime = self.runtime.channels[channel_number]
+        boundary_selection = channel_runtime.selection_for_viewer_time(
+            started_at + _START_BOUNDARY_PROBE
+        )
+        if boundary_selection.offset_seconds > _START_ALIGNMENT_TOLERANCE_SECONDS:
+            raise ChannelRuntimeError(
+                "Watch from Beginning target does not align with a scheduled program start"
+            )
+
+        normalized_selection = replace(
+            boundary_selection,
+            offset_seconds=0.0,
+            program_started_at=started_at,
+            program_ends_at=started_at
+            + timedelta(seconds=boundary_selection.program.duration_seconds),
+        )
+        decision = replace(
+            decision,
+            viewer_time_utc=started_at,
+            viewer_selection=normalized_selection,
+            lag_seconds=max(0.0, (current_time - started_at).total_seconds()),
         )
         self._apply_selection(decision, play=True)
         return decision

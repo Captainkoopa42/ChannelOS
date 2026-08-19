@@ -99,6 +99,21 @@ Phase 2 should implement:
 - Watch from Beginning when the owned media and reconstructed schedule permit it,
 - coherent representation of past, current, and future scheduled programs.
 
+## Current engineering harness
+
+The first Guide projection can be inspected without launching a decoder:
+
+```bash
+channelos guide channel-7.yaml channel-12.yaml \
+  --db .channelos/library.db \
+  --state-db .channelos/runtime.db \
+  --hours 2
+```
+
+The command prints the requested schedule horizon plus current Now/Next state for each channel. `--from` accepts an explicit timezone-aware ISO-8601 horizon start, and `--why` exposes the deterministic scheduling trace for every scheduled occurrence.
+
+This command is an engineering visibility tool, not the final Guide UI. Its purpose is to prove that a UI-facing client can consume the same persistent schedule truth that playback uses.
+
 ## Control path
 
 A Guide selection must not directly manipulate libVLC.

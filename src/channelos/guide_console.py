@@ -74,7 +74,7 @@ class GuideConsole:
 
         lines = [
             f"Guide snapshot: {current.generated_at_utc.isoformat(timespec='seconds')}",
-            "Select an entry with TUNE <index> or BEGIN <index>.",
+            "Select an entry with TUNE <index> or BEGIN <index>; use TUNE CH <channel> for the live entry.",
         ]
         for index, program in enumerate(current.programs):
             if program.is_current:
@@ -112,6 +112,14 @@ class GuideConsole:
 
         if command == "REFRESH" and len(parts) == 1:
             return self.render(self.refresh(at=reference))
+        if command == "TUNE" and len(parts) == 3 and parts[1].upper() in {"CH", "CHANNEL"}:
+            try:
+                channel_number = int(parts[2])
+            except ValueError as exc:
+                raise GuideError("TUNE CH requires a numeric channel") from exc
+            current = self.service.now_next(channel_number, at=reference).now
+            decision = self.controller.tune(current, at=reference)
+            return self.television.describe(decision)
         if command == "TUNE" and len(parts) == 2:
             decision = self.controller.tune(self._program(parts[1]), at=reference)
             return self.television.describe(decision)
@@ -203,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         return 5
 
     print(
-        "Commands: REFRESH | TUNE <index> | BEGIN <index> | PAUSE | PLAY | "
+        "Commands: REFRESH | TUNE <index> | TUNE CH <channel> | BEGIN <index> | PAUSE | PLAY | "
         "SKIP_BACK [s] | SKIP_FORWARD [s] | GO_LIVE | STATUS | HELP | QUIT"
     )
     try:
@@ -220,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
                 break
             if upper == "HELP":
                 print(
-                    "REFRESH | TUNE <index> (current entry only) | BEGIN <index> "
+                    "REFRESH | TUNE <index> (current snapshot entry only) | "
+                    "TUNE CH <channel> (current live Guide entry) | BEGIN <index> "
                     "(past/current entry) | PAUSE | PLAY | SKIP_BACK [seconds] | "
                     "SKIP_FORWARD [seconds] | GO_LIVE | STATUS | QUIT"
                 )

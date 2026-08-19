@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from channelos.cli import main
 from channelos.library import MediaLibrary
 from channelos.probe import MediaProbeResult
+
+UTC = timezone.utc
 
 
 def _write_channel(
@@ -59,6 +62,7 @@ def _write_channel(
 def test_guide_command_prints_multi_channel_horizon_and_now_next(
     tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
     library_path = tmp_path / "library.db"
     runtime_path = tmp_path / "runtime.db"
@@ -76,6 +80,8 @@ def test_guide_command_prints_multi_channel_horizon_and_now_next(
         durations=(20.0, 20.0, 20.0),
         mode="shuffle",
     )
+    fixed_now = datetime(2026, 8, 19, 16, 0, 10, tzinfo=UTC)
+    monkeypatch.setattr("channelos.cli.utc_now", lambda: fixed_now)
 
     result = main(
         [
@@ -100,6 +106,9 @@ def test_guide_command_prints_multi_channel_horizon_and_now_next(
     assert output.index("Channel 007 — Channel 7") < output.index("Channel 012 — Channel 12")
     assert "  NOW:" in output
     assert "  NEXT:" in output
+    assert "[NOW]" in output
+    assert "[NEXT]" in output
+    assert "[FUTURE]" in output
     assert "why: sequential programming" in output
     assert "why: deterministic shuffle programming" in output
     assert "clip-" in output

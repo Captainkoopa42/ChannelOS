@@ -10,7 +10,13 @@ from channelos.library import MediaLibrary
 from channelos.models import ChannelDefinition
 from channelos.probe import MediaProbeResult
 from channelos.resolve import ResolvedChannel, resolve_channel
-from channelos.runtime import ChannelRuntime, ChannelRuntimeError, RuntimeStore
+from channelos.runtime import (
+    ChannelRuntime,
+    ChannelRuntimeError,
+    ReturnChoiceRequired,
+    RuntimeStore,
+    TelevisionRuntime,
+)
 
 UTC = timezone.utc
 
@@ -49,6 +55,15 @@ def build_resolved_channel(
         }
     )
     return resolve_channel(definition, library)
+
+
+def open_two_channel_tv(tmp_path: Path, epoch: datetime) -> TelevisionRuntime:
+    channel_7 = build_resolved_channel(tmp_path, [30.0, 30.0], channel_number=7)
+    channel_12 = build_resolved_channel(tmp_path, [20.0, 20.0, 20.0], channel_number=12)
+    store = RuntimeStore(tmp_path / "runtime.db")
+    runtime_7 = ChannelRuntime.open(channel_7, store, now=epoch)
+    runtime_12 = ChannelRuntime.open(channel_12, store, now=epoch)
+    return TelevisionRuntime((runtime_7, runtime_12), store)
 
 
 def test_broadcast_clock_selects_program_and_seek_offset(tmp_path: Path) -> None:
@@ -144,3 +159,114 @@ def test_runtime_refuses_unknown_media_duration(tmp_path: Path) -> None:
             RuntimeStore(tmp_path / "runtime.db"),
             now=datetime(2026, 1, 1, tzinfo=UTC),
         )
+
+
+def test_viewer_clock_pause_play_and_go_live(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+
+    tv.tune(7, now=epoch)
+    paused = tv.pause(now=epoch + timedelta(seconds=20))
+    still_paused = tv.status(now=epoch + timedelta(seconds=50))
+
+    assert paused.viewer_selection.media.location.path.name == "00.mp4"
+    assert paused.viewer_selection.offset_seconds == pytest.approx(20.0)
+    assert still_paused.viewer_selection.offset_seconds == pytest.approx(20.0)
+    assert still_paused.lag_seconds == pytest.approx(30.0)
+
+    tv.play(now=epoch + timedelta(seconds=50))
+    resumed = tv.status(now=epoch + timedelta(seconds=55))
+    assert resumed.viewer_selection.offset_seconds == pytest.approx(25.0)
+    assert resumed.lag_seconds == pytest.approx(30.0)
+
+    live = tv.go_live(now=epoch + timedelta(seconds=55))
+    assert live.is_live
+    assert live.viewer_selection.media.location.path.name == "01.mp4"
+    assert live.viewer_selection.offset_seconds == pytest.approx(25.0)
+
+
+def test_two_channels_advance_independently_while_untuned(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+
+    first = tv.tune(7, now=epoch)
+    channel_12 = tv.channel_up(now=epoch + timedelta(seconds=25))
+    back_to_7 = tv.previous(now=epoch + timedelta(seconds=50))
+
+    assert first.channel_number == 7
+    assert first.viewer_selection.media.location.path.name == "00.mp4"
+    assert channel_12.channel_number == 12
+    assert channel_12.viewer_selection.media.location.path.name == "01.mp4"
+    assert channel_12.viewer_selection.offset_seconds == pytest.approx(5.0)
+
+    # Channel 7 was not decoded for 25 seconds, but its Broadcast Clock kept moving.
+    assert back_to_7.channel_number == 7
+    assert back_to_7.viewer_selection.media.location.path.name == "01.mp4"
+    assert back_to_7.viewer_selection.offset_seconds == pytest.approx(20.0)
+    assert back_to_7.is_live
+
+
+def test_resume_returns_to_saved_viewer_clock_instead_of_live(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+
+    tv.tune(7, now=epoch)
+    tv.tune(12, now=epoch + timedelta(seconds=20))
+    resumed = tv.tune(7, now=epoch + timedelta(seconds=50), return_behavior="resume")
+
+    assert resumed.viewer_selection.media.location.path.name == "00.mp4"
+    assert resumed.viewer_selection.offset_seconds == pytest.approx(20.0)
+    assert resumed.broadcast_selection.media.location.path.name == "01.mp4"
+    assert resumed.broadcast_selection.offset_seconds == pytest.approx(20.0)
+    assert resumed.lag_seconds == pytest.approx(30.0)
+    assert not resumed.is_live
+
+
+def test_ask_return_behavior_exposes_saved_continuity_choice(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+
+    tv.tune(7, now=epoch)
+    tv.tune(12, now=epoch + timedelta(seconds=10))
+
+    with pytest.raises(ReturnChoiceRequired, match="choose live or resume"):
+        tv.tune(7, now=epoch + timedelta(seconds=30), return_behavior="ask")
+
+
+def test_previous_channel_toggles_between_last_two_channels(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+
+    tv.tune(7, now=epoch)
+    tv.tune(12, now=epoch + timedelta(seconds=5))
+    first_previous = tv.previous(now=epoch + timedelta(seconds=10))
+    second_previous = tv.previous(now=epoch + timedelta(seconds=15))
+
+    assert first_previous.channel_number == 7
+    assert second_previous.channel_number == 12
+
+
+def test_tuning_and_viewer_clock_survive_runtime_restart(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    first = open_two_channel_tv(tmp_path, epoch)
+    first.tune(7, now=epoch)
+    first.status(now=epoch + timedelta(seconds=10))
+
+    restarted = open_two_channel_tv(tmp_path, epoch + timedelta(seconds=40))
+    restored = restarted.status(now=epoch + timedelta(seconds=40))
+
+    assert restarted.current_channel == 7
+    assert restored.viewer_time_utc == epoch + timedelta(seconds=40)
+    assert restored.is_live
+
+
+def test_seek_cannot_fast_forward_past_live(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+    tv.tune(7, now=epoch)
+    tv.pause(now=epoch + timedelta(seconds=10))
+
+    decision = tv.seek(999, now=epoch + timedelta(seconds=20))
+
+    assert decision.is_live
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=20)

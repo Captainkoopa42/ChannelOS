@@ -14,6 +14,8 @@ The goal is not to build another streaming service or another thumbnail browser.
 
 This repository currently defines the product philosophy, the first portable channel format, and a small reference implementation that can load and validate channel definitions.
 
+The canonical description of the complete intended system — Live TV, Guide, Library/On Demand, profiles, metadata, playback architecture, remote controls, channel clocks, management UI, portability, and the long-term open hardware direction — is maintained in **[ChannelOS Master Design](docs/MASTER_DESIGN.md)**.
+
 ## Core promise
 
 ChannelOS must never become the thing standing between a person and their media.
@@ -52,6 +54,7 @@ ChannelOS/
 ├── README.md
 ├── pyproject.toml
 ├── docs/
+│   ├── MASTER_DESIGN.md
 │   ├── VISION.md
 │   ├── ARCHITECTURE.md
 │   ├── ROADMAP.md
@@ -88,11 +91,12 @@ The current prototype deliberately does very little: it proves that a documented
 
 ## Read first
 
-- [Product vision](docs/VISION.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [Roadmap](docs/ROADMAP.md)
-- [Channel format specification](docs/specs/CHANNEL_FORMAT.md)
-- [ADR-0001: Local-first portable core](docs/decisions/0001-local-first-portable-core.md)
+1. **[Master Design — start here](docs/MASTER_DESIGN.md)**
+2. [Product vision](docs/VISION.md)
+3. [Architecture](docs/ARCHITECTURE.md)
+4. [Roadmap](docs/ROADMAP.md)
+5. [Channel format specification](docs/specs/CHANNEL_FORMAT.md)
+6. [ADR-0001: Local-first portable core](docs/decisions/0001-local-first-portable-core.md)
 
 ## North Star
 

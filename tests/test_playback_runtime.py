@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import channelos.playback as playback
 
 
@@ -63,3 +65,38 @@ def test_non_windows_does_not_modify_runtime(monkeypatch) -> None:
 
     assert handle is None
     assert selected is None
+
+
+def test_native_video_surface_validates_platform_and_handle() -> None:
+    assert playback.NativeVideoSurface("windows", 123).window_id == 123
+
+    with pytest.raises(ValueError, match="unsupported native video platform"):
+        playback.NativeVideoSurface("wayland", 123)
+
+    with pytest.raises(ValueError, match="positive integer"):
+        playback.NativeVideoSurface("windows", 0)
+
+
+class _FakePlayer:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, int]] = []
+
+    def set_hwnd(self, handle: int) -> None:
+        self.calls.append(("windows", handle))
+
+    def set_xwindow(self, handle: int) -> None:
+        self.calls.append(("x11", handle))
+
+    def set_nsobject(self, handle: int) -> None:
+        self.calls.append(("macos", handle))
+
+
+@pytest.mark.parametrize("platform", ["windows", "x11", "macos"])
+def test_libvlc_routes_native_surface_to_platform_method(platform: str) -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+    player = _FakePlayer()
+    backend._player = player
+
+    backend.attach_video_surface(playback.NativeVideoSurface(platform, 4242))
+
+    assert player.calls == [(platform, 4242)]

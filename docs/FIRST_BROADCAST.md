@@ -1,6 +1,6 @@
 # First Broadcast Milestone
 
-**Status:** Implemented foundation; real-machine libVLC smoke test still required  
+**Status:** Complete — real Windows/libVLC playback verified  
 **Phase:** 0 — Foundation
 
 ## Purpose
@@ -40,6 +40,20 @@ The reference core can:
 - use libVLC as the first playback backend,
 - tune the first resolved item from a channel,
 - route pause/play, mute, volume, seek/skip, playback rate, status, and stop through ChannelOS commands.
+
+## Verified real-machine run
+
+Phase 0 was closed with a real Windows smoke test rather than only mocks or dry runs:
+
+- Python 3.11.9,
+- 8/8 automated tests passed on the test machine,
+- 184 genuine NVIDIA-recorded MP4 files were indexed from a real user media folder,
+- a controlled Channel 07 definition resolved three exact indexed assets,
+- `tune --dry-run` selected the expected first asset and stable SHA-256 media ID,
+- the existing native VLC installation exposed libVLC 3.0.23 Vetinari successfully through `python-vlc`,
+- `channelos tune` launched the selected Channel 07 asset and displayed the genuine video through libVLC.
+
+The user's media remained in place throughout the test. ChannelOS created and used only its rebuildable local index and channel definition.
 
 ## Install for development
 
@@ -157,7 +171,7 @@ If this fails, ChannelOS is still treating file organization as ownership identi
 
 ## What comes immediately after
 
-After a real Windows/libVLC smoke test passes, the next major subsystem is the **Channel Runtime**:
+With the real Windows/libVLC smoke test passed, the next major subsystem is the **Channel Runtime**:
 
 - persistent channel state,
 - generated timelines,

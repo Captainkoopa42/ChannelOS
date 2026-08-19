@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "channelos"
-version = "0.0.1"
+version = "0.0.2"
 description = "A personal broadcasting system for user-owned media."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,6 +13,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+playback = [
+    "python-vlc>=3.0.0",
+]
 dev = [
     "pytest>=8,<9",
 ]

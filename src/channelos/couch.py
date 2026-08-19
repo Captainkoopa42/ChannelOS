@@ -71,7 +71,7 @@ def run_couch(
             "Install it with: python -m pip install -e \".[ui]\""
         ) from exc
 
-    return run_qt(service, television, windowed=windowed)
+    return run_qt(service, television, library, windowed=windowed)
 
 
 def build_parser() -> argparse.ArgumentParser:

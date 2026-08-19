@@ -28,9 +28,11 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The cur
 - [x] Primitive `resolve` and `tune --dry-run` commands
 - [x] Phase 0 playback-control console through the ChannelOS abstraction
 - [x] Automated control-routing test with a fake playback backend
-- [ ] Real Windows/Linux libVLC smoke test with genuine media playback
+- [x] Real Windows libVLC smoke test with genuine media playback
 
 **Exit:** A real machine can scan owned media, preserve stable identity independently of path, resolve a validated channel against that index, launch the selected file through libVLC, and accept ChannelOS-owned playback commands without exposing VLC as the product interface.
+
+**Verified:** Windows 10/11-class desktop, Python 3.11.9, VLC/libVLC 3.0.23 Vetinari. The real-machine run indexed 184 NVIDIA-recorded MP4 files, resolved three exact assets into Channel 07, selected the expected stable SHA-256 media ID, and displayed genuine video through the ChannelOS → libVLC path.
 
 ## Phase 1 — Channel Runtime / Persistent Channels
 

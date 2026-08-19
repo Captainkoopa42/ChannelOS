@@ -9,7 +9,12 @@ from .library import MediaLibrary
 from .loader import load_channel
 from .models import ChannelValidationError
 from .resolve import resolve_channel
-from .runtime import ChannelRuntime, ChannelRuntimeError, RuntimeStore
+from .runtime import (
+    ChannelRuntime,
+    ChannelRuntimeError,
+    RuntimeStore,
+    TelevisionRuntime,
+)
 
 DEFAULT_DATABASE = Path(".channelos") / "library.db"
 DEFAULT_RUNTIME_DATABASE = Path(".channelos") / "runtime.db"
@@ -56,6 +61,7 @@ def run_couch(
     store = RuntimeStore(state_db)
     runtimes = _open_runtimes(paths, library, store)
     service = GuideService(runtimes)
+    television = TelevisionRuntime(runtimes, store)
 
     try:
         from .couch_qt import run_qt
@@ -65,7 +71,7 @@ def run_couch(
             "Install it with: python -m pip install -e \".[ui]\""
         ) from exc
 
-    return run_qt(service, windowed=windowed)
+    return run_qt(service, television, windowed=windowed)
 
 
 def build_parser() -> argparse.ArgumentParser:

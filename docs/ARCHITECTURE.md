@@ -1,7 +1,7 @@
 # ChannelOS Architecture
 
-**Status:** Draft 0.3  
-**Phase:** 0 — First Broadcast foundation
+**Status:** Draft 0.4  
+**Phase:** 1 — Persistent Channel Runtime
 
 ## Architectural objective
 
@@ -11,9 +11,7 @@ The core architectural rule is simple:
 
 > ChannelOS may index, schedule, remember, and present media. It must not become the only thing capable of interpreting or recovering that media.
 
-The canonical product-level description of the intended system is maintained in [MASTER_DESIGN.md](MASTER_DESIGN.md).
-
-The first executable vertical slice is documented in [FIRST_BROADCAST.md](FIRST_BROADCAST.md).
+The canonical product-level description is [MASTER_DESIGN.md](MASTER_DESIGN.md). Phase 0 is documented in [FIRST_BROADCAST.md](FIRST_BROADCAST.md). The current executable runtime is documented in [PERSISTENT_CHANNEL_RUNTIME.md](PERSISTENT_CHANNEL_RUNTIME.md).
 
 ## System boundaries
 
@@ -23,24 +21,31 @@ The first executable vertical slice is documented in [FIRST_BROADCAST.md](FIRST_
 |            Live View | Guide | Library                 |
 +---------------------------+-----------------------------+
                             |
-                            | local API / IPC
+                            | local control intents / API
                             v
 +---------------------------------------------------------+
-|                    Channel Runtime                     |
-| tuning | broadcast/viewer clocks | now/next | handoff |
+|                 Television Runtime                     |
+| TUNE | channel +/- | previous | GO_LIVE | continuity  |
++---------------------------+-----------------------------+
+                            |
+                            v
++---------------------------------------------------------+
+|                  Channel Runtime                       |
+| numeric identity | schedule epoch | Broadcast Clock    |
+| Viewer Clock | generated timeline | restart state      |
 +---------------------+-------------------+---------------+
                       |                   |
                       v                   v
 +---------------------------+   +-------------------------+
 |    Programming Engine     |   |    Playback Adapter     |
-| sequence | shuffle | time |   | libVLC / mpv / future  |
+| sequence | future shuffle |   | libVLC / mpv / future  |
 +-------------+-------------+   +------------+------------+
               |                              |
               +---------------+--------------+
                               v
 +---------------------------------------------------------+
 |                 Media Index / State                    |
-| assets | locations | metadata | history | mappings     |
+| assets | locations | technical metadata | mappings     |
 +---------------------------+-----------------------------+
                             |
                             v
@@ -60,7 +65,7 @@ The media layer is owned by the user and exists independently of ChannelOS. Chan
 
 A media item must not be identified only by its current path.
 
-The Phase 0 model separates exact content identity from filesystem location:
+The reference model separates exact content identity from filesystem location:
 
 ```text
 MediaAsset
@@ -77,51 +82,182 @@ The initial full-file SHA-256 strategy is deliberately conservative. It is more 
 
 See [ADR-0002](decisions/0002-media-identity-and-playback.md).
 
-### Index state
+### Media index state
 
-The reference core stores index state in SQLite.
+The reference core stores media-index state in SQLite.
 
-The database is **not** the media library. It is a rebuildable map of media assets and their known locations.
+The database is **not** the media library. It is a rebuildable map of media assets and known locations.
 
-Deleting the index may cost scan time and disposable runtime state. It must not affect the underlying media.
+Deleting the index may cost scan time. It must not affect the underlying media.
 
 ### Technical probing
 
-Technical inspection is delegated to an `ffprobe` adapter when available. Duration, container, and stream data are useful inputs for scheduling and the future Guide.
+Technical inspection is delegated through a `MediaProbe` boundary, with ffprobe as the current adapter. Duration, container, and stream data are inputs to scheduling and the future Guide.
 
-A normal scan can still index media when ffprobe is unavailable. Strict probing can be requested for validation.
+A basic library scan may still index media without ffprobe. A persistent Broadcast Clock, however, refuses media whose duration is unknown or non-positive. ChannelOS does not guess schedule durations.
 
-### Definitions
+### Portable definitions
 
-Channel definitions describe intent: channel number, name, source selectors, and programming behavior. They are human-readable and versioned.
+Channel definitions describe durable user intent: channel number, name, source selectors, and programming behavior. They are human-readable and versioned.
 
-Resolved media IDs do not belong inside the portable channel definition.
+Resolved media IDs, wall-clock epochs, current tune state, and viewer positions do not belong inside the portable channel definition.
 
 ### Runtime state
 
-Watch progress, current sequence position, repeat history, generated schedule, viewer offsets, profile state, and cache data belong in runtime state. Runtime state must never be required to recover the underlying media.
+Runtime state is local operational state rather than media ownership.
 
-### Programming
+The Phase 1 reference runtime uses a separate SQLite database for:
 
-The programming engine converts a channel definition plus indexed media plus runtime state into an ordered timeline. Its choices should be explainable.
+```text
+schedule epoch by channel number
+schedule signature
+current channel
+previous channel
+per-channel Viewer Clock continuity
+```
 
-Phase 0 only resolves eligible indexed media. Persistent sequence state and schedule generation come next.
+This state can be deleted without deleting media. Future Export My Television work must make relevant continuity state portable without making this database itself authoritative.
 
-### Channel clocks
+## Programming and timeline generation
 
-A channel has a **Broadcast Clock** describing what it would be showing independently of the current viewer. A viewing session has a **Viewer Clock** describing where the user is currently watching within that timeline.
+The programming layer converts a resolved channel into a timed schedule.
 
-This is what will allow ChannelOS to feel like television while still supporting pause, rewind, fast-forward, resume, and a `GO_LIVE` command.
+Phase 1 currently implements deterministic repeating sequential programming. The total cycle duration is the sum of indexed media durations.
+
+```text
+Program A = 30s
+Program B = 45s
+Program C = 60s
+cycle = 135s
+```
+
+A schedule epoch anchors that cycle to UTC wall time.
+
+Shuffle with repeat avoidance is the remaining Phase 1 programming item. Time-of-day blocks, weighted rotations, marathons, feature slots, and seasonal rules remain later broadcaster-tool work.
+
+## Broadcast Clock
+
+The Broadcast Clock is authoritative channel time.
+
+For a wall-clock instant `t`:
+
+```text
+elapsed = t - epoch
+cycle_position = elapsed mod cycle_duration
+```
+
+Cumulative program durations map `cycle_position` to:
+
+- the media asset that should currently be airing,
+- its schedule start/end,
+- the exact in-program seek offset.
+
+This is why an untuned channel keeps advancing without a background decoder.
+
+Example:
+
+```text
+22:00:00–22:00:30  A
+22:00:30–22:01:15  B
+
+Tune at 22:00:42
+        ↓
+B @ 12 seconds
+```
+
+The decoder did not create those 42 seconds. The channel schedule did.
+
+See [ADR-0003](decisions/0003-persistent-channel-clocks.md).
+
+## Schedule signatures and restart recovery
+
+A persistent channel schedule is fingerprinted from the inputs that define its current timeline:
+
+- channel number,
+- programming mode,
+- ordered stable asset IDs,
+- indexed durations.
+
+If the signature is unchanged after ChannelOS restarts, the original epoch is reused and the Broadcast Clock continues naturally.
+
+If the resolved inputs change, ChannelOS creates a new epoch. This avoids silently projecting an old timeline onto a different schedule.
+
+The same mechanism currently handles missing files. A rescan marks a disappeared media location offline, resolution removes it, the signature changes, and the channel re-anchors using surviving online media.
+
+## Viewer Clock
+
+The Broadcast Clock answers what the channel is broadcasting. The Viewer Clock answers where this viewer is personally watching that schedule.
+
+A Viewer Clock stores a schedule timestamp, the wall-clock instant at which that position was observed, and whether the playhead is running.
+
+```text
+LIVE
+Viewer Clock == Broadcast Clock
+
+PAUSE
+Viewer Clock freezes
+Broadcast Clock continues
+
+PLAY
+Viewer Clock advances again from its frozen schedule point
+
+SKIP / REWIND
+Viewer Clock moves on the channel timeline
+
+GO_LIVE
+Viewer Clock := Broadcast Clock
+```
+
+Fast-forward is capped at LIVE; ChannelOS does not let a viewer seek into programming that the channel has not reached yet.
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**
 
-Broadcast/Viewer clocks are the next major runtime subsystem after the First Broadcast media spine is proven on a real playback machine.
+## Returning to channels
 
-### Playback
+Per-channel continuity enables three explicit policies:
 
-ChannelOS delegates decoding to a mature player engine. ChannelOS owns selection, scheduling, handoff, tuning, playback intent, and viewer state; it does not own codec implementation.
+- `live` — tune to current Broadcast Clock,
+- `resume` — tune to saved Viewer Clock,
+- `ask` — surface the choice instead of silently making it.
 
-Playback is accessed through a backend-neutral `PlaybackBackend` contract. The current contract includes:
+When a viewer leaves a channel, its saved Viewer Clock may freeze while the Broadcast Clock continues mathematically.
+
+## TelevisionRuntime
+
+`TelevisionRuntime` is the Phase 1 multi-channel state layer.
+
+It owns:
+
+- the active lineup keyed by numeric channel identity,
+- current channel,
+- previous channel,
+- channel-up/down ordering,
+- per-channel continuity decisions.
+
+It does **not** decode media.
+
+The current control vocabulary includes:
+
+```text
+TUNE 007
+CHANNEL_UP
+CHANNEL_DOWN
+PREVIOUS_CHANNEL
+PAUSE
+PLAY
+SKIP_BACK
+SKIP_FORWARD
+GO_LIVE
+STATUS
+```
+
+This vocabulary is intentionally aligned with the future open ChannelOS remote/control-intent protocol.
+
+## Playback
+
+ChannelOS delegates decoding to mature player engines.
+
+Playback is accessed through a backend-neutral `PlaybackBackend` contract:
 
 - load
 - play
@@ -133,21 +269,20 @@ Playback is accessed through a backend-neutral `PlaybackBackend` contract. The c
 - mute
 - playback rate
 
-**libVLC is the first reference backend.** mpv or future engines may be supported behind the same interface.
+**libVLC is the first reference backend.** Alternative backends may later sit behind the same contract.
 
-The Python libVLC binding is optional so the library/index core can run without a playback installation.
-
-### Control boundary
-
-The Phase 0 tuner already routes commands through ChannelOS-owned playback intents rather than exposing VLC as the product UI.
-
-The current text console is intentionally temporary. It proves the same boundary the future remote protocol will use:
+The runtime decides channel/media/time first. `TelevisionSession` then translates the resulting selection into backend load/play/seek operations.
 
 ```text
-User intent
+TUNE 007
    |
    v
-ChannelOS control/runtime
+TelevisionRuntime
+   |
+   +--> Channel 007 Broadcast Clock
+   |       -> asset + seek offset
+   v
+TelevisionSession
    |
    v
 PlaybackBackend
@@ -156,52 +291,76 @@ PlaybackBackend
 libVLC
 ```
 
-### UI
+The decoder never decides what Channel 007 means.
 
-The TV UI is a client of the runtime. It should not contain the authoritative scheduling logic. That separation makes future desktop, appliance, phone-remote, and multi-TV clients possible.
+## UI boundary
 
-## Current Phase 0 implementation
+The TV UI is a client of the runtime. It must not contain authoritative scheduling logic.
 
-The reference implementation now contains:
+That separation allows the same runtime to support:
+
+- desktop software,
+- couch-first TV UI,
+- dedicated open appliance,
+- phone/tablet remote,
+- future household multi-TV clients.
+
+## Current reference implementation
 
 ```text
-channel definition parser/validator
-          |
-          v
-filesystem scanner ---> SHA-256 media identity
-          |                       |
-          v                       v
-   SQLite media index <--- media locations
-          |
-          +---- optional ffprobe technical data
-          |
-          v
-   channel source resolver
-          |
-          v
-    primitive tuner
-          |
-          v
-   PlaybackBackend
-          |
-          v
-    LibVLCBackend
+channel YAML
+    |
+    v
+parser / validator
+    |
+    v
+filesystem scanner ---> SHA-256 asset identity
+    |                         |
+    +--> optional ffprobe     v
+    |                   SQLite media index
+    |                         |
+    +-------------------------+
+              |
+              v
+       source resolver
+              |
+              v
+       ChannelRuntime
+       schedule signature
+       persistent epoch
+       Broadcast Clock
+              |
+              v
+       TelevisionRuntime
+       Viewer Clock
+       current / previous
+              |
+              v
+       TelevisionSession
+              |
+              v
+       PlaybackBackend
+              |
+              v
+        LibVLCBackend
 ```
 
-The code has automated tests for channel validation, scan caching, move-stable identity, source resolution, and playback-control routing through a fake backend.
+Automated tests cover Phase 0 media behavior plus Phase 1 clock mathematics, restart persistence, missing-file recovery, two-channel independent advancement, live/resume/ask behavior, previous-channel toggling, GO_LIVE, backend routing, and the Phase 1 CLI harness.
 
-A real-machine VLC/libVLC playback smoke test remains required before Phase 0 can be considered fully exited.
+The current CI matrix runs the reference core on Python 3.11, 3.12, and 3.13.
 
-## Initial implementation choices
+## Current implementation choices
 
-- **Language:** Python for the first reference core and test harness.
-- **Definitions:** YAML, versioned with `schema_version`.
-- **Index/state:** SQLite for the reference local index/runtime state.
+- **Language:** Python for the reference core/test harness.
+- **Definitions:** YAML with `schema_version`.
+- **Media index:** SQLite.
+- **Runtime state:** separate SQLite database.
 - **Asset identity v1:** full-file SHA-256, independent of path.
-- **Technical probing:** external ffprobe adapter when available.
-- **Playback:** backend-neutral playback adapter; libVLC as the first reference backend.
-- **Communication:** local-only process calls initially; local API/IPC once UI and runtime split.
-- **Networking:** no internet requirement for core channel operation.
+- **Technical probing:** `MediaProbe`; ffprobe first.
+- **Playback:** backend-neutral; libVLC first.
+- **Channel time:** UTC persistent schedule epochs.
+- **Communication:** in-process calls initially; local API/IPC when UI/runtime split.
+- **Networking:** no internet requirement for core operation.
 
 These are implementation choices, not ownership invariants. They can change without changing the project's identity.
 
@@ -209,17 +368,20 @@ These are implementation choices, not ownership invariants. They can change with
 
 A future plugin/source system should assume extensions are untrusted until explicitly granted capability. Plugins should not silently receive unrestricted filesystem or network access.
 
-## Phase 0 exit condition
+## Phase 1 exit condition
 
-Phase 0 is complete when ChannelOS can:
+Phase 1 is complete when ChannelOS can:
 
-1. Load a documented channel definition.
-2. Resolve at least one local media source.
-3. Assign stable indexed identities to discovered files.
-4. Recognize unchanged media after a path move/rescan.
-5. Hand one selected indexed media item to a playback adapter.
-6. Exercise basic user playback intents through the ChannelOS control boundary.
-7. Preserve the distinction between portable definition, rebuildable index, user-owned media, and disposable runtime state.
-8. Pass a real VLC/libVLC smoke test on a supported desktop machine.
+1. maintain stable numeric channel identities,
+2. generate a timed schedule from indexed media,
+3. calculate the correct current program/offset without background decoding,
+4. preserve schedule time across process restart,
+5. maintain an independent Viewer Clock,
+6. pause/seek and return to LIVE without stopping Broadcast Clock,
+7. tune directly, channel up/down, and previous-channel,
+8. preserve or discard channel continuity according to live/resume/ask policy,
+9. recover coherently when an indexed media location disappears,
+10. pass the two-channel independent-advancement test,
+11. run the same behavior against genuine timed media through the real playback backend.
 
-Items 1–7 now exist in the reference implementation and automated tests. Item 8 is the immediate real-machine validation step.
+Items 1–10 are implemented and covered by automated reference-core tests. Item 11 is the real-machine Phase 1 gate. Deterministic shuffle/repeat-avoidance remains an additional roadmap item before Phase 1 is considered feature-complete.

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,65 @@ class PlaybackError(RuntimeError):
 
 class PlaybackUnavailableError(PlaybackError):
     """Raised when an optional playback backend is not installed or usable."""
+
+
+VLC_RUNTIME_ENV = "CHANNELOS_VLC_DIR"
+IS_WINDOWS = os.name == "nt"
+
+
+def _bundled_vlc_runtime_candidates() -> tuple[Path, ...]:
+    """Return ChannelOS-owned libVLC locations in product-first order."""
+
+    executable_root = Path(sys.executable).resolve().parent
+    package_root = Path(__file__).resolve().parent
+    source_root = Path(__file__).resolve().parents[2]
+    return (
+        executable_root / "runtime" / "vlc",
+        package_root / "runtime" / "vlc",
+        source_root / "runtime" / "vlc",
+    )
+
+
+def _vlc_runtime_candidates() -> tuple[Path, ...]:
+    candidates = list(_bundled_vlc_runtime_candidates())
+    override = os.environ.get(VLC_RUNTIME_ENV)
+    if override:
+        candidates.append(Path(override).expanduser())
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=False)
+        key = os.path.normcase(str(resolved))
+        if key not in seen:
+            unique.append(resolved)
+            seen.add(key)
+    return tuple(unique)
+
+
+def _prepare_windows_vlc_runtime() -> tuple[Any | None, Path | None]:
+    """Make a ChannelOS-owned or explicitly supplied libVLC visible to Windows."""
+
+    if not IS_WINDOWS:
+        return None, None
+
+    for candidate in _vlc_runtime_candidates():
+        if not (candidate / "libvlc.dll").is_file():
+            continue
+
+        plugins = candidate / "plugins"
+        if plugins.is_dir():
+            os.environ["VLC_PLUGIN_PATH"] = str(plugins)
+
+        add_dll_directory = getattr(os, "add_dll_directory", None)
+        if add_dll_directory is not None:
+            return add_dll_directory(str(candidate)), candidate
+
+        current_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = str(candidate) + os.pathsep + current_path
+        return None, candidate
+
+    return None, None
 
 
 class PlaybackBackend(ABC):
@@ -56,11 +117,15 @@ class LibVLCBackend(PlaybackBackend):
     """Reference playback backend using python-vlc over the native libVLC library."""
 
     def __init__(self, *instance_options: str) -> None:
+        self._dll_directory_handle, self._runtime_dir = _prepare_windows_vlc_runtime()
+
         try:
             import vlc  # type: ignore
-        except ImportError as exc:
+        except (ImportError, OSError) as exc:
             raise PlaybackUnavailableError(
-                "python-vlc is not installed. Install ChannelOS with the 'playback' extra."
+                "libVLC could not be loaded. Packaged ChannelOS builds should include "
+                "runtime/vlc; source builds may set CHANNELOS_VLC_DIR to a directory "
+                "containing libvlc.dll and its plugins."
             ) from exc
 
         self._vlc: Any = vlc
@@ -68,8 +133,13 @@ class LibVLCBackend(PlaybackBackend):
             self._instance = vlc.Instance(*instance_options)
             self._player = self._instance.media_player_new()
         except Exception as exc:
+            location = (
+                f" from {self._runtime_dir}"
+                if self._runtime_dir is not None
+                else ""
+            )
             raise PlaybackUnavailableError(
-                "libVLC could not be initialized. Install VLC/libVLC for this operating system."
+                f"libVLC could not be initialized{location}."
             ) from exc
 
     def load(self, path: str | Path) -> None:

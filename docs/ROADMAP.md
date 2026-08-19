@@ -2,7 +2,7 @@
 
 This roadmap is intentionally behavior-first. ChannelOS does not need to support every codec, service, or device before it proves that personally owned media can feel like television again.
 
-The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The current executable milestone is [FIRST_BROADCAST.md](FIRST_BROADCAST.md).
+The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The current executable milestone is [PERSISTENT_CHANNEL_RUNTIME.md](PERSISTENT_CHANNEL_RUNTIME.md).
 
 ## Phase 0 — Foundation / First Broadcast
 
@@ -38,22 +38,26 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The cur
 
 **Goal:** Turn the indexed/playable media spine into independently advancing television channels.
 
-- [ ] Persistent numeric channel identity
-- [ ] Sequential programming state
-- [ ] Shuffle programming with repeat avoidance
-- [ ] Generated channel timeline
-- [ ] Broadcast Clock
-- [ ] Viewer Clock
-- [ ] Per-channel continuity state
-- [ ] Restart recovery
-- [ ] Missing-file recovery
-- [ ] `TUNE 007`
-- [ ] Channel Up / Down
-- [ ] Previous Channel
-- [ ] Return behavior: live / resume / ask
-- [ ] `GO_LIVE`
+- [x] Persistent numeric channel identity
+- [x] Sequential programming state
+- [x] Shuffle programming with repeat avoidance
+- [x] Generated channel timeline
+- [x] Broadcast Clock
+- [x] Viewer Clock
+- [x] Per-channel continuity state
+- [x] Restart recovery
+- [x] Missing-file recovery
+- [x] `TUNE 007`
+- [x] Channel Up / Down
+- [x] Previous Channel
+- [x] Return behavior: live / resume / ask
+- [x] `GO_LIVE`
 
-**Exit:** Define Channels 7 and 12. Tune 7, switch to 12, wait, return to 7, and arrive at the correct point in Channel 7's independently advancing schedule.
+**Automated exit behavior:** Passing. The reference-core test suite defines Channels 7 and 12, tunes 7, switches to 12, advances wall time without decoding Channel 7, returns to 7, and verifies the correct later program/seek offset from Channel 7's independent Broadcast Clock. Deterministic shuffle is derived from stable asset IDs, cycles every eligible asset before repeating, and rejects repeat-avoidance windows the available media pool cannot actually satisfy.
+
+**Real-machine gate:** Passed on Windows with genuine indexed media through libVLC. Channels 007 and 012 advanced independently while untuned; switching, Previous Channel, pause/resume, Viewer Clock lag, and `GO_LIVE` behaved correctly. Channel 012 was then changed from sequential to shuffle and real playback opened the deterministic shuffled schedule rather than the source order.
+
+**Exit:** Passed. Define Channels 7 and 12, tune 7, switch to 12, wait, return to 7, and arrive at the correct point in Channel 7's independently advancing schedule; deterministic shuffle must also schedule and play genuine indexed media correctly.
 
 ## Phase 2 — Guide
 

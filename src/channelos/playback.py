@@ -83,7 +83,10 @@ class LibVLCBackend(PlaybackBackend):
             raise PlaybackError("libVLC could not start playback")
 
     def pause(self) -> None:
-        self._player.pause()
+        if hasattr(self._player, "set_pause"):
+            self._player.set_pause(1)
+        else:
+            self._player.pause()
 
     def stop(self) -> None:
         self._player.stop()
@@ -101,8 +104,8 @@ class LibVLCBackend(PlaybackBackend):
         return float(milliseconds) / 1000.0
 
     def set_volume(self, percent: int) -> None:
-        if not 0 <= percent <= 200:
-            raise ValueError("volume must be from 0 through 200 percent")
+        if not 0 <= percent <= 100:
+            raise ValueError("volume must be from 0 through 100 percent")
         result = self._player.audio_set_volume(percent)
         if isinstance(result, int) and result < 0:
             raise PlaybackError(f"libVLC rejected volume {percent}")

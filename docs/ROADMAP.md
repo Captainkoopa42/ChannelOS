@@ -2,69 +2,120 @@
 
 This roadmap is intentionally behavior-first. ChannelOS does not need to support every codec, service, or device before it proves that personally owned media can feel like television again.
 
-## Phase 0 — Skeleton
+The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The current executable milestone is [FIRST_BROADCAST.md](FIRST_BROADCAST.md).
 
-**Goal:** Establish the constitutional boundaries and a testable core.
+## Phase 0 — Foundation / First Broadcast
+
+**Goal:** Establish the constitutional boundaries and prove the first complete owned-file-to-playback path.
 
 - [x] Product vision
+- [x] Master design
 - [x] Repository structure
 - [x] Versioned channel-definition format
 - [x] Reference parser and validator
 - [x] Example channel
 - [x] Initial architecture decision record
-- [ ] Filesystem media scanner
-- [ ] Stable media identity model
-- [ ] Playback adapter interface
-- [ ] mpv proof of concept
+- [x] Filesystem media scanner
+- [x] Stable media identity model (`sha256:<content>` in v1)
+- [x] Media asset vs. media location separation
+- [x] SQLite local index
+- [x] Unchanged-file scan cache
+- [x] Move/relink identity test
+- [x] Optional ffprobe technical metadata adapter
+- [x] Backend-neutral playback adapter interface
+- [x] libVLC reference backend implementation
+- [x] Indexed channel source resolver
+- [x] Primitive `resolve` and `tune --dry-run` commands
+- [x] Phase 0 playback-control console through the ChannelOS abstraction
+- [x] Automated control-routing test with a fake playback backend
+- [ ] Real Windows/Linux libVLC smoke test with genuine media playback
 
-**Exit:** A media file can be indexed by stable identity and launched through a playback adapter from a validated channel definition.
+**Exit:** A real machine can scan owned media, preserve stable identity independently of path, resolve a validated channel against that index, launch the selected file through libVLC, and accept ChannelOS-owned playback commands without exposing VLC as the product interface.
 
-## Phase 1 — Persistent Channels
+## Phase 1 — Channel Runtime / Persistent Channels
 
-**Goal:** Make a channel behave like something a viewer can return to.
+**Goal:** Turn the indexed/playable media spine into independently advancing television channels.
 
-- [ ] Numeric channel identity
-- [ ] Sequential programming
+- [ ] Persistent numeric channel identity
+- [ ] Sequential programming state
 - [ ] Shuffle programming with repeat avoidance
+- [ ] Generated channel timeline
+- [ ] Broadcast Clock
+- [ ] Viewer Clock
 - [ ] Per-channel continuity state
 - [ ] Restart recovery
 - [ ] Missing-file recovery
-- [ ] Tune / channel-up / channel-down commands
+- [ ] `TUNE 007`
+- [ ] Channel Up / Down
+- [ ] Previous Channel
+- [ ] Return behavior: live / resume / ask
+- [ ] `GO_LIVE`
 
-**Exit:** Channel 12 remains recognizably Channel 12 across application restarts.
+**Exit:** Define Channels 7 and 12. Tune 7, switch to 12, wait, return to 7, and arrive at the correct point in Channel 7's independently advancing schedule.
 
 ## Phase 2 — Guide
 
-**Goal:** Generate a coherent timeline instead of selecting one item at a time.
+**Goal:** Make generated timelines visible and navigable as television.
 
 - [ ] Schedule horizon generation
 - [ ] Now / Next model
-- [ ] Program durations
+- [ ] Program durations from indexed technical data
 - [ ] Traditional grid guide data model
 - [ ] Schedule regeneration rules
 - [ ] Explain-why trace for programmed items
+- [ ] Tune from Guide
+- [ ] Watch from Beginning where the owned media permits it
 
-**Exit:** A user can see a believable day of programming and understand why each item was scheduled.
+**Exit:** A user can see a believable day of programming, tune from it, and understand why each item was scheduled.
 
-## Phase 3 — Appliance UX
+## Phase 3 — Appliance UX / Control Surface
 
-**Goal:** Make the computer disappear during normal viewing.
+**Goal:** Make the computer disappear during ordinary viewing while preserving direct control.
 
 - [ ] Full-screen live view
 - [ ] Remote input abstraction
+- [ ] Open ChannelOS control-intent protocol
 - [ ] Numeric direct tuning
 - [ ] Channel up/down
 - [ ] Previous channel
+- [ ] Volume / mute integration
+- [ ] Play / pause
+- [ ] Rewind / fast-forward / skip
+- [ ] LIVE button behavior
 - [ ] Minimal Now/Next overlay
 - [ ] Guide UI
 - [ ] Autostart and crash recovery
 
-**Exit:** A keyboard and mouse are optional for ordinary viewing.
+**Exit:** A keyboard and mouse are optional for ordinary viewing, while pause/seek/volume controls remain under the viewer's command.
 
-## Phase 4 — Programmer
+## Phase 4 — Library / On Demand
 
-**Goal:** Give channels identity.
+**Goal:** Make the owned collection as pleasant to deliberately browse as the channels are to passively watch.
 
+- [ ] Movie / television / season / episode model
+- [ ] Poster/backdrop library UI
+- [ ] Search
+- [ ] Genres
+- [ ] User tags
+- [ ] Collections
+- [ ] Continue Watching
+- [ ] Recently Added
+- [ ] Favorites
+- [ ] Add to Channel
+- [ ] Local Add Media / folder-selection workflow
+
+**Exit:** The same canonical media index supports both television channels and deliberate on-demand selection without duplicate libraries.
+
+## Phase 5 — Metadata and Broadcaster Tools
+
+**Goal:** Make the library understandable and the channels programmable without making metadata providers authoritative.
+
+- [ ] Metadata provider abstraction
+- [ ] File/title matching workflow
+- [ ] Artwork caching
+- [ ] Manual correction
+- [ ] Metadata overrides
+- [ ] Portable metadata strategy
 - [ ] Time-of-day blocks
 - [ ] Weighted rotations
 - [ ] Marathons
@@ -73,11 +124,24 @@ This roadmap is intentionally behavior-first. ChannelOS does not need to support
 - [ ] User-owned bumpers and station IDs
 - [ ] Intermissions
 
-**Exit:** Two channels using overlapping media can still feel distinctly programmed.
+**Exit:** A user can organize the shelf and program recognizable stations while retaining local control over the resulting metadata and rules.
 
-## Phase 5 — Export My Television
+## Phase 6 — Profiles
 
-**Goal:** Prove ownership extends to configuration and history.
+**Goal:** Separate household ownership from individual viewer state.
+
+- [ ] Profile selection
+- [ ] Per-profile watch history
+- [ ] Continue Watching state
+- [ ] Favorites
+- [ ] Viewer Clock state
+- [ ] Language/subtitle preferences
+- [ ] Personal channels
+- [ ] Optional library/channel visibility rules
+
+## Phase 7 — Export My Television
+
+**Goal:** Prove ownership extends to configuration, metadata work, profiles, and history.
 
 - [ ] Full configuration export
 - [ ] Library remapping on import
@@ -85,11 +149,12 @@ This roadmap is intentionally behavior-first. ChannelOS does not need to support
 - [ ] Metadata overrides
 - [ ] Watch state
 - [ ] Channel continuity
+- [ ] Profiles
 - [ ] Machine-to-machine migration test
 
-**Exit:** A fresh ChannelOS install can reconstruct the recognizable television from an export and restored media.
+**Exit:** A fresh ChannelOS install can reconstruct the recognizable television from an export and restored/relinked media.
 
-## Phase 6 — Ecosystem
+## Phase 8 — Ecosystem / Multi-device
 
 **Goal:** Extend ChannelOS without turning the core into a platform monopoly.
 
@@ -98,8 +163,20 @@ This roadmap is intentionally behavior-first. ChannelOS does not need to support
 - [ ] Optional metadata providers
 - [ ] Multiple TVs on a household network
 - [ ] Phone/tablet remote
+- [ ] Local management web UI
 - [ ] Music-radio and ambient channels
+- [ ] Alternative playback backend(s)
+
+## Phase 9 — Open appliance and remote
+
+**Goal:** Prove the software can become a user-owned television appliance.
+
 - [ ] Dedicated appliance image experiments
+- [ ] Reference receiver hardware exploration
+- [ ] Open remote design
+- [ ] RF / BLE / IR transport evaluation
+- [ ] HDMI-focused boot experience
+- [ ] Hardware consumes the same open ChannelOS control intents as software remotes
 
 ## Explicitly not on the early roadmap
 

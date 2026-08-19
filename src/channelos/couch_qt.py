@@ -6,7 +6,8 @@ from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QGuiApplication, QWindow
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
 
 from .couch_actions import CouchActions
@@ -354,13 +355,18 @@ class CouchKeyFilter(QObject):
                 self._window.setProperty("selectedProgram", self._current_program_index(row_index))
                 return True
             if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+                # Make the native video target visible before libVLC creates its
+                # Windows video output. Some D3D11 paths will happily play audio
+                # into a hidden HWND but never present frames after it is shown.
+                self._window.setProperty("screen", "live")
+                QApplication.processEvents()
                 result = self._controller.activate_selection(
                     int(self._window.property("selectedRow")),
                     int(self._window.property("selectedProgram")),
                 )
                 self._notify(result)
-                if bool(result.get("ok")):
-                    self._window.setProperty("screen", "live")
+                if not bool(result.get("ok")):
+                    self._window.setProperty("screen", "guide")
                 return True
             return False
 
@@ -405,6 +411,36 @@ def _native_video_platform() -> str:
     )
 
 
+def _make_video_container(
+    engine: QQmlApplicationEngine,
+    parent_item: QQuickItem,
+    video_window: QWindow,
+) -> tuple[QQmlComponent, QQuickItem]:
+    """Embed the libVLC QWindow using Qt Quick's supported WindowContainer path."""
+
+    component = QQmlComponent(engine)
+    component.setData(
+        b"import QtQuick\nWindowContainer { window: channelOSVideoWindow }\n",
+        QUrl("inmemory:/ChannelOSVideoContainer.qml"),
+    )
+    if component.isError():
+        raise RuntimeError(component.errorString().strip() or "could not create video WindowContainer")
+
+    created = component.create(engine.rootContext())
+    if not isinstance(created, QQuickItem):
+        if created is not None:
+            created.deleteLater()
+        raise RuntimeError(component.errorString().strip() or "video WindowContainer is not a QQuickItem")
+
+    created.setParentItem(parent_item)
+    created.setZ(50.0)
+    created.setVisible(False)
+    # Keep the QWindow explicitly referenced by the caller; WindowContainer owns
+    # its placement in the Qt Quick hierarchy, not ChannelOS playback semantics.
+    _ = video_window
+    return component, created
+
+
 def run_qt(
     service: GuideService,
     television: TelevisionRuntime,
@@ -423,6 +459,15 @@ def run_qt(
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("channelOS", controller)
 
+    # Qt 6.8+ provides WindowContainer specifically for embedding a QWindow into
+    # a Qt Quick scene. Let it own native parenting/geometry instead of manually
+    # parenting a bare QWindow to the QQuickWindow, which proved unreliable on
+    # the Windows D3D11/libVLC path.
+    video_window = QWindow()
+    video_window.setFlag(Qt.WindowType.FramelessWindowHint, True)
+    video_window.setFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
+    engine.rootContext().setContextProperty("channelOSVideoWindow", video_window)
+
     qml_path = Path(__file__).resolve().parent / "qml" / "Main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     roots = engine.rootObjects()
@@ -430,28 +475,29 @@ def run_qt(
         return 7
 
     window = roots[0]
+    content_item = window.contentItem()
 
-    # libVLC renders into a ChannelOS-owned native child window. QML remains
-    # authoritative for layout/control, while the playback backend only receives
-    # a platform handle. The child is visible only on the Live TV screen.
-    video_window = QWindow(window)
-    video_window.setFlag(Qt.WindowType.FramelessWindowHint, True)
-    video_window.setFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
-    video_window.setFlag(Qt.WindowType.WindowTransparentForInput, True)
-    video_window.setGeometry(0, 0, max(1, int(window.width())), max(1, int(window.height())))
-    video_window.hide()
-
+    video_component: QQmlComponent | None = None
+    video_container: QQuickItem | None = None
     try:
+        video_component, video_container = _make_video_container(
+            engine,
+            content_item,
+            video_window,
+        )
         surface = NativeVideoSurface(_native_video_platform(), int(video_window.winId()))
         controller.attach_video_surface(surface)
     except (RuntimeError, ValueError) as exc:
         controller.set_video_surface_error(str(exc))
 
     def sync_video_surface() -> None:
-        width = max(1, int(window.width()))
-        height = max(1, int(window.height()))
-        video_window.setGeometry(0, 0, width, height)
-        video_window.setVisible(window.property("screen") == "live")
+        if video_container is None:
+            return
+        video_container.setX(0.0)
+        video_container.setY(0.0)
+        video_container.setWidth(max(1.0, float(window.width())))
+        video_container.setHeight(max(1.0, float(window.height())))
+        video_container.setVisible(window.property("screen") == "live")
 
     window.widthChanged.connect(sync_video_surface)
     window.heightChanged.connect(sync_video_surface)
@@ -461,7 +507,12 @@ def run_qt(
 
     key_filter = CouchKeyFilter(controller, window)
     app.installEventFilter(key_filter)
+
+    # Keep Python-owned Qt wrappers alive for the duration of the QML window.
     window._channelos_key_filter = key_filter
+    window._channelos_video_window = video_window
+    window._channelos_video_component = video_component
+    window._channelos_video_container = video_container
 
     app.aboutToQuit.connect(controller.stop)
 

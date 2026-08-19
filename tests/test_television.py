@@ -163,3 +163,28 @@ def test_resume_tuning_uses_saved_viewer_position(tmp_path: Path) -> None:
     assert decision.lag_seconds == pytest.approx(30.0)
     assert backend.loaded == tmp_path / "7" / "00.mp4"
     assert backend.position == pytest.approx(20.0)
+
+
+def test_watch_from_beginning_fractional_boundary_keeps_exact_clock_and_correct_asset(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = RuntimeStore(tmp_path / "runtime.db")
+    channel_7 = ChannelRuntime.open(
+        make_resolved(tmp_path, 7, [15.133, 20.133]),
+        store,
+        now=epoch,
+    )
+    backend = FakeBackend()
+    session = TelevisionSession(TelevisionRuntime((channel_7,), store), backend)
+    program_start = epoch + timedelta(seconds=15.133)
+    reference = epoch + timedelta(seconds=40)
+
+    decision = session.watch_from_beginning(7, program_start, now=reference)
+
+    assert decision.viewer_time_utc == program_start
+    assert decision.lag_seconds == pytest.approx(24.867)
+    assert decision.viewer_selection.program_started_at == program_start
+    assert decision.viewer_selection.offset_seconds == pytest.approx(0.0)
+    assert backend.loaded == tmp_path / "7" / "01.mp4"
+    assert backend.position == pytest.approx(0.0)

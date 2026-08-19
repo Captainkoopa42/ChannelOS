@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
+from .guide import GuideError, GuideService
 from .library import MediaLibrary
 from .loader import load_channel
 from .models import ChannelValidationError
@@ -18,6 +19,7 @@ from .runtime import (
     RuntimeStore,
     TelevisionRuntime,
     require_aware_utc,
+    utc_now,
 )
 from .scanner import MediaScanner
 from .television import TelevisionSession
@@ -114,6 +116,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional ISO-8601 instant; defaults to the current time",
     )
 
+    guide = sub.add_parser(
+        "guide",
+        help="Print a Phase 2 Guide horizon generated from persistent channel schedules.",
+    )
+    guide.add_argument("paths", nargs="+", type=Path, help="one or more channel YAML files")
+    _add_database_argument(guide)
+    _add_runtime_database_argument(guide)
+    guide.add_argument(
+        "--from",
+        dest="from_time",
+        type=_parse_timestamp,
+        help="optional ISO-8601 horizon start; defaults to the current time",
+    )
+    guide.add_argument(
+        "--hours",
+        type=float,
+        default=2.0,
+        help="Guide horizon length in hours (default: 2)",
+    )
+    guide.add_argument(
+        "--why",
+        action="store_true",
+        help="include the deterministic scheduling explanation for each program",
+    )
+
     tv = sub.add_parser(
         "tv",
         help="Run the Phase 1 multi-channel television control harness.",
@@ -152,6 +179,10 @@ def _resolve_or_report(path: Path, library: MediaLibrary):
         )
         return None
     return resolved
+
+
+def _format_guide_time(value: datetime) -> str:
+    return require_aware_utc(value).isoformat(timespec="seconds")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -289,6 +320,61 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Program start: {selection.program_started_at.isoformat()}")
         print(f"Program end: {selection.program_ends_at.isoformat()}")
         print(f"Schedule epoch: {runtime.epoch_utc.isoformat()}")
+        return 0
+
+    if args.command == "guide":
+        if args.hours <= 0:
+            print("ERROR: --hours must be greater than zero", file=sys.stderr)
+            return 2
+
+        library = MediaLibrary(args.db)
+        store = RuntimeStore(args.state_db)
+        opened: list[ChannelRuntime] = []
+        try:
+            for path in args.paths:
+                resolved = _resolve_or_report(path, library)
+                if resolved is None:
+                    return 3
+                opened.append(ChannelRuntime.open(resolved, store))
+
+            service = GuideService(tuple(opened))
+            generated_at = utc_now()
+            start = args.from_time or generated_at
+            end = start + timedelta(hours=float(args.hours))
+            horizon = service.horizon(start, end, generated_at=generated_at)
+        except (ChannelRuntimeError, GuideError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 5
+
+        print(f"Guide generated: {_format_guide_time(horizon.generated_at_utc)}")
+        print(
+            f"Window: {_format_guide_time(horizon.start_utc)} -> "
+            f"{_format_guide_time(horizon.end_utc)}"
+        )
+
+        runtime_by_number = {runtime.channel_number: runtime for runtime in opened}
+        for row in horizon.rows:
+            runtime = runtime_by_number[row.channel_number]
+            channel = runtime.channel.definition
+            now_next = service.now_next(row.channel_number, at=horizon.generated_at_utc)
+            print()
+            print(f"Channel {channel.display_number} — {row.channel_name}")
+            print(f"  NOW:  {now_next.now.display_label}")
+            print(f"  NEXT: {now_next.next.display_label}")
+            for program in row.programs:
+                if program.is_current:
+                    state = "NOW"
+                elif program.is_past:
+                    state = "PAST"
+                else:
+                    state = "NEXT"
+                print(
+                    f"  {_format_guide_time(program.start_utc)} -> "
+                    f"{_format_guide_time(program.end_utc)}  [{state}]  {program.display_label}"
+                )
+                if args.why:
+                    for step in program.explanation:
+                        print(f"      why: {step}")
         return 0
 
     if args.command == "tv":

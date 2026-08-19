@@ -155,10 +155,15 @@ def test_begin_selected_past_entry_starts_exact_scheduled_occurrence_at_zero(tmp
     console, backend = make_console(tmp_path, epoch)
     reference = epoch + timedelta(seconds=42)
     snapshot = console.refresh(at=reference)
-    index = _index_for(snapshot, channel=7, state="past")
+    index = next(
+        index
+        for index, program in enumerate(snapshot.programs)
+        if program.channel_number == 7 and program.start_utc == epoch
+    )
 
     result = console.execute(f"BEGIN {index}", at=reference)
 
+    assert snapshot.programs[index].is_past
     assert "Channel 007" in result
     assert backend.loaded == tmp_path / "7" / "00.mp4"
     assert backend.position == pytest.approx(0.0)

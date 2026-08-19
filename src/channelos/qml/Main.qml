@@ -12,7 +12,7 @@ ApplicationWindow {
     color: "#050c15"
     title: "ChannelOS"
 
-    readonly property color background: "#050c15"
+    readonly property color appBackground: "#050c15"
     readonly property color panel: "#081625"
     readonly property color panelRaised: "#0d2035"
     readonly property color panelSoft: "#10283f"
@@ -184,7 +184,7 @@ ApplicationWindow {
 
     Rectangle {
         anchors.fill: parent
-        color: root.background
+        color: root.appBackground
     }
 
     // Startup / Home: classic split television landing page.
@@ -671,3 +671,4 @@ ApplicationWindow {
         }
     }
 }
+

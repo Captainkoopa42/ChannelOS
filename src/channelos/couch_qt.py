@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
 
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
 from .guide import GuideError, GuideService
+from .library import MediaLibrary
 from .playback import NativeVideoSurface, PlaybackError
 from .runtime import ChannelRuntimeError, TelevisionRuntime, TuneDecision
+from .scanner import MediaScanner, ScanProgress, ScanSummary
 from .television import TelevisionSession
 
 
@@ -21,9 +25,15 @@ class CouchController(QObject):
     snapshotChanged = Signal()
     playbackChanged = Signal()
 
-    def __init__(self, service: GuideService, television: TelevisionRuntime) -> None:
+    def __init__(
+        self,
+        service: GuideService,
+        television: TelevisionRuntime,
+        library: MediaLibrary,
+    ) -> None:
         super().__init__()
         self._service = service
+        self._library = library
         self._actions = CouchActions(service, television)
         self._snapshot = build_couch_snapshot(service)
         self._playback: dict[str, object] = {"active": False}
@@ -42,6 +52,17 @@ class CouchController(QObject):
     def refresh(self) -> None:
         self._snapshot = build_couch_snapshot(self._service)
         self.snapshotChanged.emit()
+
+    def scan_media_folder(
+        self,
+        path: str | Path,
+        *,
+        on_progress: Callable[[ScanProgress], None] | None = None,
+    ) -> ScanSummary:
+        """Index one user-selected media source into the existing local library."""
+
+        scanner = MediaScanner(self._library)
+        return scanner.scan(path, on_progress=on_progress)
 
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         self._actions.attach_video_surface(surface)
@@ -172,7 +193,7 @@ class CouchKeyFilter(QObject):
         if not message:
             return
         self._window.setProperty("statusMessage", message)
-        QTimer.singleShot(2600, lambda: self._window.setProperty("statusMessage", ""))
+        QTimer.singleShot(4200, lambda: self._window.setProperty("statusMessage", ""))
 
     def _rows(self) -> list[dict[str, object]]:
         rows = self._controller.snapshot.get("rows", [])
@@ -212,6 +233,63 @@ class CouchKeyFilter(QObject):
         selected = max(0, min(len(programs) - 1, current + delta))
         self._window.setProperty("selectedProgram", selected)
 
+    def _choose_and_scan_media_folder(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            None,
+            "Choose a ChannelOS media folder",
+            str(Path.home()),
+            QFileDialog.Option.ShowDirsOnly,
+        )
+        if not folder:
+            return
+
+        progress_dialog = QProgressDialog()
+        progress_dialog.setWindowTitle("ChannelOS — Index Media")
+        progress_dialog.setLabelText("Discovering supported media files…")
+        progress_dialog.setCancelButton(None)
+        progress_dialog.setMinimumDuration(0)
+        progress_dialog.setAutoClose(False)
+        progress_dialog.setAutoReset(False)
+        progress_dialog.setRange(0, 1)
+        progress_dialog.setValue(0)
+        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dialog.show()
+        QApplication.processEvents()
+
+        def on_progress(progress: ScanProgress) -> None:
+            maximum = max(1, progress.total)
+            progress_dialog.setRange(0, maximum)
+            progress_dialog.setValue(min(progress.current, maximum))
+            if progress.path is None:
+                progress_dialog.setLabelText(
+                    f"Found {progress.total} supported media file(s). Preparing index…"
+                )
+            else:
+                progress_dialog.setLabelText(
+                    f"Indexing {progress.current} of {progress.total}\n{progress.path.name}"
+                )
+            QApplication.processEvents()
+
+        try:
+            summary = self._controller.scan_media_folder(folder, on_progress=on_progress)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            progress_dialog.close()
+            self._notify({"message": f"Media scan failed — {exc}"})
+            return
+
+        progress_dialog.setValue(max(1, summary.discovered))
+        progress_dialog.close()
+        total_assets = self._controller._library.count_assets()
+        self._notify(
+            {
+                "message": (
+                    f"Library scan complete — {summary.discovered} files • "
+                    f"{summary.new_assets} new • {summary.cache_hits} unchanged • "
+                    f"{total_assets} total assets"
+                )
+            }
+        )
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() != QEvent.Type.KeyPress:
             return False
@@ -242,6 +320,8 @@ class CouchKeyFilter(QObject):
                     self._controller.refresh()
                     self._window.setProperty("screen", "guide")
                     self._select_row(int(self._window.property("selectedRow")))
+                elif selection == 2:
+                    self._choose_and_scan_media_folder()
                 elif selection == 0:
                     self._notify({"message": "Continue Watching will connect to the Viewer Clock in a later slice"})
                 else:
@@ -328,17 +408,18 @@ def _native_video_platform() -> str:
 def run_qt(
     service: GuideService,
     television: TelevisionRuntime,
+    library: MediaLibrary,
     *,
     windowed: bool = False,
 ) -> int:
-    app = QGuiApplication.instance()
+    app = QApplication.instance()
     owns_application = app is None
     if app is None:
-        app = QGuiApplication(sys.argv[:1])
+        app = QApplication(sys.argv[:1])
     app.setApplicationName("ChannelOS")
     app.setOrganizationName("ChannelOS")
 
-    controller = CouchController(service, television)
+    controller = CouchController(service, television, library)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("channelOS", controller)
 

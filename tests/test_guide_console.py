@@ -150,6 +150,19 @@ def test_tune_selected_now_entry_routes_to_live_channel_playback(tmp_path: Path)
     assert backend.position == pytest.approx(12.0)
 
 
+def test_tune_ch_resolves_current_guide_entry_at_command_time(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    console, backend = make_console(tmp_path, epoch)
+    reference = epoch + timedelta(seconds=42)
+
+    result = console.execute("TUNE CH 012", at=reference)
+
+    assert "Channel 012" in result
+    assert "LIVE" in result
+    assert backend.loaded == tmp_path / "12" / "02.mp4"
+    assert backend.position == pytest.approx(2.0)
+
+
 def test_begin_selected_past_entry_starts_exact_scheduled_occurrence_at_zero(tmp_path: Path) -> None:
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     console, backend = make_console(tmp_path, epoch)

@@ -26,7 +26,7 @@ class FakeTelevision:
         return self.result
 
 
-def test_watch_from_beginning_probes_one_microsecond_inside_selected_occurrence() -> None:
+def test_watch_from_beginning_preserves_exact_selected_occurrence_start() -> None:
     start = datetime(2026, 8, 19, 17, 30, 39, 123456, tzinfo=UTC)
     end = start + timedelta(seconds=20.133)
     reference = end + timedelta(seconds=54.667)
@@ -52,8 +52,4 @@ def test_watch_from_beginning_probes_one_microsecond_inside_selected_occurrence(
 
     assert result is television.result
     assert service.validated is program
-    assert television.called_with == (
-        7,
-        start + timedelta(microseconds=1),
-        reference,
-    )
+    assert television.called_with == (7, start, reference)

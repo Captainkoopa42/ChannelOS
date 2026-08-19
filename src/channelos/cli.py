@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from .library import MediaLibrary
@@ -10,10 +11,20 @@ from .models import ChannelValidationError
 from .playback import LibVLCBackend, PlaybackError, PlaybackUnavailableError
 from .probe import FFprobeMediaProbe, MediaProbeError, NullMediaProbe
 from .resolve import ChannelResolutionError, resolve_channel
+from .runtime import (
+    ChannelRuntime,
+    ChannelRuntimeError,
+    ReturnChoiceRequired,
+    RuntimeStore,
+    TelevisionRuntime,
+    require_aware_utc,
+)
 from .scanner import MediaScanner
+from .television import TelevisionSession
 from .tuner import TuneSession
 
 DEFAULT_DATABASE = Path(".channelos") / "library.db"
+DEFAULT_RUNTIME_DATABASE = Path(".channelos") / "runtime.db"
 
 
 def _add_database_argument(parser: argparse.ArgumentParser) -> None:
@@ -23,6 +34,28 @@ def _add_database_argument(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_DATABASE,
         help=f"library database path (default: {DEFAULT_DATABASE})",
     )
+
+
+def _add_runtime_database_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--state-db",
+        type=Path,
+        default=DEFAULT_RUNTIME_DATABASE,
+        help=f"runtime state database path (default: {DEFAULT_RUNTIME_DATABASE})",
+    )
+
+
+def _parse_timestamp(value: str) -> datetime:
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+        return require_aware_utc(parsed)
+    except (ValueError, TypeError) as exc:
+        raise argparse.ArgumentTypeError(
+            "timestamp must be ISO-8601 with a timezone, e.g. 2026-08-19T05:00:00+00:00"
+        ) from exc
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -59,13 +92,40 @@ def build_parser() -> argparse.ArgumentParser:
     resolve.add_argument("path", type=Path, help="channel YAML file")
     _add_database_argument(resolve)
 
-    tune = sub.add_parser("tune", help="Tune a channel through the reference playback backend.")
+    tune = sub.add_parser("tune", help="Tune one channel through the Phase 0 playback harness.")
     tune.add_argument("path", type=Path, help="channel YAML file")
     _add_database_argument(tune)
     tune.add_argument(
         "--dry-run",
         action="store_true",
         help="resolve and print what would play without starting libVLC",
+    )
+
+    broadcast = sub.add_parser(
+        "broadcast",
+        help="Show what a persistent channel is broadcasting at a wall-clock instant.",
+    )
+    broadcast.add_argument("path", type=Path, help="channel YAML file")
+    _add_database_argument(broadcast)
+    _add_runtime_database_argument(broadcast)
+    broadcast.add_argument(
+        "--at",
+        type=_parse_timestamp,
+        help="optional ISO-8601 instant; defaults to the current time",
+    )
+
+    tv = sub.add_parser(
+        "tv",
+        help="Run the Phase 1 multi-channel television control harness.",
+    )
+    tv.add_argument("paths", nargs="+", type=Path, help="one or more channel YAML files")
+    _add_database_argument(tv)
+    _add_runtime_database_argument(tv)
+    tv.add_argument(
+        "--return-behavior",
+        choices=("live", "resume", "ask"),
+        default="live",
+        help="behavior when returning to a channel with saved viewer continuity",
     )
 
     return parser
@@ -77,6 +137,21 @@ def _load_channel_or_report(path: Path):
     except ChannelValidationError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return None
+
+
+def _resolve_or_report(path: Path, library: MediaLibrary):
+    channel = _load_channel_or_report(path)
+    if channel is None:
+        return None
+    resolved = resolve_channel(channel, library)
+    if not resolved.media:
+        print(
+            f"ERROR: Channel {channel.display_number} — {channel.name} has no indexed online media. "
+            "Scan its source folders first.",
+            file=sys.stderr,
+        )
+        return None
+    return resolved
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -140,18 +215,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command in {"resolve", "tune"}:
-        channel = _load_channel_or_report(args.path)
-        if channel is None:
-            return 2
         library = MediaLibrary(args.db)
-        resolved = resolve_channel(channel, library)
-        if not resolved.media:
-            print(
-                f"ERROR: Channel {channel.display_number} — {channel.name} has no indexed online media. "
-                "Scan its source folders first.",
-                file=sys.stderr,
-            )
+        resolved = _resolve_or_report(args.path, library)
+        if resolved is None:
             return 3
+        channel = resolved.definition
 
         if args.command == "resolve":
             print(
@@ -177,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 4
 
-        print("ChannelOS control console. Type 'help' for controls; 'quit' to stop.")
+        print("ChannelOS Phase 0 control console. Type 'help' for controls; 'quit' to stop.")
         try:
             while True:
                 try:
@@ -198,6 +266,91 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             print("\nStopping.")
             backend.stop()
+        return 0
+
+    if args.command == "broadcast":
+        library = MediaLibrary(args.db)
+        resolved = _resolve_or_report(args.path, library)
+        if resolved is None:
+            return 3
+        store = RuntimeStore(args.state_db)
+        try:
+            runtime = ChannelRuntime.open(resolved, store, now=args.at)
+            selection = runtime.broadcast_at(args.at)
+        except ChannelRuntimeError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 5
+
+        channel = resolved.definition
+        print(f"Channel {channel.display_number} — {channel.name}")
+        print(f"Broadcast: {selection.media.location.path}")
+        print(f"Media ID: {selection.media.asset.asset_id}")
+        print(f"Seek: {selection.offset_seconds:.3f}s")
+        print(f"Program start: {selection.program_started_at.isoformat()}")
+        print(f"Program end: {selection.program_ends_at.isoformat()}")
+        print(f"Schedule epoch: {runtime.epoch_utc.isoformat()}")
+        return 0
+
+    if args.command == "tv":
+        library = MediaLibrary(args.db)
+        store = RuntimeStore(args.state_db)
+        opened: list[ChannelRuntime] = []
+        try:
+            for path in args.paths:
+                resolved = _resolve_or_report(path, library)
+                if resolved is None:
+                    return 3
+                opened.append(ChannelRuntime.open(resolved, store))
+            television = TelevisionRuntime(tuple(opened), store)
+            backend = LibVLCBackend()
+            session = TelevisionSession(television, backend)
+
+            start_channel = television.current_channel or television.channel_numbers[0]
+            first = session.tune(
+                start_channel,
+                return_behavior=args.return_behavior,
+            )
+        except (ChannelRuntimeError, PlaybackUnavailableError, PlaybackError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 5
+
+        print(session.describe(first))
+        print(
+            "Phase 1 TV console: TUNE 007, CHANNEL_UP, CHANNEL_DOWN, PREVIOUS_CHANNEL, "
+            "PAUSE, PLAY, SKIP_BACK [s], SKIP_FORWARD [s], GO_LIVE, STATUS, HELP, QUIT"
+        )
+        try:
+            while True:
+                try:
+                    command = input("channelos-tv> ").strip()
+                except EOFError:
+                    command = "QUIT"
+                if not command:
+                    continue
+                upper = command.upper()
+                if upper in {"QUIT", "EXIT"}:
+                    session.stop()
+                    break
+                if upper == "HELP":
+                    print(
+                        "TUNE 007 | CHANNEL_UP | CHANNEL_DOWN | PREVIOUS_CHANNEL | "
+                        "PAUSE | PLAY | SKIP_BACK [seconds] | SKIP_FORWARD [seconds] | "
+                        "GO_LIVE | STATUS | QUIT"
+                    )
+                    continue
+                try:
+                    result = session.execute(
+                        command,
+                        return_behavior=args.return_behavior,
+                    )
+                except (ValueError, ChannelRuntimeError, ReturnChoiceRequired, PlaybackError) as exc:
+                    print(f"ERROR: {exc}")
+                    continue
+                if result:
+                    print(result)
+        except KeyboardInterrupt:
+            print("\nStopping.")
+            session.stop()
         return 0
 
     return 1

@@ -3,14 +3,18 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import TYPE_CHECKING
 
-from .runtime import BroadcastSelection, ChannelRuntime, require_aware_utc, utc_now
+from .runtime import BroadcastSelection, ChannelRuntime, TuneDecision, require_aware_utc, utc_now
+
+if TYPE_CHECKING:
+    from .television import TelevisionSession
 
 _BOUNDARY_EPSILON = timedelta(microseconds=1)
 
 
 class GuideError(ValueError):
-    """Raised when a requested Guide view is invalid."""
+    """Raised when a requested Guide view or action is invalid."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +173,22 @@ class GuideService:
             rows=rows,
         )
 
+    def validate_program(self, program: GuideProgram) -> ChannelRuntime:
+        """Verify that a Guide occurrence still belongs to the current channel schedule."""
+        runtime = self._runtime(program.channel_number)
+        selection = runtime.broadcast_at(program.start_utc + _BOUNDARY_EPSILON)
+        current = _program_from_selection(runtime, selection, relative_to=program.start_utc)
+        if (
+            current.schedule_id != program.schedule_id
+            or current.asset_id != program.asset_id
+            or current.start_utc != program.start_utc
+            or current.end_utc != program.end_utc
+        ):
+            raise GuideError(
+                "Guide program is stale or no longer belongs to the current channel schedule; refresh the Guide"
+            )
+        return runtime
+
     def _runtime(self, channel_number: int) -> ChannelRuntime:
         for runtime in self._runtimes:
             if runtime.channel_number == channel_number:
@@ -195,4 +215,35 @@ class GuideService:
             channel_number=runtime.channel_number,
             channel_name=runtime.channel.definition.name,
             programs=tuple(programs),
+        )
+
+
+class GuideController:
+    """Routes actions on Guide occurrences through the normal ChannelOS television path."""
+
+    def __init__(self, service: GuideService, television: TelevisionSession) -> None:
+        self.service = service
+        self.television = television
+
+    def tune(self, program: GuideProgram, *, at: datetime | None = None) -> TuneDecision:
+        reference = require_aware_utc(at or utc_now())
+        self.service.validate_program(program)
+        if not (program.start_utc <= reference < program.end_utc):
+            raise GuideError("Tune from Guide requires a program that is currently airing")
+        return self.television.tune(program.channel_number, now=reference, return_behavior="live")
+
+    def watch_from_beginning(
+        self,
+        program: GuideProgram,
+        *,
+        at: datetime | None = None,
+    ) -> TuneDecision:
+        reference = require_aware_utc(at or utc_now())
+        self.service.validate_program(program)
+        if program.start_utc > reference:
+            raise GuideError("cannot Watch from Beginning before the scheduled program has started")
+        return self.television.watch_from_beginning(
+            program.channel_number,
+            program.start_utc,
+            now=reference,
         )

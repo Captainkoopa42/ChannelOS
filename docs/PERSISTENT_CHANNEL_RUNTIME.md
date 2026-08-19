@@ -1,6 +1,6 @@
 # Persistent Channel Runtime
 
-**Status:** Phase 1 implementation candidate; automated reference-core tests passing  
+**Status:** Phase 1 complete candidate; automated and real-machine gates passing  
 **Phase:** 1 — Channel Runtime / Persistent Channels
 
 ## Purpose
@@ -36,7 +36,7 @@ No hidden VLC instance had to play Channel 007 for those 42 seconds.
 
 ## Broadcast Clock
 
-The current Phase 1 timeline is an indefinitely repeating deterministic sequential schedule.
+Phase 1 supports indefinitely repeating deterministic sequential and deterministic shuffle schedules.
 
 For a schedule with total cycle duration `T`, ChannelOS computes:
 
@@ -48,6 +48,14 @@ cycle_position = elapsed mod T
 The cumulative durations identify the active program and the in-program seek offset.
 
 The math is defined both after and before the stored epoch, which keeps deterministic tests and future schedule inspection well behaved.
+
+### Deterministic shuffle and repeat avoidance
+
+Shuffle is derived from the channel number plus stable media asset IDs. It does not depend on process-local randomness or file paths, so restarting ChannelOS or moving a file without changing its stable asset identity does not silently produce a different shuffle order.
+
+Every eligible asset appears once in the generated shuffle cycle before the cycle repeats.
+
+`avoid_repeat_days` is treated as a guarantee, not a hint. If the total eligible media duration is shorter than the requested repeat-avoidance window, ChannelOS rejects that programming configuration and explains that more eligible media or a smaller repeat window is required.
 
 ### Duration requirement
 
@@ -62,9 +70,11 @@ The current intended path is to scan with the existing `ffprobe` adapter rather 
 Each resolved channel gets a deterministic schedule signature derived from:
 
 - channel number,
-- programming mode,
-- ordered stable media asset IDs,
+- programming policy,
+- stable media asset IDs,
 - indexed media durations.
+
+For sequential programming, source order is part of the effective timeline. For shuffle, stable asset identity determines the order so path movement does not mutate the schedule.
 
 The local runtime SQLite database stores:
 
@@ -187,7 +197,7 @@ This text console is still an engineering harness, not the final television UI.
 
 ## Automated validation
 
-The Phase 1 branch currently tests:
+The Phase 1 branch tests:
 
 - mid-program Broadcast Clock selection,
 - cycle wraparound,
@@ -205,23 +215,31 @@ The Phase 1 branch currently tests:
 - playback routing through a fake backend,
 - CLI Broadcast Clock persistence,
 - CLI television startup through the Phase 1 session,
-- missing-file recovery after a real rescan marks an asset offline.
+- missing-file recovery after a real rescan marks an asset offline,
+- cached technical-metadata enrichment without re-hashing,
+- Windows libVLC runtime discovery,
+- deterministic shuffle stability,
+- path-independent shuffle order,
+- all-assets-before-repeat behavior,
+- repeat-window rejection when the media pool is too short,
+- schedule re-anchoring when shuffle policy changes.
 
 CI runs the reference core on Python 3.11, 3.12, and 3.13.
 
-## Remaining Phase 1 work
+## Phase 1 gate status
 
-The main unimplemented roadmap item is deterministic shuffle programming with repeat avoidance.
+The preferred real-machine smoke test has passed on Windows with genuine indexed NVIDIA-recorded MP4 media through libVLC:
 
-Before Phase 1 is merged, the preferred real-machine smoke test is:
+1. selected media was enriched with indexed technical durations without re-hashing,
+2. Channels 007 and 012 were defined with independent persistent schedules,
+3. the Phase 1 `tv` harness launched genuine media,
+4. Channel 007 was tuned and its current program/offset observed,
+5. playback switched to Channel 012,
+6. Channel 007 advanced while untuned and without background decoding,
+7. Previous Channel returned to the later live point on Channel 007,
+8. pause froze the Viewer Clock while Broadcast Clock accumulated lag,
+9. play resumed the personal playhead while preserving lag,
+10. `GO_LIVE` jumped back to the current broadcast point,
+11. Channel 012 was changed from sequential to shuffle and real playback opened a shuffled program rather than source order.
 
-1. ensure the selected real media has indexed durations,
-2. define Channel 007 and Channel 012,
-3. start the Phase 1 `tv` harness,
-4. tune Channel 007 and note the program/offset,
-5. switch to Channel 012,
-6. wait long enough for Channel 007's Broadcast Clock to advance,
-7. return to Channel 007 in `live` mode and verify it lands at the correct later point,
-8. repeat with `resume`, pause, skip, and `GO_LIVE`.
-
-Passing that test demonstrates the fundamental ChannelOS television behavior on a real decoder and real user media.
+That validates the fundamental Phase 1 ChannelOS television behavior on a real decoder and real user media.

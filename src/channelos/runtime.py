@@ -11,6 +11,7 @@ from .library import IndexedMedia
 from .resolve import ResolvedChannel
 
 RUNTIME_SCHEMA_VERSION = 1
+SECONDS_PER_DAY = 86400.0
 
 
 class ChannelRuntimeError(RuntimeError):
@@ -135,19 +136,63 @@ class SequentialTimeline:
         )
 
 
+def deterministic_shuffle_order(channel: ResolvedChannel) -> tuple[IndexedMedia, ...]:
+    """Return a stable asset permutation independent of paths and process randomness."""
+
+    asset_ids = sorted(item.asset.asset_id for item in channel.media)
+    seed_payload = {
+        "schema": 1,
+        "channel": channel.definition.channel,
+        "asset_ids": asset_ids,
+    }
+    encoded = json.dumps(seed_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    seed = hashlib.sha256(encoded).digest()
+
+    def order_key(item: IndexedMedia) -> tuple[bytes, str]:
+        digest = hashlib.sha256(seed + item.asset.asset_id.encode("utf-8")).digest()
+        return digest, item.asset.asset_id
+
+    return tuple(sorted(channel.media, key=order_key))
+
+
+def _validate_shuffle_repeat_window(timeline: SequentialTimeline, avoid_repeat_days: int) -> None:
+    if avoid_repeat_days <= 0:
+        return
+
+    required_seconds = float(avoid_repeat_days) * SECONDS_PER_DAY
+    if timeline.cycle_duration_seconds >= required_seconds:
+        return
+
+    available_hours = timeline.cycle_duration_seconds / 3600.0
+    raise ChannelRuntimeError(
+        "shuffle repeat avoidance cannot guarantee "
+        f"{avoid_repeat_days} day(s) without repeats: the eligible media pool spans only "
+        f"{available_hours:.2f} hours. Add eligible media or reduce avoid_repeat_days."
+    )
+
+
 def schedule_signature(channel: ResolvedChannel) -> str:
     """Return a deterministic fingerprint of the inputs that define a channel timeline."""
 
+    programming = channel.definition.programming
+    signature_media = channel.media
+    if programming.mode == "shuffle":
+        signature_media = tuple(sorted(channel.media, key=lambda item: item.asset.asset_id))
+
     payload = {
-        "schema": 1,
+        "schema": 2,
         "channel": channel.definition.channel,
-        "mode": channel.definition.programming.mode,
+        "programming": {
+            "mode": programming.mode,
+            "preserve_episode_order": programming.preserve_episode_order,
+            "avoid_repeat_days": programming.avoid_repeat_days,
+        },
         "media": [
             {
                 "asset_id": item.asset.asset_id,
                 "duration_seconds": item.asset.duration_seconds,
             }
-            for item in channel.media
+            for item in signature_media
         ],
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -396,11 +441,20 @@ class ChannelRuntime:
         *,
         now: datetime | None = None,
     ) -> "ChannelRuntime":
-        if channel.definition.programming.mode != "sequential":
+        programming = channel.definition.programming
+        if programming.mode == "sequential":
+            ordered_media = channel.media
+        elif programming.mode == "shuffle":
+            ordered_media = deterministic_shuffle_order(channel)
+        else:
             raise ChannelRuntimeError(
-                "Phase 1 Broadcast Clock currently requires programming.mode='sequential'"
+                f"unsupported programming mode for Broadcast Clock: {programming.mode!r}"
             )
-        timeline = SequentialTimeline(channel.media)
+
+        timeline = SequentialTimeline(ordered_media)
+        if programming.mode == "shuffle":
+            _validate_shuffle_repeat_window(timeline, programming.avoid_repeat_days)
+
         signature = schedule_signature(channel)
         persisted = store.ensure_channel(
             channel.definition.channel,

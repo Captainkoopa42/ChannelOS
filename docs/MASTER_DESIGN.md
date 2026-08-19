@@ -5,7 +5,7 @@
 > Own the library. Own the schedule. Own the interface.
 
 **Status:** Living design / pre-alpha  
-**Design version:** 0.2 — August 2026  
+**Design version:** 0.3 — August 2026  
 **Role:** Canonical product and system design reference
 
 ---
@@ -14,13 +14,13 @@
 
 This document is the central design reference for ChannelOS.
 
-The repository contains narrower documents for vision, architecture, roadmap, implementation decisions, and file formats. This file exists to keep the whole idea visible in one place so contributors can answer a more important question than *“what code are we writing?”*:
+The repository contains narrower documents for vision, architecture, roadmap, implementation decisions, current milestones, and file formats. This file exists to keep the whole idea visible in one place so contributors can answer a more important question than *“what code are we writing?”*:
 
 > **What are we trying to build, what should it feel like, and what must never be lost as the implementation changes?**
 
 When a lower-level implementation choice conflicts with the principles in this document, the implementation should change unless the design itself is deliberately revised.
 
-ChannelOS is not defined by Python, YAML, VLC, a particular operating system, or a particular remote-control technology. Those are replaceable implementation choices.
+ChannelOS is not defined by Python, YAML, VLC, Steam, SteamOS, a particular operating system, or a particular remote-control technology. Those are replaceable implementation and distribution choices.
 
 ChannelOS is defined by its relationship with the user:
 
@@ -30,7 +30,7 @@ ChannelOS is defined by its relationship with the user:
 
 ## 2. The core idea
 
-ChannelOS is a local-first, open-source personal television system built around media the user owns or legitimately controls.
+ChannelOS is a local-first personal television system built around media the user owns or legitimately controls.
 
 It combines two experiences that modern media systems often separate:
 
@@ -50,6 +50,8 @@ A shorter product phrase is:
 Traditional cable gives the broadcaster control over the schedule. Streaming gives the viewer control over selection but turns most viewing into active browsing. ChannelOS gives the user both roles.
 
 > **The user is not merely the audience. The user is the broadcaster.**
+
+ChannelOS is intended to become open-source software. The repository currently has not yet selected an open-source license, so that legal release step remains explicit rather than assumed.
 
 ---
 
@@ -81,7 +83,7 @@ A useful summary is:
 
 ## 4. Constitutional principles
 
-These principles should be treated as hard constraints unless the project deliberately changes its identity.
+These principles are hard constraints unless the project deliberately changes its identity.
 
 ### 4.1 Ownership first
 
@@ -95,16 +97,16 @@ Deleting ChannelOS must not delete or invalidate the user's collection.
 
 Core functions should not require the internet:
 
-- media indexing
-- channel generation
-- tuning
-- scheduling
-- guide generation
-- playback
-- profiles
-- watch state
-- local metadata already stored by the system
-- export/import
+- media indexing,
+- channel generation,
+- tuning,
+- scheduling,
+- Guide generation,
+- playback,
+- profiles,
+- watch state,
+- local metadata already stored by the system,
+- export/import.
 
 Online services may enhance the experience. They must not authorize the user's right to use the core system.
 
@@ -112,11 +114,11 @@ Online services may enhance the experience. They must not authorize the user's r
 
 Channel definitions, exports, metadata overrides, and other durable configuration should be documented and portable.
 
-A user must be able to leave ChannelOS without losing the organizational work they put into ChannelOS.
+A user must be able to leave ChannelOS without losing the organizational work they put into it.
 
 ### 4.4 Couch first
 
-Routine viewing must be comfortable from a couch with a remote.
+Routine viewing must be comfortable from a couch with a remote or controller.
 
 A mouse should not be required for normal television use.
 
@@ -138,13 +140,11 @@ The user can:
 
 ChannelOS does not inject advertising into local user-owned media.
 
-Users may intentionally program trailers, bumpers, station IDs, home videos, public-service material, music, or even their own commercial-like breaks if they want them. The system should not impose them.
+Users may intentionally program trailers, bumpers, station IDs, home videos, public-service material, music, or their own commercial-like breaks if they want them. The system should not impose them.
 
 ### 4.7 Explainable automation
 
 When ChannelOS selects content automatically, the user should be able to understand why.
-
-Example:
 
 ```text
 Channel 7
@@ -158,17 +158,96 @@ Automation should serve the broadcaster, not become an invisible authority.
 
 ### 4.8 Replaceable components
 
-Playback engines, metadata providers, source adapters, remotes, and user interfaces should be replaceable behind stable ChannelOS interfaces.
+Playback engines, metadata providers, source adapters, remotes, user interfaces, and distribution channels should be replaceable behind stable ChannelOS interfaces.
 
-The project should avoid becoming dependent on one vendor, one cloud API, or one media engine when a clean abstraction can prevent that dependency.
+The project should avoid becoming dependent on one vendor, one cloud API, one player engine, or one storefront when a clean abstraction can prevent that dependency.
+
+### 4.9 Distribution is not entitlement
+
+A platform may install, update, launch, or help users discover ChannelOS. It must not become the authority that decides whether the user's standalone or appliance installation may play local media.
+
+This principle is especially important because Steam is the preferred primary public launch target.
 
 ---
 
-## 5. The four user-facing modes
+## 5. Product forms and deployment
+
+ChannelOS should be one television system that can inhabit several kinds of host.
+
+```text
+ChannelOS Core
+   ├── Desktop / PC application
+   │      Windows / Linux
+   │      ordinary installable program
+   │
+   ├── Steam / SteamOS application
+   │      preferred public launch/discovery target
+   │      living-room/controller-first
+   │
+   └── Dedicated appliance
+          minimal host OS
+          boots directly into ChannelOS
+          HDMI + remote/controller
+```
+
+### 5.1 Desktop application
+
+The ordinary software form should install and run like a normal application on supported Windows and Linux systems.
+
+A user can point it at local disks, removable storage, or network shares and use ChannelOS without turning the entire computer into an appliance.
+
+### 5.2 Steam and SteamOS
+
+Steam is the preferred **primary public launch and discovery target**, subject to Valve accepting the application and the project satisfying release requirements.
+
+If ChannelOS is distributed on Steam, the intended listing is free to users.
+
+SteamOS and Steam Machine-class living-room PCs are especially attractive reference hosts because the ChannelOS product is already designed around:
+
+- a television,
+- controller/remote-style input,
+- fullscreen launching,
+- local PC storage,
+- PC-class hardware decoding,
+- an application library that can be launched from the couch.
+
+But the architectural rule is explicit:
+
+> **Steam may be where many users get ChannelOS. Steam must never be what makes ChannelOS theirs.**
+
+A Steam account, Steam client, or Steam entitlement check must not be required for standalone or appliance local playback.
+
+### 5.3 Dedicated appliance
+
+The same core should eventually be capable of turning a supported small PC into a dedicated ChannelOS receiver.
+
+ChannelOS does **not** need a custom kernel to do this. A minimal existing Linux base can provide drivers, filesystems, networking, GPU/video support, USB, Bluetooth, and HDMI, then boot directly into ChannelOS.
+
+```text
+POWER
+  ↓
+minimal host OS
+  ↓
+ChannelOS runtime/service
+  ↓
+full-screen ChannelOS UI
+  ↓
+TV
+```
+
+From the couch, the underlying general-purpose OS should disappear.
+
+The system is the product. The box is one possible host.
+
+See [ADR-0004](decisions/0004-distribution-and-appliance-neutrality.md).
+
+---
+
+## 6. The four user-facing modes
 
 ChannelOS has four major user experiences. They are different views over the same library and runtime.
 
-### 5.1 Live TV
+### 6.1 Live TV
 
 Live TV is the passive mode.
 
@@ -176,28 +255,26 @@ Turn on ChannelOS and a channel is already playing. Enter a number or use Channe
 
 Core controls:
 
-- digits `0–9`
-- Channel Up / Down
-- Previous Channel
-- Volume Up / Down
-- Mute
-- Play / Pause
-- Rewind
-- Fast Forward
-- Skip Back / Skip Forward
-- LIVE
-- Guide
-- Info
-- Home
-- Back
+- digits `0–9`,
+- Channel Up / Down,
+- Previous Channel,
+- Volume Up / Down,
+- Mute,
+- Play / Pause,
+- Rewind,
+- Fast Forward,
+- Skip Back / Skip Forward,
+- LIVE,
+- Guide,
+- Info,
+- Home,
+- Back.
 
 The goal is not to mimic old television limitations. The goal is to preserve television's simplicity while giving the owner better control.
 
-### 5.2 Guide
+### 6.2 Guide
 
 The Guide is a traditional electronic program guide generated from the user's own channels.
-
-Example:
 
 ```text
               8:00          8:30          9:00          9:30
@@ -209,18 +286,16 @@ Example:
  12  Trek     DS9 ──────────→ Voyager ─────────→ Enterprise ─────→
 ```
 
-The Guide should support television-like navigation while taking advantage of the fact that the media is locally available.
+The Guide should support television-like navigation while taking advantage of local ownership:
 
-Possible behavior:
+- select a currently airing program → **Tune**,
+- select a future program → **Info / future schedule actions**,
+- select an eligible past/current owned program → **Watch from Beginning**,
+- press Info → display why it was scheduled.
 
-- select a currently airing program → **Tune**
-- select a future program → **Info / Reminder / Schedule options**
-- select a past program still present in the library → **Watch from beginning**
-- press Info → display why it was scheduled
+The Guide is a view over schedule truth. It must not invent a second scheduling system.
 
-This means ChannelOS can feel like cable while being more forgiving than cable.
-
-### 5.3 Library / On Demand
+### 6.3 Library / On Demand
 
 The Library is the active selection mode.
 
@@ -228,18 +303,18 @@ Users should be able to browse their collection as a rich media shelf rather tha
 
 Top-level examples:
 
-- Movies
-- Television
-- Documentaries
-- Animation
-- Home Video
-- Music / Audio where supported
-- Collections
-- Genres
-- Tags
-- Favorites
-- Continue Watching
-- Recently Added
+- Movies,
+- Television,
+- Documentaries,
+- Animation,
+- Home Video,
+- Music / Audio where supported,
+- Collections,
+- Genres,
+- Tags,
+- Favorites,
+- Continue Watching,
+- Recently Added.
 
 A title page might show:
 
@@ -252,51 +327,26 @@ Alien
 PLAY
 ADD TO CHANNEL
 MORE INFO
-
-Director
-Cast
-Genres
-Description
-Audio / subtitle information
 ```
 
-A series page might expose:
+The Library and channel system must operate on the same canonical media index. They should never become separate collections that drift apart.
 
-```text
-Star Trek: Deep Space Nine
-7 Seasons • 176 Episodes
-
-CONTINUE
-SEASONS
-EPISODES
-ADD SERIES TO CHANNEL
-MORE INFO
-```
-
-The Library and the channel system must operate on the same canonical media index. They should never become separate collections that drift apart.
-
-### 5.4 Management / Broadcaster mode
+### 6.4 Management / Broadcaster mode
 
 Television viewing should be remote-simple. Media administration does not have to be.
 
-ChannelOS should eventually provide a richer management interface, ideally reachable from a desktop or phone browser on the local network.
-
 Management tasks include:
 
-- add files or folders
-- add network locations
-- add removable storage
-- detect supported discs
-- review unmatched media
-- correct metadata
-- select posters or artwork
-- create genres and tags
-- create channels
-- edit channel numbers
-- build schedules and programming blocks
-- create profiles
-- manage parental/household restrictions if enabled
-- backup/export the system
+- add files/folders/network locations/removable storage,
+- review unmatched media,
+- correct metadata,
+- select artwork,
+- create genres/tags/collections,
+- create and number channels,
+- build schedules and programming blocks,
+- create profiles,
+- manage household restrictions if enabled,
+- backup/export the system.
 
 A useful long-term pattern is:
 
@@ -312,7 +362,7 @@ The television remains simple while deep control remains available.
 
 ---
 
-## 6. The fundamental channel model
+## 7. The fundamental channel model
 
 A channel is **not a folder** and **not merely a playlist**.
 
@@ -320,63 +370,46 @@ A channel is a programmable broadcast identity over one or more media sources.
 
 It has at least:
 
-- channel number
-- name
-- optional branding/artwork
-- eligible source selectors
-- scheduling rules
-- programming rules
-- continuity state
-- generated timeline
-- Now / Next state
-- optional profile-specific behavior
+- channel number,
+- name,
+- optional branding/artwork,
+- eligible source selectors,
+- scheduling rules,
+- programming rules,
+- continuity state,
+- generated timeline,
+- Now / Next state,
+- optional profile-specific behavior.
 
-Example:
+Current schema `0.1` deliberately supports a smaller subset than the long-term model. Future source selectors and programming modes must be added through explicit versioned schema changes rather than silently changing existing definitions.
+
+Example of current-style intent:
 
 ```yaml
 schema_version: "0.1"
 channel: 7
 name: Sci-Fi
 sources:
-  genres:
-    - Sci-Fi
-  collections:
-    - Stargate SG-1
-    - Star Trek: The Next Generation
-    - The Expanse
+  - path: /media/TV/Sci-Fi
 programming:
-  mode: weighted_rotation
-  preserve_episode_order: true
-  avoid_repeat_days: 14
+  mode: shuffle
+  preserve_episode_order: false
+  avoid_repeat_days: 0
+presentation:
+  number_width: 3
 ```
 
-Another channel could be defined almost entirely from user tags:
-
-```yaml
-channel: 31
-name: Late Night Horror
-sources:
-  tags:
-    - horror
-    - late-night
-programming:
-  start_after: "21:00"
-  mode: shuffle_no_repeat
-```
-
-When new media receives the `late-night` tag, it can automatically become eligible for Channel 31.
-
-This makes organization and broadcasting parts of one system.
+Longer-term channel sources may come from genres, tags, collections, series, paths, or combinations of them.
 
 ---
 
-## 7. Broadcast time and viewer time
+## 8. Broadcast time and viewer time
 
-This is one of ChannelOS's foundational concepts.
+This is one of ChannelOS's foundational concepts and is already implemented in Phase 1.
 
 Each channel has a **Broadcast Clock**: what the channel would be showing at a given time whether or not anyone is currently watching it.
 
-Each viewer session has a **Viewer Clock**: where the person is currently watching within that channel's timeline.
+Each viewer has a **Viewer Clock**: where that person is currently watching within the channel's timeline.
 
 Normally:
 
@@ -394,60 +427,54 @@ Viewer:     21:47:12
 Offset:     -00:05:00
 ```
 
-Resume and the viewer remains five minutes behind.
-
-Fast-forward can reduce that gap until the viewer reaches LIVE.
-
-Rewind can move through earlier parts of the current program and, where the schedule is reconstructable, earlier scheduled programs.
+Resume and the viewer remains five minutes behind. Fast-forward can reduce that gap until LIVE. Rewind can move through reconstructable earlier schedule time.
 
 The key design rule is:
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**
 
-That resolves the apparent tension between authentic television behavior and direct ownership control.
-
 ### Returning to a channel
 
-Profiles or channels may support different return behaviors:
+ChannelOS supports three explicit return policies:
 
-- `live` — return to the channel's current broadcast point
-- `resume` — return to the viewer position previously left behind
-- `ask` — offer both when meaningful
+- `live` — return to the channel's current broadcast point,
+- `resume` — return to the viewer position previously left behind,
+- `ask` — expose both choices when meaningful.
 
-The system should not assume one philosophy is correct for every household.
+See [ADR-0003](decisions/0003-persistent-channel-clocks.md).
 
 ---
 
-## 8. Programming engine
+## 9. Programming engine
 
 The programming engine converts channel definitions, indexed media, schedule rules, and runtime state into a deterministic or explainable timeline.
 
-Initial programming capabilities should include:
+Phase 1 has implemented and validated:
 
-- sequential episode order
-- shuffled playback
-- shuffle with repeat avoidance
-- weighted rotation
-- time-of-day blocks
-- weekday/weekend rules
-- morning / afternoon / prime-time / late-night identities
-- marathons
-- movie feature slots
-- seasonal programming
-- specials
-- user-selected trailers
-- bumpers
-- station IDs
-- intermissions
-- music or atmosphere blocks
+- deterministic sequential programming,
+- deterministic shuffle derived from stable asset identity,
+- all eligible shuffle items before cycle repetition,
+- strict `avoid_repeat_days` feasibility validation.
 
-Longer term, ChannelOS may support smarter local scheduling, but a user should always be able to inspect and override it.
+Longer-term programming capabilities include:
+
+- weighted rotation,
+- time-of-day blocks,
+- weekday/weekend rules,
+- morning / afternoon / prime-time / late-night identities,
+- marathons,
+- movie feature slots,
+- seasonal programming,
+- specials,
+- user-selected trailers,
+- bumpers,
+- station IDs,
+- intermissions,
+- music or atmosphere blocks.
 
 The programming engine should operate without actually decoding every channel.
 
-If a household has 100 channels, ChannelOS should not require 100 simultaneously playing videos. It only needs a timeline describing what each channel *would* be broadcasting.
-
-When the user tunes Channel 7 at 21:47, the runtime resolves:
+If a household has 100 channels, ChannelOS should not require 100 simultaneously playing videos. It only needs schedule state describing what each channel *would* be broadcasting.
 
 ```text
 Channel 7 schedule:
@@ -465,11 +492,59 @@ Only the tuned media needs to be decoded.
 
 ---
 
-## 9. Media library and index
+## 10. Guide and UI-facing service boundary
+
+Phase 2 introduces the next important architectural boundary.
+
+The UI should not reach into runtime internals or recalculate channel schedules. Instead, ChannelOS should expose television-facing read models and control intents.
+
+```text
+Channel Runtime
+      ↓
+Guide / Television Service Boundary
+      ├── schedule horizon
+      ├── Now / Next
+      ├── Guide channel rows
+      ├── program detail
+      ├── explain-why trace
+      └── control intents
+      ↓
+UI clients
+```
+
+The boundary should support at least:
+
+- Guide horizons over a requested time range,
+- Now / Next per channel,
+- numeric channel identity and names,
+- program start/end/duration,
+- stable references to scheduled owned media,
+- LIVE/viewer state where relevant,
+- explain-why traces,
+- tune from Guide,
+- Watch from Beginning where schedule reconstruction and owned media permit it.
+
+The first implementation may remain in-process. It should still be explicit enough to become a local API or IPC service later.
+
+That allows the same core to drive:
+
+- desktop UI,
+- fullscreen couch UI,
+- Steam/SteamOS launch,
+- dedicated appliance UI,
+- local management web UI,
+- phone/tablet remote,
+- multi-TV household clients.
+
+See [GUIDE_AND_UI_BOUNDARY.md](GUIDE_AND_UI_BOUNDARY.md).
+
+---
+
+## 11. Media library and index
 
 The media library is the durable center of ChannelOS.
 
-ChannelOS should index media rather than absorb it.
+ChannelOS indexes media rather than absorbing it.
 
 The source files remain where the user chooses:
 
@@ -482,32 +557,19 @@ NAS:/FamilyVideo/
 
 The index may record:
 
-- stable ChannelOS media ID
-- current path
-- file identity/fingerprint information
-- media type
-- title
-- original title where useful
-- year
-- runtime
-- series
-- season
-- episode
-- episode title
-- genres
-- user tags
-- collections
-- cast
-- director/creator
-- description
-- poster
-- backdrop
-- audio tracks
-- subtitle tracks
-- technical media information
-- metadata source
-- user overrides
-- availability state
+- stable ChannelOS media ID,
+- current path/location(s),
+- file identity/fingerprint information,
+- media type,
+- title/year/runtime,
+- series/season/episode,
+- genres/tags/collections,
+- cast/creator data,
+- description/artwork,
+- audio/subtitle tracks,
+- technical media information,
+- metadata source and user overrides,
+- availability state.
 
 Runtime databases can be disposable. The user's media cannot be.
 
@@ -515,147 +577,37 @@ Runtime databases can be disposable. The user's media cannot be.
 
 Paths change. Drives get renamed. NAS mounts move.
 
-The media index should therefore grow toward stable media identity rather than treating the current path as the media's identity.
+The Phase 0 reference core identifies exact file content with a full-file SHA-256 ID and stores filesystem location separately.
 
 A user should be able to move a library and relink it without rebuilding every channel from scratch.
 
 ---
 
-## 10. Import and file discovery
+## 12. Import, metadata, tags, and collections
 
 Adding media should be easy enough for ordinary household use.
 
-The TV interface may expose a simple **Add Media** entry, while the management interface provides the full workflow.
+The TV interface may expose simple Add Media actions while the management interface provides deeper workflows.
 
-Possible inputs:
-
-```text
-ADD MEDIA
-
-Select Files
-Select Folder
-Add Network Location
-Add Removable Drive
-Add Disc
-```
-
-A folder import should recursively discover supported files without moving them.
-
-Example:
-
-```text
-D:\Media\
-    Movies\
-        Alien (1979).mkv
-    Television\
-        Futurama\
-            Season 03\
-                S03E01.mkv
-        Star Trek Deep Space Nine\
-            Season 04\
-                S04E11.mkv
-```
-
-ChannelOS should attempt to identify these items and then present uncertain matches for review.
-
-The ideal experience resembles the best parts of older desktop media libraries: insert or point to something, and the system tries to make the collection visually understandable with titles, covers, descriptions, and grouping.
-
-It should never silently rewrite or reorganize the user's files unless the user explicitly requests such a tool.
-
----
-
-## 11. Metadata and artwork
+ChannelOS should never silently rewrite or reorganize the user's files unless the user explicitly requests such a tool.
 
 Metadata should make a personal library pleasant to browse without becoming another dependency trap.
 
-ChannelOS should support a provider abstraction:
+Potential provider boundary:
 
 ```text
 MetadataProvider
-    ├── Online provider plugin A
-    ├── Online provider plugin B
+    ├── Online provider plugin
     ├── Local sidecar metadata
     ├── Embedded metadata
     └── Manual entry
 ```
 
-Provider availability should not determine whether the library remains usable.
+Users should be able to override titles, artwork, descriptions, genres, tags, numbering, collections, and match identity.
 
-Once metadata is retrieved or entered, ChannelOS should cache durable information locally where licensing and provider terms permit.
-
-Users should be able to override:
-
-- title
-- poster
-- backdrop
-- description
-- genres
-- tags
-- season/episode numbering
-- collection membership
-- match identity
-
-### Portable metadata
-
-ChannelOS should eventually support exporting metadata alongside media mappings, potentially through portable sidecars or an export package.
-
-The exact format is still a design decision, but the principle is fixed:
+Genres are broad classification. Tags are personal concepts. Collections are explicit groups. Channels are programmable broadcast views that can eventually select from all of them without duplicating media files.
 
 > Losing access to a metadata website should not turn a carefully organized local library back into meaningless filenames.
-
----
-
-## 12. Genres, tags, collections, and channels
-
-ChannelOS should distinguish several organizational concepts.
-
-### Genres
-
-Broad classification such as:
-
-- Action
-- Animation
-- Comedy
-- Crime
-- Documentary
-- Drama
-- Fantasy
-- Horror
-- Science Fiction
-- Thriller
-- Western
-
-Metadata providers may suggest genres, but the user can edit them.
-
-### User tags
-
-Personal concepts that may not exist in standard metadata:
-
-- Comfort TV
-- Late Night
-- Creature Feature
-- Background
-- Family Favorite
-- Rainy Day
-- Holiday
-- Childhood
-
-Tags are particularly useful because they can drive channels.
-
-### Collections
-
-Explicit groups such as:
-
-- Star Trek
-- Alien franchise
-- Christmas Movies
-- Nature Documentaries
-
-### Channels
-
-Programmable broadcast views that select from genres, tags, collections, series, paths, or combinations of them.
-
-The same media can belong to multiple genres, tags, collections, and channels without duplication of the actual media file.
 
 ---
 
@@ -665,51 +617,21 @@ The media library belongs to the ChannelOS installation or household, while prof
 
 A profile may contain:
 
-- watch history
-- Continue Watching state
-- favorites
-- ratings/reactions
-- viewer clock offsets
-- return-to-channel behavior
-- language/subtitle preferences
-- preferred audio behavior
-- personal channels
-- channel weighting preferences
-- UI preferences
-- content visibility rules where configured
+- watch history,
+- Continue Watching state,
+- favorites,
+- viewer clock offsets,
+- return-to-channel behavior,
+- language/subtitle preferences,
+- personal channels,
+- UI preferences,
+- content visibility rules where configured.
 
-Conceptually:
-
-```text
-HOUSEHOLD LIBRARY
-        │
-        ├── Profile A
-        │     history
-        │     favorites
-        │     viewer state
-        │     personal channels
-        │
-        ├── Profile B
-        │     history
-        │     favorites
-        │     viewer state
-        │
-        └── Kids
-              allowed library
-              allowed channels
-              viewer state
-```
-
-ChannelOS may support both:
-
-- **Household channels** shared by everyone
-- **Personal channels** belonging to one profile
-
-The architecture should allow this without duplicating the underlying media.
+ChannelOS may support both household channels shared by everyone and personal channels belonging to one profile without duplicating underlying media.
 
 ---
 
-## 14. Playback architecture
+## 14. Playback architecture and packaging
 
 ChannelOS should not waste years re-solving media decoding.
 
@@ -719,61 +641,77 @@ Playback belongs behind a backend-neutral adapter.
 Channel Runtime
       │
       ▼
-Playback Adapter API
+PlaybackBackend
       │
-      ├── LibVLC backend   ← first reference backend
-      ├── mpv backend      ← possible alternative
+      ├── LibVLCBackend   ← first reference backend
+      ├── future mpv backend
       └── future backends
 ```
 
-**libVLC is the preferred first reference backend.**
-
 ChannelOS owns:
 
-- what should play
-- when it should play
-- where playback should begin
-- channel switching
-- viewer time
-- volume intent
-- mute state
-- pause/play state
-- seek commands
-- guide state
-- continuity
+- what should play,
+- when it should play,
+- where playback should begin,
+- channel switching,
+- viewer time,
+- volume/mute/pause/seek intent,
+- Guide state,
+- continuity.
 
-The playback backend owns the low-level work:
+The playback backend owns:
 
-- decoding
-- codecs
-- containers
-- hardware acceleration
-- audio output
-- subtitles
-- seeking implementation
-- rendering
+- decoding,
+- codecs/containers,
+- hardware acceleration,
+- audio output,
+- subtitles,
+- seeking implementation,
+- rendering.
 
-This separation preserves the project's purpose.
+> **VLC does media playback. ChannelOS does television.**
 
-> **VLC can do media playback. ChannelOS does television.**
+### Development playback runtime
+
+`python-vlc` is a control binding; it does not itself contain the native libVLC runtime.
+
+Development builds may use:
+
+- a bundled-style `runtime/vlc` directory,
+- `CHANNELOS_VLC_DIR` as an explicit source/development override,
+- compatible system runtime discovery where supported.
+
+### Finished product packaging
+
+Ordinary users should not be asked to install VLC into a particular path or configure DLL search behavior.
+
+A finished package should include the compatible native playback runtime it requires where licensing permits:
+
+```text
+ChannelOS/
+    application executable
+    runtime/
+        vlc/
+            libVLC runtime
+            plugins/
+```
+
+The backend-neutral boundary remains unchanged.
+
+Third-party runtime license compliance and notices are release requirements, not optional cleanup.
 
 ---
 
 ## 15. Control model and remote protocol
 
-The eventual physical remote should not contain ChannelOS business logic.
+The physical remote, gamepad, keyboard layer, or phone remote should not contain ChannelOS business logic.
 
-It should emit a small, open set of user intents.
-
-A conceptual protocol:
+They should emit a small open set of user intents.
 
 ```text
 POWER
 
-DIGIT 0
-DIGIT 1
-...
-DIGIT 9
+DIGIT 0 ... DIGIT 9
 TUNE 007
 CHANNEL_UP
 CHANNEL_DOWN
@@ -804,109 +742,50 @@ RIGHT
 SELECT
 ```
 
-The runtime interprets these intents.
+The ChannelOS service/runtime interprets those intents.
 
-This means the same control model can initially be driven by:
+This allows the same control model to be driven by keyboard, gamepad, USB remote, Steam Input/controller mappings, local web remote, phone, development console, or future purpose-built hardware.
 
-- keyboard
-- gamepad
-- USB remote
-- web remote
-- phone
-- development console
-
-and later by a purpose-built open-source ChannelOS remote.
-
-The software should not care whether the signal arrived over USB, infrared, Bluetooth, RF, or another transport once it has been translated into ChannelOS control intents.
+The software should not care whether the signal arrived over USB, infrared, Bluetooth, RF, or another transport once translated into ChannelOS intents.
 
 ---
 
-## 16. Long-term open-source remote and receiver
+## 16. Couch UI and visual direction
 
-The long-term hardware vision is a user-owned television appliance.
+The ChannelOS television UI should be designed for distance, not for a desktop monitor.
 
-Conceptually:
+Priorities:
 
-```text
-OPEN-SOURCE REMOTE
-        │
-   RF / BLE / IR
-        │
-        ▼
-CHANNELOS RECEIVER / APPLIANCE
-        │
-        ├── Channel Runtime
-        ├── Guide
-        ├── Library
-        ├── Profiles
-        ├── Local management API
-        └── libVLC playback backend
-        │
-       HDMI
-        │
-        ▼
-        TV
-```
+- high contrast,
+- large readable type,
+- obvious selected/focused element,
+- large controller/remote-friendly targets,
+- shallow common navigation,
+- no mandatory pointer,
+- fast return to Live TV,
+- minimal obstruction of currently playing media.
 
-Possible hardware capabilities:
+### Default visual family
 
-- HDMI output
-- USB storage
-- Ethernet
-- Wi-Fi
-- NAS access
-- local RF/BLE/IR receiver
-- optional removable storage
+The default ChannelOS theme should use a Steam-adjacent dark/cool living-room palette:
 
-The ideal appliance experience is intentionally boring:
+- deep navy or charcoal background,
+- slightly lighter blue-black panels,
+- cool blue focus/selection accents,
+- bright soft-white primary text,
+- blue-gray secondary text,
+- restrained red for LIVE,
+- amber for warnings where useful.
 
-1. Turn it on.
-2. ChannelOS appears.
-3. Press a channel number.
-4. Watch television.
+The goal is **continuity of environment**, especially when launched from SteamOS, not imitation.
 
-No visible desktop should be required in appliance mode.
+ChannelOS must retain its own wordmark, iconography, layout, and focus language. It should not reproduce Steam trademarks or visually masquerade as the Steam interface.
 
-No mouse cursor should be required for routine viewing.
-
-The hardware is a long-term target, not a prerequisite for proving the software architecture.
+Themes can come later. Accessibility and television readability outrank stylistic purity.
 
 ---
 
-## 17. Top-level TV interface
-
-A future home screen may combine passive and active media without turning into an advertisement wall.
-
-Example:
-
-```text
-┌──────────────────────────────────────────────────────────┐
-│                       ChannelOS                          │
-│                                                          │
-│  LIVE TV                                                 │
-│  Continue Channel 7 — Sci-Fi                             │
-│                                                          │
-│  CONTINUE WATCHING                                       │
-│  Alien    DS9 S04E11    Futurama S03E02                  │
-│                                                          │
-│  ON DEMAND                                               │
-│  Movies   Television   Documentaries   Home Video        │
-│                                                          │
-│  GENRES                                                  │
-│  Sci-Fi   Comedy   Horror   Action                       │
-│                                                          │
-│  CHANNELS                                                │
-│  2 Comedy   7 Sci-Fi   12 Trek   31 Late Night          │
-└──────────────────────────────────────────────────────────┘
-```
-
-The interface should prioritize the user's content rather than paid placements, platform promotions, or mandatory recommendations.
-
----
-
-## 18. System architecture
-
-The complete conceptual architecture is:
+## 17. Complete system architecture
 
 ```text
                         USER
@@ -915,23 +794,21 @@ The complete conceptual architecture is:
                          │
                          ▼
 +-------------------------------------------------------------+
-|                    ChannelOS Control Layer                  |
-| tune | volume | mute | play/pause | seek | guide | profile |
+|                Guide / Television Service                  |
+| horizon | now/next | tune | controls | explain-why        |
 +-----------------------------+-------------------------------+
                               │
                               ▼
 +-------------------------------------------------------------+
-|                     Channel Runtime                         |
-| broadcast clocks | viewer clocks | tuning | now/next       |
-| continuity | active profile | session state                 |
+|                    Television Runtime                       |
+| broadcast clocks | viewer clocks | tuning | continuity     |
 +------------------+--------------------------+---------------+
                    │                          │
                    ▼                          ▼
 +--------------------------+       +--------------------------+
 |   Programming Engine     |       |     Playback Adapter     |
-| schedules | blocks       |       | libVLC / mpv / future    |
-| sequence | shuffle       |       +--------------------------+
-| weighting | marathons    |
+| sequence | shuffle       |       | libVLC / future         |
+| future blocks/weighting  |       +--------------------------+
 +------------+-------------+
              │
              ▼
@@ -944,11 +821,10 @@ The complete conceptual architecture is:
                               ▼
 +-------------------------------------------------------------+
 |                       Source Adapters                       |
-| local files | NAS | removable storage | supported discs    |
+| local files | NAS | removable storage | supported future   |
 +-------------------------------------------------------------+
 
 Optional local services:
-
 Metadata Providers
 Profile Store
 Artwork Cache
@@ -957,31 +833,30 @@ Local Management Web UI
 Remote Receiver Service
 ```
 
-The authoritative scheduling logic should live in the runtime, not inside the TV UI.
+The authoritative scheduling logic lives below the UI.
 
-That allows multiple clients to share the same household system later.
+The playback backend does not decide what Channel 007 means.
+
+The distribution platform does not decide whether the user's local media may play.
 
 ---
 
-## 19. Export My Television
+## 18. Export My Television
 
 Portability should become a first-class feature rather than an emergency feature.
 
-A full export should eventually be capable of preserving:
+A full export should eventually preserve:
 
-- channel definitions
-- channel lineup
-- schedules
-- programming rules
-- tags
-- collections
-- metadata overrides
-- artwork references or portable artwork where allowed
-- library mappings
-- profiles
-- watch state
-- viewer preferences
-- application settings
+- channel definitions and lineup,
+- schedules/programming rules,
+- tags and collections,
+- metadata overrides,
+- artwork references or portable artwork where allowed,
+- library mappings,
+- profiles,
+- watch state,
+- viewer preferences,
+- application settings.
 
 The user should be able to:
 
@@ -991,65 +866,57 @@ The user should be able to:
 4. relink moved storage where necessary,
 5. recover a recognizable version of their television system.
 
+This migration should work across deployment forms where platform capabilities allow it: desktop to desktop, Steam install to standalone install, or desktop to dedicated appliance.
+
 > **If ChannelOS disappears, the library survives. If a machine disappears, the television can be rebuilt.**
 
 ---
 
-## 20. Plugin and extension philosophy
+## 19. Plugin, privacy, and network posture
 
 ChannelOS should grow through explicit interfaces rather than hard-coding every service into the core.
 
-Potential extension points:
+Potential extension points include:
 
-- PlaybackBackend
-- MetadataProvider
-- MediaSourceAdapter
-- ArtworkProvider
-- RemoteTransport
-- Guide/notification integration
-- Authorized online source integrations
+- PlaybackBackend,
+- MetadataProvider,
+- MediaSourceAdapter,
+- ArtworkProvider,
+- RemoteTransport,
+- Guide/notification integration,
+- authorized online source integrations.
 
-Plugins should be treated as untrusted until granted capabilities.
+Plugins should be treated as untrusted until granted capabilities. They should not silently receive unrestricted filesystem or network access.
 
-They should not silently receive unrestricted access to the filesystem or network.
-
-A plugin system must not undermine the ownership and privacy guarantees of the local core.
-
----
-
-## 21. Privacy and network posture
-
-The core system should work without telemetry.
-
-No mandatory account should be required for local playback.
-
-No mandatory remote server should be required to validate the user's installation.
+The core system should work without telemetry, a mandatory ChannelOS account, a mandatory remote server, or a mandatory storefront entitlement.
 
 Networking should be explicit and understandable:
 
-- local NAS access
-- local remote/control traffic
-- local management UI
-- explicitly enabled metadata lookups
-- explicitly installed provider integrations
+- local NAS access,
+- local remote/control traffic,
+- local management UI,
+- explicitly enabled metadata lookups,
+- explicitly installed provider integrations.
 
-A household should be able to run a useful ChannelOS installation entirely within its local network after metadata and software are installed.
+A household should be able to run a useful ChannelOS installation entirely within its local network after software and desired metadata are installed.
 
 ---
 
-## 22. What ChannelOS is not
+## 20. What ChannelOS is not
 
 ChannelOS is not intended to be:
 
-- another subscription streaming service
-- a proprietary media store
-- a DRM-circumvention project
-- a streaming-service scraper
-- an ad-removal system for third-party protected streams
-- a custom video codec project
-- a replacement for mature playback engines
-- a cloud account required to play local files
-- a platform that hides user configuration in an unreadable proprietary format
+- another subscription streaming service,
+- a proprietary media store,
+- a DRM-circumvention project,
+- a streaming-service scraper,
+- an ad-removal system for third-party protected streams,
+- a custom video codec project,
+- a custom general-purpose OS kernel project,
+- a replacement for mature playback engines,
+- a cloud account required to play local files,
+- a Steam-only application,
+- a platform that hides user configuration in an unreadable proprietary format.
 
 Its job is narrower and more interesting:
 
@@ -1057,179 +924,117 @@ Its job is narrower and more interesting:
 
 ---
 
-## 23. Development strategy
-
-The project should prove the defining behavior before chasing polish.
+## 21. Current implementation status
 
 ### Phase 0 — Foundation
 
-Already underway:
+**Complete.**
 
-- repository structure
-- documented ownership philosophy
-- portable channel definition format
-- parser/validator
-- architecture boundaries
+The reference core can index genuine local media, preserve stable identity independently of path, resolve channel sources, and display real video through the ChannelOS → libVLC path.
 
-### Phase 1 — Library + playback
+### Phase 1 — Persistent channels
 
-Build:
+**Complete and merged to `main`.**
 
-- local media scanner
-- stable media IDs
-- basic metadata fields
-- playback adapter interface
-- libVLC reference backend
-- direct play by media ID
+Implemented and validated:
 
-Exit test:
+- persistent numeric channel identities,
+- deterministic sequential programming,
+- deterministic shuffle with repeat-window validation,
+- generated repeating timelines,
+- Broadcast Clock,
+- Viewer Clock,
+- restart persistence,
+- missing-file recovery,
+- direct tune, Channel Up/Down, Previous Channel,
+- live/resume/ask behavior,
+- pause/play/seek/`GO_LIVE`,
+- real Windows libVLC playback,
+- Windows runtime discovery for bundled/development libVLC layouts.
 
-> Point ChannelOS at several owned video files, index them without moving them, select one by stable ID, and play it through the playback adapter.
+The final local Windows suite passed 37 tests and the final Phase 1 GitHub Actions run passed before merge.
 
-### Phase 2 — Real channels
+### Phase 2 — Guide / UI-facing plumbing
 
-Build:
+**Current.**
 
-- generated channel timelines
-- Broadcast Clock
-- Viewer Clock
-- tune by number
-- Channel Up/Down
-- sequential scheduling
-- shuffle scheduling
-- return-to-channel behavior
-- LIVE behavior
+The next job is to expose the already-working television engine as stable Guide and UI-facing data:
 
-Exit test:
+- schedule horizon generation,
+- Now / Next,
+- Guide rows,
+- schedule regeneration rules,
+- explain-why traces,
+- tune from Guide,
+- Watch from Beginning,
+- real-media Guide-to-playback validation.
 
-> Define Channels 7 and 12. Tune 7, switch to 12, wait, return to 7, and arrive at the correct point in Channel 7's independently advancing schedule.
+The polished couch shell follows this plumbing rather than reaching directly into runtime internals.
 
-### Phase 3 — Transport controls
-
-Build:
-
-- volume
-- mute
-- pause/play
-- rewind
-- fast-forward
-- skip
-- GO_LIVE
-- Info overlay
-
-Exit test:
-
-> ChannelOS feels like television until the viewer wants control, then behaves like owned media.
-
-### Phase 4 — Guide
-
-Build:
-
-- Now / Next
-- full grid guide
-- future schedule generation
-- past-program reconstruction where possible
-- tune from Guide
-- Watch from Beginning
-
-### Phase 5 — Library / On Demand
-
-Build:
-
-- poster-based browsing
-- movies / shows / seasons / episodes
-- search
-- genres
-- tags
-- collections
-- Continue Watching
-- Add to Channel
-
-### Phase 6 — Metadata management
-
-Build:
-
-- provider abstraction
-- matching workflow
-- artwork caching
-- manual correction
-- portable metadata strategy
-
-### Phase 7 — Profiles
-
-Build:
-
-- profile selection
-- per-profile history
-- favorites
-- viewer state
-- personal channels
-- optional library/channel visibility rules
-
-### Phase 8 — Appliance TV UX
-
-Build:
-
-- fullscreen shell
-- remote-only navigation
-- resilient boot/wake behavior
-- local management UI
-- receiver abstraction
-
-Exit test:
-
-> Hand someone a remote and let them forget a computer is underneath the television.
-
-### Phase 9 — Portability and ecosystem
-
-Build:
-
-- Export My Television
-- import/relink workflow
-- plugin SDK
-- alternative playback backends
-- remote transports
-- metadata providers
-
-### Phase 10 — Open hardware
-
-Explore:
-
-- reference receiver/appliance
-- open remote design
-- RF/BLE/IR choices
-- enclosure and board options
-- appliance images
-
-Hardware should consume the same open control protocol developed during the software phases.
+See [GUIDE_AND_UI_BOUNDARY.md](GUIDE_AND_UI_BOUNDARY.md).
 
 ---
 
-## 24. The first complete product test
+## 22. Roadmap discipline
 
-A meaningful early product test is not “does a window open?”
+The detailed implementation phase ordering lives in [ROADMAP.md](ROADMAP.md).
+
+The Master Design deliberately does **not** duplicate a second numbered roadmap. Doing so caused the earlier design document and executable roadmap to drift apart as implementation accelerated.
+
+This document owns product identity and architectural invariants. `ROADMAP.md` owns milestone sequencing and completion state.
+
+---
+
+## 23. First complete product test
+
+A meaningful product test is not “does a window open?”
 
 It is:
 
 1. Give ChannelOS a folder containing several movies and television series.
 2. Let it identify/index them without taking ownership of the files.
 3. Define several channels.
-4. Generate a schedule.
+4. Generate persistent schedules.
 5. Start ChannelOS full-screen.
 6. Press `7`.
 7. See the correct program at the correct broadcast offset.
-8. Press Pause.
+8. Pause.
 9. Wait.
 10. Resume behind LIVE.
 11. Fast-forward until LIVE.
 12. Open the Guide.
-13. Tune Channel 12.
+13. Tune Channel 12 from the Guide.
 14. Open Library.
 15. Deliberately choose a movie.
 16. Return to Live TV.
-17. Export the configuration.
+17. Shut ChannelOS down and restart it without losing channel time.
+18. Export the configuration.
+19. Restore/relink it on another supported installation.
 
 If that experience works coherently, ChannelOS is no longer merely a media-player wrapper. It is a personal television system.
+
+A public living-room launch test adds:
+
+20. Install/launch ChannelOS through Steam or SteamOS.
+21. Complete ordinary couch use with a controller/remote and no mouse.
+22. Verify the same media/configuration can also be used by a standalone build without Steam present.
+
+---
+
+## 24. Release and legal gates
+
+Before a public release, especially a Steam launch, ChannelOS must deliberately complete:
+
+- selection and addition of an appropriate open-source software license,
+- third-party dependency/license review,
+- bundled libVLC license/notice compliance,
+- repeatable Windows and Linux packaging,
+- SteamOS/controller validation,
+- standalone no-Steam validation,
+- privacy/network behavior review,
+- clear user-facing handling of media sources and permissions.
+
+The project should not call itself legally open source merely because the source is visible. The intended license must actually be selected and published.
 
 ---
 
@@ -1247,6 +1052,7 @@ Before adding a major feature, ask:
 8. Does it avoid unnecessary reinvention of mature technology?
 9. Does it work with both passive viewing and direct selection?
 10. Are we building for the user's library, or accidentally building another ecosystem trap?
+11. Would the feature still make sense outside Steam or any other distribution platform?
 
 A feature that fails several of these questions should be reconsidered.
 
@@ -1266,11 +1072,13 @@ Several phrases capture the project clearly and should remain useful touchstones
 
 > **The user is not the audience of ChannelOS. The user is the broadcaster.**
 
+> **Steam may be where many users get ChannelOS. Steam must never be what makes ChannelOS theirs.**
+
 ---
 
 ## 27. North Star
 
-ChannelOS should eventually feel less like launching software and more like owning an appliance that happens to be open, programmable, and completely under the household's control.
+ChannelOS should eventually feel less like launching software and more like owning an appliance that happens to be open, programmable, and under the household's control.
 
 A person should be able to spend an evening without browsing a catalog at all:
 
@@ -1293,7 +1101,9 @@ PLAY
 
 Neither mode is secondary.
 
-The purpose of ChannelOS is to put both forms of watching on top of a library the user controls permanently.
+On a desktop, ChannelOS should be an ordinary program. On SteamOS, it should feel like a natural living-room application. On a dedicated receiver, it should be able to become the entire visible boot experience.
+
+Those are different hosts for the same user-owned television system.
 
 Modern media taught people to expect convenience. Local ownership provides durability. ChannelOS should refuse the assumption that users must sacrifice one to have the other.
 

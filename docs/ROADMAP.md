@@ -2,7 +2,7 @@
 
 This roadmap is intentionally behavior-first. ChannelOS does not need to support every codec, service, or device before it proves that personally owned media can feel like television again.
 
-The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The current executable milestone is [PERSISTENT_CHANNEL_RUNTIME.md](PERSISTENT_CHANNEL_RUNTIME.md).
+The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). Phase 0 and Phase 1 are complete. The current milestone is [GUIDE_AND_UI_BOUNDARY.md](GUIDE_AND_UI_BOUNDARY.md).
 
 ## Phase 0 — Foundation / First Broadcast
 
@@ -30,9 +30,9 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The cur
 - [x] Automated control-routing test with a fake playback backend
 - [x] Real Windows libVLC smoke test with genuine media playback
 
-**Exit:** A real machine can scan owned media, preserve stable identity independently of path, resolve a validated channel against that index, launch the selected file through libVLC, and accept ChannelOS-owned playback commands without exposing VLC as the product interface.
+**Exit:** Passed. A real machine can scan owned media, preserve stable identity independently of path, resolve a validated channel against that index, launch the selected file through libVLC, and accept ChannelOS-owned playback commands without exposing VLC as the product interface.
 
-**Verified:** Windows 10/11-class desktop, Python 3.11.9, VLC/libVLC 3.0.23 Vetinari. The real-machine run indexed 184 NVIDIA-recorded MP4 files, resolved three exact assets into Channel 07, selected the expected stable SHA-256 media ID, and displayed genuine video through the ChannelOS → libVLC path.
+**Verified:** Windows desktop, Python 3.11.9, VLC/libVLC 3.0.23 Vetinari. The real-machine run indexed 184 NVIDIA-recorded MP4 files, resolved three exact assets into Channel 07, selected the expected stable SHA-256 media ID, and displayed genuine video through the ChannelOS → libVLC path.
 
 ## Phase 1 — Channel Runtime / Persistent Channels
 
@@ -52,34 +52,40 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The cur
 - [x] Previous Channel
 - [x] Return behavior: live / resume / ask
 - [x] `GO_LIVE`
+- [x] Windows bundled/development libVLC runtime discovery path
 
-**Automated exit behavior:** Passing. The reference-core test suite defines Channels 7 and 12, tunes 7, switches to 12, advances wall time without decoding Channel 7, returns to 7, and verifies the correct later program/seek offset from Channel 7's independent Broadcast Clock. Deterministic shuffle is derived from stable asset IDs, cycles every eligible asset before repeating, and rejects repeat-avoidance windows the available media pool cannot actually satisfy.
+**Automated exit behavior:** Passed. The reference-core suite covers independent untuned advancement, persistent clocks, viewer continuity, deterministic sequential/shuffle schedules, repeat-window validation, playback routing, restart behavior, and recovery paths.
 
 **Real-machine gate:** Passed on Windows with genuine indexed media through libVLC. Channels 007 and 012 advanced independently while untuned; switching, Previous Channel, pause/resume, Viewer Clock lag, and `GO_LIVE` behaved correctly. Channel 012 was then changed from sequential to shuffle and real playback opened the deterministic shuffled schedule rather than the source order.
 
-**Exit:** Passed. Define Channels 7 and 12, tune 7, switch to 12, wait, return to 7, and arrive at the correct point in Channel 7's independently advancing schedule; deterministic shuffle must also schedule and play genuine indexed media correctly.
+**Exit:** Passed and merged to `main`.
 
-## Phase 2 — Guide
+## Phase 2 — Guide / UI-facing plumbing
 
-**Goal:** Make generated timelines visible and navigable as television.
+**Goal:** Make generated timelines visible and navigable through a stable television-facing data boundary before building the polished couch shell.
 
+- [ ] Explicit Guide / television service boundary
 - [ ] Schedule horizon generation
 - [ ] Now / Next model
 - [ ] Program durations from indexed technical data
-- [ ] Traditional grid guide data model
+- [ ] Traditional grid-guide data model
 - [ ] Schedule regeneration rules
 - [ ] Explain-why trace for programmed items
-- [ ] Tune from Guide
+- [ ] Tune from Guide through ChannelOS control intents
 - [ ] Watch from Beginning where the owned media permits it
+- [ ] Multi-channel Guide/runtime agreement tests
+- [ ] Real-media Guide-to-playback smoke test
 
-**Exit:** A user can see a believable day of programming, tune from it, and understand why each item was scheduled.
+**Architectural rule:** The Guide and future UI consume runtime truth; they do not independently invent channel schedules.
+
+**Exit:** A client can request a believable Guide horizon, display Now/Next, tune a current program, start an eligible scheduled program from its beginning, and explain why each item was scheduled using the same truth that drives playback.
 
 ## Phase 3 — Appliance UX / Control Surface
 
 **Goal:** Make the computer disappear during ordinary viewing while preserving direct control.
 
 - [ ] Full-screen live view
-- [ ] Remote input abstraction
+- [ ] Remote/controller input abstraction
 - [ ] Open ChannelOS control-intent protocol
 - [ ] Numeric direct tuning
 - [ ] Channel up/down
@@ -90,9 +96,14 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The cur
 - [ ] LIVE button behavior
 - [ ] Minimal Now/Next overlay
 - [ ] Guide UI
+- [ ] Home / Back / Info navigation
+- [ ] Large, television-readable focus states and targets
+- [ ] Default dark navy/charcoal + cool-blue ChannelOS visual language
+- [ ] SteamOS/controller compatibility as a first-class couch target
 - [ ] Autostart and crash recovery
+- [ ] Packaged playback runtime so ordinary users do not configure libVLC manually
 
-**Exit:** A keyboard and mouse are optional for ordinary viewing, while pause/seek/volume controls remain under the viewer's command.
+**Exit:** A keyboard and mouse are optional for ordinary viewing, while pause/seek/volume controls remain under the viewer's command. The same couch UI works as a normal desktop application and as a Steam/SteamOS-launched application.
 
 ## Phase 4 — Library / On Demand
 
@@ -175,14 +186,43 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The cur
 
 ## Phase 9 — Open appliance and remote
 
-**Goal:** Prove the software can become a user-owned television appliance.
+**Goal:** Prove the software can become a user-owned television appliance without requiring a custom kernel or proprietary receiver.
 
-- [ ] Dedicated appliance image experiments
+- [ ] Dedicated minimal-Linux appliance image experiments
+- [ ] Steam Machine / SteamOS living-room PC validation as a reference host class
 - [ ] Reference receiver hardware exploration
+- [ ] Boot directly into ChannelOS full-screen shell
 - [ ] Open remote design
 - [ ] RF / BLE / IR transport evaluation
-- [ ] HDMI-focused boot experience
+- [ ] HDMI-focused boot/wake experience
 - [ ] Hardware consumes the same open ChannelOS control intents as software remotes
+
+**Exit:** Flash/install ChannelOS onto supported PC-class hardware, connect it to a television, power it on, and reach the couch UI without interacting with a general-purpose desktop.
+
+## Distribution and release strategy
+
+Steam is the preferred **primary public launch/discovery target**, subject to platform approval and release requirements. The intended Steam listing is free to users.
+
+That does **not** make ChannelOS a Steam-only product. The same core must remain distributable as:
+
+- standalone Windows application,
+- standalone Linux application,
+- source/build distribution,
+- Steam / SteamOS application,
+- future dedicated appliance image.
+
+Steam may provide installation, updates, discovery, controller-friendly launching, and an excellent living-room host environment. It must not become an authorization dependency for local media playback or the only route to obtain/use ChannelOS.
+
+Before public distribution, including Steam:
+
+- [ ] Select and add the intended open-source license
+- [ ] Audit third-party runtime licenses/notices
+- [ ] Verify packaged libVLC distribution compliance
+- [ ] Produce repeatable Windows/Linux packages
+- [ ] Validate SteamOS couch/controller behavior
+- [ ] Verify a standalone install works without Steam present
+
+See [ADR-0004](decisions/0004-distribution-and-appliance-neutrality.md).
 
 ## Explicitly not on the early roadmap
 
@@ -191,6 +231,7 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). The cur
 - Mandatory cloud accounts
 - Advertising injection
 - Custom codec development
+- Custom operating-system kernel development
 - AI scheduling before deterministic scheduling is solid
 
 AI may eventually assist programming, but it should arrive only after ChannelOS has a transparent deterministic scheduler to compare against.

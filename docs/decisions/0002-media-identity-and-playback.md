@@ -5,7 +5,7 @@
 
 ## Context
 
-ChannelOS cannot build persistent channels, guide schedules, profiles, watch state, or portable metadata if a media item is identified only by its current filesystem path. Paths change when users rename folders, replace drives, or reorganize a library.
+ChannelOS cannot build persistent channels, Guide schedules, profiles, watch state, or portable metadata if a media item is identified only by its current filesystem path. Paths change when users rename folders, replace drives, or reorganize a library.
 
 ChannelOS also should not become a codec project. Mature playback engines already solve media decoding, rendering, audio, subtitles, seeking, and hardware acceleration.
 
@@ -56,7 +56,7 @@ A normal scan can still index a file when ffprobe is absent or a particular file
 
 ChannelOS defines its own `PlaybackBackend` interface. Core runtime code talks to that interface rather than directly to VLC.
 
-The first reference implementation is `LibVLCBackend`, using the Python libVLC binding when installed.
+The first reference implementation is `LibVLCBackend`, using the Python libVLC binding.
 
 The boundary includes:
 
@@ -88,10 +88,18 @@ Future mpv or other playback engines may implement the same ChannelOS contract.
 - Full-file SHA-256 is intentionally conservative and may be slow on a first scan of large libraries.
 - A file moved to a new path may need to be hashed again before ChannelOS recognizes it as the same asset.
 - A byte-for-byte modified/re-encoded file is a different Phase 0 asset even if it represents the same movie or episode. Higher-level title/episode identity belongs to the later metadata model.
-- `python-vlc` is only a binding; a usable native VLC/libVLC installation is also required on the machine doing playback.
-- `ffprobe` is an external tool and is not bundled with ChannelOS.
+- `python-vlc` is only a binding; a usable native libVLC runtime is also required on the machine doing playback.
+- `ffprobe` is an external tool and is not currently bundled with ChannelOS.
 
-These are acceptable Phase 0 tradeoffs because they establish clean identity and playback boundaries without making the index proprietary or entangling ChannelOS with one decoder.
+These were acceptable Phase 0 tradeoffs because they established clean identity and playback boundaries without making the index proprietary or entangling ChannelOS with one decoder.
+
+## Follow-on implementation note — 2026-08-19
+
+Phase 1 added Windows runtime discovery for a bundled-style `runtime/vlc` layout plus the `CHANNELOS_VLC_DIR` source/development override.
+
+The finished-product direction is now explicit: ordinary users should not be required to install VLC separately or place native libraries in a special system path. Packaged ChannelOS builds should carry the compatible native playback runtime they require where licensing permits, while keeping `PlaybackBackend` as the stable abstraction.
+
+See [ADR-0004](0004-distribution-and-appliance-neutrality.md) for packaging and deployment direction.
 
 ## Invariant
 

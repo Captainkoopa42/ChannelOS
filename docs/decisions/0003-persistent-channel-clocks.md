@@ -1,6 +1,6 @@
 # ADR-0003 — Persistent Channel Clocks and Virtual Broadcast Time
 
-**Status:** Accepted for Phase 1  
+**Status:** Accepted and validated in Phase 1  
 **Date:** 2026-08-19
 
 ## Context
@@ -19,7 +19,7 @@ ChannelOS separates two clocks.
 
 Each persistent channel stores a UTC schedule epoch. The programming timeline plus elapsed wall-clock time determines what the channel would currently be broadcasting.
 
-For repeating deterministic Phase 1 schedules:
+For repeating deterministic schedules:
 
 ```text
 elapsed = now - epoch
@@ -30,6 +30,8 @@ The program containing `cycle_position` is selected and the offset inside that p
 
 Untuned channels therefore advance virtually; they do not require background decoding.
 
+Phase 1 validated this model for both deterministic sequential and deterministic shuffle schedules.
+
 ### Viewer Clock
 
 Each channel may also have a personal Viewer Clock containing a schedule timestamp, the wall-clock instant at which it was observed, and whether it is running.
@@ -38,7 +40,7 @@ When LIVE, Viewer Clock and Broadcast Clock coincide. Pause freezes only Viewer 
 
 ### Persistence
 
-Runtime state is stored separately from the media index. The Phase 1 reference implementation uses a local SQLite runtime database for:
+Runtime state is stored separately from the media index. The reference implementation uses a local SQLite runtime database for:
 
 - schedule epoch by numeric channel,
 - schedule signature,
@@ -50,17 +52,25 @@ This database does not own or contain the media.
 
 ### Schedule signatures
 
-The Phase 1 schedule signature includes the channel number, programming mode, stable asset IDs, and technical durations.
+The schedule signature includes the channel number, programming policy, stable asset IDs, and technical durations.
+
+For sequential programming, effective source order participates in the schedule. For deterministic shuffle, stable asset identities determine the permutation so path movement does not silently mutate the schedule.
 
 If the signature is unchanged after restart, the original epoch survives.
 
-If programming inputs change — including a previously indexed location disappearing after a rescan — ChannelOS re-anchors the schedule instead of applying the old epoch to a different sequence. Saved Viewer Clock continuity for that channel is discarded because it no longer identifies the same schedule.
+If programming inputs change — including a previously indexed location disappearing after a rescan or a programming-policy change — ChannelOS re-anchors the schedule instead of applying the old epoch to a different sequence. Saved Viewer Clock continuity for that channel is discarded because it no longer identifies the same schedule.
+
+### Repeat avoidance
+
+For shuffle programming, every eligible asset airs once before the cycle repeats.
+
+`avoid_repeat_days` is a strict guarantee. If the eligible media pool does not contain enough total duration to cover the requested no-repeat window, ChannelOS rejects the configuration instead of weakening the promise silently.
 
 ### Duration authority
 
-Persistent scheduling requires positive indexed media durations. ChannelOS will reject a schedule that lacks them rather than guessing.
+Persistent scheduling requires positive indexed media durations. ChannelOS rejects a schedule that lacks them rather than guessing.
 
-The current reference technical-data path is the `MediaProbe` boundary with ffprobe as the first implementation.
+The reference technical-data path is the `MediaProbe` boundary with ffprobe as the first implementation.
 
 ### Playback ownership
 
@@ -83,16 +93,17 @@ Only then does `TelevisionSession` ask `PlaybackBackend` to load/play/seek. The 
 - channel state survives process restart,
 - pause and rewind do not stop the channel's Broadcast Clock,
 - direct tuning can land in the middle of the correct program,
-- the same runtime can later drive a Guide, desktop UI, appliance UI, phone remote, or alternative playback backend,
+- deterministic shuffle survives process restart and path movement,
+- the same runtime can drive a Guide, desktop UI, SteamOS UI, appliance UI, phone remote, or alternative playback backend,
 - missing media can be handled as a schedule-input change rather than a decoder failure,
 - the architecture preserves the rule: **the schedule belongs to the channel; the playhead belongs to the user.**
 
 ### Costs
 
-- correct technical durations become mandatory for persistent scheduling,
+- correct technical durations are mandatory for persistent scheduling,
 - schedule edits need explicit re-anchoring semantics,
 - clock drift between the authoritative Viewer Clock and a real decoder will eventually need synchronization policy,
-- Phase 1 sequential schedules are deliberately simpler than future time blocks, marathons, weighted rotations, and Guide horizons.
+- Phase 1 repeating schedules remain deliberately simpler than future time blocks, marathons, weighted rotations, and richer Guide horizons.
 
 ## Rejected alternatives
 
@@ -111,3 +122,16 @@ Rejected because accumulated timing error would make Guide data and direct tunin
 ### Put runtime state into portable channel YAML
 
 Rejected because portable programming intent and machine/viewer continuity are different classes of data.
+
+## Validation
+
+Phase 1 automated and real-machine tests demonstrated:
+
+- independent advancement of untuned channels,
+- persistent schedule epochs across restart,
+- Viewer Clock pause/resume lag behavior,
+- `GO_LIVE`,
+- direct switching and Previous Channel,
+- deterministic shuffle with all-assets-before-repeat behavior,
+- rejection of impossible repeat windows,
+- genuine media playback at the runtime-selected asset/offset through libVLC.

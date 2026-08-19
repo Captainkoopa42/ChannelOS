@@ -1,11 +1,13 @@
 # Persistent Channel Runtime
 
-**Status:** Phase 1 complete candidate; automated and real-machine gates passing  
+**Status:** Complete — merged to `main`; automated and real-machine gates passed  
 **Phase:** 1 — Channel Runtime / Persistent Channels
+
+> Historical milestone document. The current development target is [GUIDE_AND_UI_BOUNDARY.md](GUIDE_AND_UI_BOUNDARY.md).
 
 ## Purpose
 
-Phase 0 proved that ChannelOS can index real user media and hand a selected asset to libVLC. Phase 1 changes the meaning of tuning a channel.
+Phase 0 proved that ChannelOS can index real user media and hand a selected asset to libVLC. Phase 1 changed the meaning of tuning a channel.
 
 A channel is no longer "play the first file in this list." It owns an independently advancing schedule timeline.
 
@@ -15,9 +17,7 @@ A channel is no longer "play the first file in this list." It owns an independen
 
 ChannelOS does not keep every channel decoding in the background.
 
-Instead, each channel has a persistent UTC schedule epoch. Given that epoch, the ordered timed media, and the current wall-clock instant, ChannelOS can calculate exactly what that channel would be broadcasting and how far into the current program it should be.
-
-Example:
+Instead, each channel has a persistent UTC schedule epoch. Given that epoch, the timed media schedule, and the current wall-clock instant, ChannelOS can calculate exactly what that channel would be broadcasting and how far into the current program it should be.
 
 ```text
 Channel 007 epoch: 22:00:00
@@ -28,8 +28,7 @@ Channel 007 epoch: 22:00:00
 
 Tune at 22:00:42
         ↓
-Clip B
-seek = 12 seconds
+Clip B @ 12 seconds
 ```
 
 No hidden VLC instance had to play Channel 007 for those 42 seconds.
@@ -38,16 +37,14 @@ No hidden VLC instance had to play Channel 007 for those 42 seconds.
 
 Phase 1 supports indefinitely repeating deterministic sequential and deterministic shuffle schedules.
 
-For a schedule with total cycle duration `T`, ChannelOS computes:
+For a schedule with total cycle duration `T`:
 
 ```text
 elapsed = wall_clock - schedule_epoch
 cycle_position = elapsed mod T
 ```
 
-The cumulative durations identify the active program and the in-program seek offset.
-
-The math is defined both after and before the stored epoch, which keeps deterministic tests and future schedule inspection well behaved.
+Cumulative durations identify the active program and in-program seek offset. The math is defined both after and before the stored epoch for deterministic testing and future schedule inspection.
 
 ### Deterministic shuffle and repeat avoidance
 
@@ -55,7 +52,7 @@ Shuffle is derived from the channel number plus stable media asset IDs. It does 
 
 Every eligible asset appears once in the generated shuffle cycle before the cycle repeats.
 
-`avoid_repeat_days` is treated as a guarantee, not a hint. If the total eligible media duration is shorter than the requested repeat-avoidance window, ChannelOS rejects that programming configuration and explains that more eligible media or a smaller repeat window is required.
+`avoid_repeat_days` is treated as a guarantee, not a hint. If total eligible media duration is shorter than the requested repeat-avoidance window, ChannelOS rejects that programming configuration and explains that more eligible media or a smaller repeat window is required.
 
 ### Duration requirement
 
@@ -63,7 +60,7 @@ A Broadcast Clock cannot be correct without program durations.
 
 Phase 1 therefore rejects scheduleable media whose indexed `duration_seconds` is missing or non-positive. The media can still exist in the library, but the persistent television runtime requires technical duration data.
 
-The current intended path is to scan with the existing `ffprobe` adapter rather than inventing guessed durations.
+The current technical-data path is the existing `MediaProbe` boundary with ffprobe as the first adapter.
 
 ## Persistent schedule identity
 
@@ -84,11 +81,9 @@ schedule signature
 schedule epoch
 ```
 
-If ChannelOS restarts and the signature is unchanged, the original epoch survives. The channel therefore continues advancing across process restarts.
+If ChannelOS restarts and the signature is unchanged, the original epoch survives. If resolved programming inputs change, ChannelOS deliberately creates a new epoch rather than pretending the old timeline still maps cleanly onto different media.
 
-If the resolved programming inputs change, ChannelOS deliberately creates a new epoch rather than pretending the old timeline still maps cleanly onto different media.
-
-This also provides the current missing-file recovery behavior: after a rescan marks a missing location offline, the resolved online media set changes, the schedule signature changes, and the channel re-anchors using the surviving media.
+This also provides the current missing-file recovery behavior: after a rescan marks a missing location offline, the resolved online media set changes, the schedule signature changes, and the channel re-anchors using surviving media.
 
 ## Viewer Clock
 
@@ -108,9 +103,7 @@ observed_at_utc
 running
 ```
 
-When running, viewer schedule time advances with wall time. When paused or when the viewer leaves that channel, the personal playhead can freeze while the channel Broadcast Clock continues independently.
-
-This creates the intended behaviors:
+When running, viewer schedule time advances with wall time. When paused or when the viewer leaves that channel, the personal playhead can freeze while the Broadcast Clock continues independently.
 
 ```text
 LIVE
@@ -135,8 +128,8 @@ Viewer Clock snaps to Broadcast Clock
 
 Phase 1 implements all three intended return policies:
 
-- `live` — return to what the channel is broadcasting now.
-- `resume` — return to the saved Viewer Clock position.
+- `live` — return to what the channel is broadcasting now,
+- `resume` — return to the saved Viewer Clock position,
 - `ask` — expose that both choices exist instead of silently deciding.
 
 Viewer continuity is stored per channel in the runtime database. The underlying media is never stored there.
@@ -149,13 +142,11 @@ Viewer continuity is stored per channel in the runtime database. The underlying 
 - previous channel,
 - per-channel Viewer Clock continuity.
 
-The channel list is numerically ordered, so Channel Up / Down wraps through the active lineup.
-
-Previous Channel toggles between the last two tuned channels using the same runtime path as direct tuning.
+The channel list is numerically ordered, so Channel Up / Down wraps through the active lineup. Previous Channel toggles between the last two tuned channels using the same runtime path as direct tuning.
 
 ## Control intents
 
-The Phase 1 playback harness deliberately uses the vocabulary intended for future remotes and appliance clients:
+The Phase 1 playback harness uses vocabulary intended for future remotes and appliance clients:
 
 ```text
 TUNE 007
@@ -183,9 +174,7 @@ Inspect a persistent channel without launching playback:
 channelos broadcast channel-7.yaml --db .channelos/library.db --state-db .channelos/runtime.db
 ```
 
-The output includes the selected asset, media ID, seek offset, program start/end, and persistent schedule epoch.
-
-Run the current multi-channel playback harness:
+Run the multi-channel playback harness:
 
 ```bash
 channelos tv channel-7.yaml channel-12.yaml \
@@ -193,46 +182,44 @@ channelos tv channel-7.yaml channel-12.yaml \
   --state-db .channelos/runtime.db
 ```
 
-This text console is still an engineering harness, not the final television UI.
+This text console remains an engineering harness, not the final television UI.
 
 ## Automated validation
 
-The Phase 1 branch tests:
+The completed Phase 1 reference suite covers:
 
 - mid-program Broadcast Clock selection,
-- cycle wraparound,
-- pre-epoch timeline math,
+- cycle wraparound and pre-epoch timeline math,
 - persistent epoch across restart,
 - schedule re-anchoring when programming inputs change,
 - rejection of missing duration data,
 - Viewer Clock pause/play/seek/GO_LIVE,
-- live versus resume behavior,
-- explicit `ask` return behavior,
+- live/resume/ask behavior,
 - Channel Up / Down and Previous Channel,
 - two channels advancing independently while untuned,
 - current/viewer continuity across runtime restart,
 - fast-forward capped at LIVE,
 - playback routing through a fake backend,
 - CLI Broadcast Clock persistence,
-- CLI television startup through the Phase 1 session,
-- missing-file recovery after a real rescan marks an asset offline,
+- CLI television startup,
+- missing-file recovery,
 - cached technical-metadata enrichment without re-hashing,
 - Windows libVLC runtime discovery,
 - deterministic shuffle stability,
 - path-independent shuffle order,
 - all-assets-before-repeat behavior,
-- repeat-window rejection when the media pool is too short,
+- impossible repeat-window rejection,
 - schedule re-anchoring when shuffle policy changes.
 
-CI runs the reference core on Python 3.11, 3.12, and 3.13.
+The final local Windows run passed **37/37 tests**, and GitHub Actions passed on the final Phase 1 branch head before merge.
 
-## Phase 1 gate status
+## Real-machine gate
 
-The preferred real-machine smoke test has passed on Windows with genuine indexed NVIDIA-recorded MP4 media through libVLC:
+The Phase 1 gate passed on Windows with genuine indexed NVIDIA-recorded MP4 media through libVLC:
 
 1. selected media was enriched with indexed technical durations without re-hashing,
 2. Channels 007 and 012 were defined with independent persistent schedules,
-3. the Phase 1 `tv` harness launched genuine media,
+3. the `tv` harness launched genuine media,
 4. Channel 007 was tuned and its current program/offset observed,
 5. playback switched to Channel 012,
 6. Channel 007 advanced while untuned and without background decoding,
@@ -242,4 +229,4 @@ The preferred real-machine smoke test has passed on Windows with genuine indexed
 10. `GO_LIVE` jumped back to the current broadcast point,
 11. Channel 012 was changed from sequential to shuffle and real playback opened a shuffled program rather than source order.
 
-That validates the fundamental Phase 1 ChannelOS television behavior on a real decoder and real user media.
+That validates the fundamental ChannelOS television runtime on a real decoder and real user media. Phase 2 now exposes this truth through Guide and UI-facing data rather than changing the underlying clock model.

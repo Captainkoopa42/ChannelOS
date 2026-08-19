@@ -4,17 +4,17 @@
 >
 > Own the library. Own the schedule. Own the interface.
 
-ChannelOS is an experimental, local-first media platform that turns media you own or legitimately control into a cable-style television experience: numbered channels, persistent programming, a guide, passive viewing, direct playback control, and remote-first operation.
+ChannelOS is a local-first personal television system that turns media you own or legitimately control into a cable-style experience: numbered channels, persistent programming, a Guide, passive viewing, direct playback control, and remote-first operation.
 
 The goal is not to build another streaming service or another thumbnail browser. The goal is to let a person **operate their own television network**.
 
 ## Project status
 
-**Pre-alpha / Phase 1 — Persistent Channel Runtime**
+**Pre-alpha / Phase 2 — Guide and UI-facing plumbing**
 
-Phase 0 is complete: the reference core has indexed genuine user media on Windows, resolved a real Channel 07, and displayed the selected asset through VLC/libVLC.
+Phase 0 and Phase 1 are complete and merged to `main`.
 
-The current Phase 1 branch adds the first actual television runtime: persistent numeric channels, deterministic generated timelines, independently advancing Broadcast Clocks, per-channel Viewer Clocks, restart continuity, missing-file recovery, live/resume/ask return behavior, `TUNE 007`, Channel Up/Down, Previous Channel, pause/seek, and `GO_LIVE`.
+The reference core has now been verified on real Windows hardware with genuine indexed media and libVLC playback. It supports stable media identity, persistent numeric channels, deterministic sequential and shuffle programming, independently advancing Broadcast Clocks, per-channel Viewer Clocks, restart continuity, missing-file recovery, live/resume/ask return behavior, direct tuning, Channel Up/Down, Previous Channel, pause/play/seek, and `GO_LIVE`.
 
 The key runtime rule is:
 
@@ -22,7 +22,9 @@ The key runtime rule is:
 
 A channel does **not** need a hidden player decoding in the background. Given its persistent schedule epoch, indexed media durations, and wall-clock time, ChannelOS calculates what that channel would currently be airing and the exact seek offset into that program.
 
-The canonical complete product direction is maintained in **[ChannelOS Master Design](docs/MASTER_DESIGN.md)**. The current executable runtime milestone is **[Persistent Channel Runtime](docs/PERSISTENT_CHANNEL_RUNTIME.md)**.
+Phase 2 now builds the stable UI-facing television data layer on top of that runtime: schedule horizons, Now/Next, Guide rows, explain-why traces, tune-from-Guide, Watch from Beginning, and the local service/API boundary that future interfaces consume.
+
+The canonical complete product direction is maintained in **[ChannelOS Master Design](docs/MASTER_DESIGN.md)**. The current milestone is **[Guide and UI Boundary](docs/GUIDE_AND_UI_BOUNDARY.md)**. The completed television runtime is documented in **[Persistent Channel Runtime](docs/PERSISTENT_CHANNEL_RUNTIME.md)**.
 
 ## Core promise
 
@@ -34,6 +36,7 @@ ChannelOS must never become the thing standing between a person and their media.
 - Runtime/index state is kept separate from media.
 - Export must become real migration, not an ecosystem trap.
 - ChannelOS does not inject advertising into local media playback.
+- A distribution platform must never become an entitlement requirement for local use.
 
 If ChannelOS disappears, the library survives.
 
@@ -55,41 +58,36 @@ programming:
 
 The intended experience is deliberately television-like: press `7`, and Channel 7 starts at whatever point its schedule has reached. Open the Guide if you care what is next. Browse the Library only when you actually want to choose.
 
-## Current architecture
+## Architecture
 
 ```text
 user-owned files
       |
       v
-filesystem scanner
-      |
-      +----> optional ffprobe technical durations
+Media Library / Index
       |
       v
-MediaAsset (stable SHA-256 content ID)
-      |
-      +---- MediaLocation(s)
-      |
-      v
-SQLite media index
-      |
-      v
-channel source resolver
-      |
-      v
-Persistent Channel Runtime
-  schedule signature
+Programming + Channel Runtime
   schedule epoch
   Broadcast Clock
   Viewer Clock
-  current / previous channel
+  sequential / deterministic shuffle
+      |
+      v
+Guide / Television Service Boundary
+  schedule horizon
+  Now / Next
+  Guide rows
+  explain-why
+  control intents
+      |
+      +--------------------+
+      |                    |
+      v                    v
+TV / Couch UI        Management / future clients
       |
       v
 TelevisionSession
-  TUNE 007
-  CHANNEL_UP / DOWN
-  PREVIOUS_CHANNEL
-  PAUSE / PLAY / SKIP / GO_LIVE
       |
       v
 PlaybackBackend
@@ -98,9 +96,11 @@ PlaybackBackend
 LibVLCBackend
 ```
 
+The UI is a client of ChannelOS state. It must not become the place where authoritative scheduling logic lives.
+
 The Phase 0 full-file SHA-256 identity is intentionally conservative. A path is a location, not the media identity. Moving unchanged content and rescanning resolves to the same `sha256:...` asset.
 
-The Phase 1 runtime state is also deliberately separate from the media index. Schedule epochs, current/previous channel, and Viewer Clock continuity can be discarded or exported without changing the media itself.
+Runtime state is deliberately separate from the media index. Schedule epochs, current/previous channel, and Viewer Clock continuity can be discarded or exported without changing the media itself.
 
 ## Virtual television instead of background decoding
 
@@ -123,58 +123,48 @@ Channel 007 did not have to consume CPU/GPU resources for those 42 seconds. Its 
 
 That is the mechanism that lets many personal channels behave like live television while only the tuned channel is actually decoded.
 
-## Repository map
+## Deployment and launch direction
+
+ChannelOS is one system intended to support several deployment forms:
 
 ```text
-ChannelOS/
-├── README.md
-├── pyproject.toml
-├── docs/
-│   ├── MASTER_DESIGN.md
-│   ├── FIRST_BROADCAST.md
-│   ├── PERSISTENT_CHANNEL_RUNTIME.md
-│   ├── VISION.md
-│   ├── ARCHITECTURE.md
-│   ├── ROADMAP.md
-│   ├── ChannelOS_Product_Vision.docx
-│   ├── decisions/
-│   │   ├── 0001-local-first-portable-core.md
-│   │   └── 0002-media-identity-and-playback.md
-│   └── specs/
-│       └── CHANNEL_FORMAT.md
-├── examples/
-│   └── channels/
-│       └── sci-fi.yaml
-├── src/channelos/
-│   ├── __init__.py
-│   ├── __main__.py
-│   ├── cli.py
-│   ├── library.py
-│   ├── loader.py
-│   ├── models.py
-│   ├── playback.py
-│   ├── probe.py
-│   ├── resolve.py
-│   ├── runtime.py
-│   ├── scanner.py
-│   ├── television.py
-│   └── tuner.py
-└── tests/
-    ├── test_cli_runtime.py
-    ├── test_library.py
-    ├── test_loader.py
-    ├── test_resolve.py
-    ├── test_runtime.py
-    ├── test_runtime_recovery.py
-    ├── test_television.py
-    └── test_tuner.py
+ChannelOS Core
+   ├── Desktop application
+   │      Windows / Linux
+   ├── Steam / SteamOS distribution
+   │      primary public living-room launch target
+   └── Dedicated appliance
+          boot directly into ChannelOS
+          HDMI + remote/controller
 ```
 
-## Try the reference core
+**Steam is intended to be a primary launch and discovery channel, not a dependency.** If ChannelOS is accepted for Steam distribution, the intended public listing is free to users. Steam/SteamOS is attractive because it already solves living-room installation, updating, controller access, and launching on PC-class hardware.
+
+ChannelOS must remain independently installable. Standalone Windows/Linux packages, source distribution, and future bootable appliance images remain first-class paths. A Steam account or Steam client must never be required to authorize ordinary local playback in a standalone or appliance installation.
+
+SteamOS and Steam Machine-class living-room PCs are therefore high-priority reference hosts, but ChannelOS is **not a Steam-only system**.
+
+## Product packaging
+
+During development, ChannelOS may use a system-installed libVLC or the `CHANNELOS_VLC_DIR` development override.
+
+A finished packaged application should carry the compatible native playback runtime it needs rather than asking ordinary users to discover DLLs or install VLC in a particular location. The backend boundary remains unchanged:
+
+```text
+Channel Runtime -> PlaybackBackend -> LibVLCBackend -> packaged libVLC
+```
+
+Any bundled third-party runtime must be distributed in compliance with its license.
+
+## Visual direction
+
+The default couch UI should use a dark, cool living-room palette: deep navy/charcoal surfaces, cool blue focus and selection states, bright readable text, and a restrained LIVE indicator. This intentionally feels at home when launched from SteamOS while remaining visually distinct ChannelOS branding rather than a copy of Steam's interface.
+
+Themes may be added later. Accessibility, television readability, and unmistakable focus states matter more than decorative fidelity to any platform.
+
+## Development quick start
 
 Requires Python 3.11+.
-
-Development/tests:
 
 ```bash
 python -m pip install -e ".[dev]"
@@ -189,31 +179,33 @@ channelos scan "D:\Media" --db ".channelos\library.db"
 channelos library --db ".channelos\library.db"
 ```
 
-Persistent scheduling requires real durations. `ffprobe` is used when available for duration/container/stream information. Use `--require-probe` when preparing a media set for the Phase 1 Broadcast Clock.
+Persistent scheduling requires real durations. `ffprobe` is used when available for duration/container/stream information. Use `--require-probe` when preparing a media set for the Broadcast Clock.
 
-Inspect what one persistent channel is broadcasting without launching a decoder:
-
-```bash
-channelos broadcast my-channel.yaml \
-  --db ".channelos\library.db" \
-  --state-db ".channelos\runtime.db"
-```
-
-For playback, install VLC/libVLC on the operating system and the optional Python binding:
+For source-tree playback development:
 
 ```bash
 python -m pip install -e ".[playback]"
 ```
 
-Run the current multi-channel television harness:
+The development runtime can use a compatible system libVLC, a bundled `runtime/vlc` layout, or `CHANNELOS_VLC_DIR` where supported. The eventual user-facing package should hide this setup.
+
+Inspect one persistent channel without launching a decoder:
+
+```bash
+channelos broadcast my-channel.yaml \
+  --db ".channelos/library.db" \
+  --state-db ".channelos/runtime.db"
+```
+
+Run the current multi-channel engineering harness:
 
 ```bash
 channelos tv channel-7.yaml channel-12.yaml \
-  --db ".channelos\library.db" \
-  --state-db ".channelos\runtime.db"
+  --db ".channelos/library.db" \
+  --state-db ".channelos/runtime.db"
 ```
 
-The Phase 1 console accepts the future control-intent vocabulary:
+The console accepts the control-intent vocabulary that future UI and remotes will use:
 
 ```text
 TUNE 007
@@ -234,14 +226,17 @@ This remains an engineering harness. The finished product is intended to hide th
 ## Read first
 
 1. **[Master Design — start here](docs/MASTER_DESIGN.md)**
-2. **[Persistent Channel Runtime — current executable milestone](docs/PERSISTENT_CHANNEL_RUNTIME.md)**
-3. [First Broadcast — completed Phase 0](docs/FIRST_BROADCAST.md)
-4. [Architecture](docs/ARCHITECTURE.md)
-5. [Roadmap](docs/ROADMAP.md)
-6. [Product vision](docs/VISION.md)
-7. [Channel format specification](docs/specs/CHANNEL_FORMAT.md)
-8. [ADR-0001: Local-first portable core](docs/decisions/0001-local-first-portable-core.md)
-9. [ADR-0002: Media identity and playback](docs/decisions/0002-media-identity-and-playback.md)
+2. **[Guide and UI Boundary — current Phase 2 milestone](docs/GUIDE_AND_UI_BOUNDARY.md)**
+3. [Persistent Channel Runtime — completed Phase 1](docs/PERSISTENT_CHANNEL_RUNTIME.md)
+4. [First Broadcast — completed Phase 0](docs/FIRST_BROADCAST.md)
+5. [Architecture](docs/ARCHITECTURE.md)
+6. [Roadmap](docs/ROADMAP.md)
+7. [Product vision](docs/VISION.md)
+8. [Channel format specification](docs/specs/CHANNEL_FORMAT.md)
+9. [ADR-0001: Local-first portable core](docs/decisions/0001-local-first-portable-core.md)
+10. [ADR-0002: Media identity and playback](docs/decisions/0002-media-identity-and-playback.md)
+11. [ADR-0003: Persistent channel clocks](docs/decisions/0003-persistent-channel-clocks.md)
+12. [ADR-0004: Distribution and appliance neutrality](docs/decisions/0004-distribution-and-appliance-neutrality.md)
 
 ## North Star
 
@@ -255,7 +250,7 @@ Every major feature should answer five questions:
 
 ## License
 
-No open-source license has been selected yet. Until one is deliberately chosen and added, normal copyright restrictions apply.
+ChannelOS is intended to be released as open-source software, but **an open-source license has not been selected yet**. Until one is deliberately chosen and added, normal copyright restrictions apply. Selecting an appropriate license and completing third-party dependency/license review are release gates before public distribution, including Steam.
 
 ---
 

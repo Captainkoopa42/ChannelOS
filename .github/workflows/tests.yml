@@ -30,3 +30,24 @@ jobs:
 
       - name: Run tests
         run: pytest
+
+  couch-qml:
+    runs-on: ubuntu-latest
+    env:
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install UI test dependencies
+        run: python -m pip install -e ".[dev,ui]"
+
+      - name: Load ChannelOS QML headlessly
+        run: pytest tests/test_couch_qml.py

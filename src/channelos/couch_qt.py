@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot, Qt
+from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine
 
@@ -84,6 +84,23 @@ class CouchController(QObject):
     def _error(exc: Exception) -> dict[str, object]:
         return {"ok": False, "message": str(exc)}
 
+    def activate_selection(self, row_index: int, program_index: int) -> dict[str, object]:
+        rows = self._snapshot.get("rows", [])
+        if not isinstance(rows, list) or not 0 <= row_index < len(rows):
+            return {"ok": False, "message": "Guide selection is no longer available; refresh the Guide"}
+        row = rows[row_index]
+        programs = row.get("programs", []) if isinstance(row, dict) else []
+        if not isinstance(programs, list) or not 0 <= program_index < len(programs):
+            return {"ok": False, "message": "Guide program is no longer available; refresh the Guide"}
+        program = programs[program_index]
+        if not isinstance(program, dict):
+            return {"ok": False, "message": "Guide program data is invalid"}
+        return self.activateProgram(
+            str(program.get("scheduleId", "")),
+            int(program.get("channelNumber", row.get("channelNumber", 0))),
+            float(program.get("startMs", 0.0)),
+        )
+
     @Slot(str, int, float, result="QVariantMap")
     def activateProgram(
         self,
@@ -142,6 +159,66 @@ class CouchController(QObject):
         self._actions.stop()
 
 
+class CouchKeyFilter(QObject):
+    """Translate couch/keyboard controls that cross the QML/native-video boundary."""
+
+    def __init__(self, controller: CouchController, window: QObject) -> None:
+        super().__init__(window)
+        self._controller = controller
+        self._window = window
+
+    def _notify(self, result: dict[str, object]) -> None:
+        message = str(result.get("message", ""))
+        if not message:
+            return
+        self._window.setProperty("statusMessage", message)
+        QTimer.singleShot(2600, lambda: self._window.setProperty("statusMessage", ""))
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() != QEvent.Type.KeyPress:
+            return False
+
+        key = event.key()
+        screen = str(self._window.property("screen"))
+
+        if screen == "guide" and key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+            result = self._controller.activate_selection(
+                int(self._window.property("selectedRow")),
+                int(self._window.property("selectedProgram")),
+            )
+            self._notify(result)
+            if bool(result.get("ok")):
+                self._window.setProperty("screen", "live")
+            return True
+
+        if screen != "live":
+            return False
+
+        if key in {Qt.Key.Key_G, Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
+            self._controller.refresh()
+            self._window.setProperty("screen", "guide")
+            return True
+        if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+            self._notify(self._controller.togglePause())
+            return True
+        if key == Qt.Key.Key_Left:
+            self._notify(self._controller.skip(-10.0))
+            return True
+        if key == Qt.Key.Key_Right:
+            self._notify(self._controller.skip(30.0))
+            return True
+        if key == Qt.Key.Key_Up:
+            self._notify(self._controller.changeChannel(1))
+            return True
+        if key == Qt.Key.Key_Down:
+            self._notify(self._controller.changeChannel(-1))
+            return True
+        if key == Qt.Key.Key_L:
+            self._notify(self._controller.goLive())
+            return True
+        return False
+
+
 def _native_video_platform() -> str:
     platform_name = QGuiApplication.platformName().lower()
     if "windows" in platform_name:
@@ -187,7 +264,7 @@ def run_qt(
     video_window.setFlag(Qt.WindowType.FramelessWindowHint, True)
     video_window.setFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
     video_window.setFlag(Qt.WindowType.WindowTransparentForInput, True)
-    video_window.setGeometry(0, 0, max(1, int(window.width())), max(1, int(window.height() * 0.72)))
+    video_window.setGeometry(0, 0, max(1, int(window.width())), max(1, int(window.height())))
     video_window.hide()
 
     try:
@@ -198,7 +275,7 @@ def run_qt(
 
     def sync_video_surface() -> None:
         width = max(1, int(window.width()))
-        height = max(1, int(window.height() * 0.72))
+        height = max(1, int(window.height()))
         video_window.setGeometry(0, 0, width, height)
         video_window.setVisible(window.property("screen") == "live")
 
@@ -207,6 +284,10 @@ def run_qt(
     screen_changed = getattr(window, "screenChanged", None)
     if screen_changed is not None:
         screen_changed.connect(sync_video_surface)
+
+    key_filter = CouchKeyFilter(controller, window)
+    window.installEventFilter(key_filter)
+    window._channelos_key_filter = key_filter
 
     app.aboutToQuit.connect(controller.stop)
 

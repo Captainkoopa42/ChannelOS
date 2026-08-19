@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+dist/
+build/
+
+# ChannelOS local runtime state
+*.db
+*.db-shm
+*.db-wal
+.channelos/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

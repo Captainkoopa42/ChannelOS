@@ -242,16 +242,8 @@ class GuideController:
         self.service.validate_program(program)
         if program.start_utc > reference:
             raise GuideError("cannot Watch from Beginning before the scheduled program has started")
-
-        # The Guide already uses a one-microsecond boundary probe when walking
-        # from one scheduled occurrence to the next. Use the same boundary-safe
-        # instant here. Without it, converting an absolute program start to a
-        # relative float seek and back can land one microsecond on the previous
-        # occurrence for fractional media durations. Playback still begins at
-        # effectively zero, but most importantly it resolves the selected asset.
-        boundary_safe_start = program.start_utc + _BOUNDARY_EPSILON
         return self.television.watch_from_beginning(
             program.channel_number,
-            boundary_safe_start,
+            program.start_utc,
             now=reference,
         )

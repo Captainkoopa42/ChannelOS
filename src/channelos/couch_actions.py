@@ -117,13 +117,14 @@ class CouchActions:
             approximate_start_ms,
             at=reference,
         )
+        if program.start_utc > reference:
+            raise GuideError("future Guide programs cannot be played before they air")
+
         guide = self._ensure_guide()
         if program.start_utc <= reference < program.end_utc:
             decision = guide.tune(program, at=reference)
-        elif program.start_utc <= reference:
-            decision = guide.watch_from_beginning(program, at=reference)
         else:
-            raise GuideError("future Guide programs cannot be played before they air")
+            decision = guide.watch_from_beginning(program, at=reference)
         self._last_decision = decision
         return decision
 

@@ -160,7 +160,7 @@ class CouchController(QObject):
 
 
 class CouchKeyFilter(QObject):
-    """Translate couch/keyboard controls that cross the QML/native-video boundary."""
+    """Translate couch/keyboard controls independently of QML focus ownership."""
 
     def __init__(self, controller: CouchController, window: QObject) -> None:
         super().__init__(window)
@@ -174,6 +174,44 @@ class CouchKeyFilter(QObject):
         self._window.setProperty("statusMessage", message)
         QTimer.singleShot(2600, lambda: self._window.setProperty("statusMessage", ""))
 
+    def _rows(self) -> list[dict[str, object]]:
+        rows = self._controller.snapshot.get("rows", [])
+        if not isinstance(rows, list):
+            return []
+        return [row for row in rows if isinstance(row, dict)]
+
+    def _current_program_index(self, row_index: int) -> int:
+        rows = self._rows()
+        if not 0 <= row_index < len(rows):
+            return -1
+        programs = rows[row_index].get("programs", [])
+        if not isinstance(programs, list):
+            return -1
+        for index, program in enumerate(programs):
+            if isinstance(program, dict) and bool(program.get("isCurrent")):
+                return index
+        return 0 if programs else -1
+
+    def _select_row(self, row_index: int) -> None:
+        rows = self._rows()
+        if not rows:
+            return
+        selected = max(0, min(len(rows) - 1, row_index))
+        self._window.setProperty("selectedRow", selected)
+        self._window.setProperty("selectedProgram", self._current_program_index(selected))
+
+    def _select_program_delta(self, delta: int) -> None:
+        rows = self._rows()
+        row_index = int(self._window.property("selectedRow"))
+        if not 0 <= row_index < len(rows):
+            return
+        programs = rows[row_index].get("programs", [])
+        if not isinstance(programs, list) or not programs:
+            return
+        current = int(self._window.property("selectedProgram"))
+        selected = max(0, min(len(programs) - 1, current + delta))
+        self._window.setProperty("selectedProgram", selected)
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() != QEvent.Type.KeyPress:
             return False
@@ -181,15 +219,70 @@ class CouchKeyFilter(QObject):
         key = event.key()
         screen = str(self._window.property("screen"))
 
-        if screen == "guide" and key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
-            result = self._controller.activate_selection(
-                int(self._window.property("selectedRow")),
-                int(self._window.property("selectedProgram")),
-            )
-            self._notify(result)
-            if bool(result.get("ok")):
-                self._window.setProperty("screen", "live")
-            return True
+        if screen == "home":
+            if key == Qt.Key.Key_G:
+                self._controller.refresh()
+                self._window.setProperty("screen", "guide")
+                self._select_row(int(self._window.property("selectedRow")))
+                return True
+            if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
+                QGuiApplication.quit()
+                return True
+            if key == Qt.Key.Key_Up:
+                current = int(self._window.property("homeSelection"))
+                self._window.setProperty("homeSelection", max(0, current - 1))
+                return True
+            if key == Qt.Key.Key_Down:
+                current = int(self._window.property("homeSelection"))
+                self._window.setProperty("homeSelection", min(4, current + 1))
+                return True
+            if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+                selection = int(self._window.property("homeSelection"))
+                if selection == 1:
+                    self._controller.refresh()
+                    self._window.setProperty("screen", "guide")
+                    self._select_row(int(self._window.property("selectedRow")))
+                elif selection == 0:
+                    self._notify({"message": "Continue Watching will connect to the Viewer Clock in a later slice"})
+                else:
+                    self._notify({"message": "This section is reserved for a later couch UI slice"})
+                return True
+            return False
+
+        if screen == "guide":
+            if key == Qt.Key.Key_G:
+                self._controller.refresh()
+                self._select_row(int(self._window.property("selectedRow")))
+                return True
+            if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
+                self._window.setProperty("screen", "home")
+                return True
+            if key == Qt.Key.Key_Up:
+                self._select_row(int(self._window.property("selectedRow")) - 1)
+                return True
+            if key == Qt.Key.Key_Down:
+                self._select_row(int(self._window.property("selectedRow")) + 1)
+                return True
+            if key == Qt.Key.Key_Left:
+                self._select_program_delta(-1)
+                return True
+            if key == Qt.Key.Key_Right:
+                self._select_program_delta(1)
+                return True
+            if key == Qt.Key.Key_Home:
+                row_index = int(self._window.property("selectedRow"))
+                self._window.setProperty("selectedProgram", self._current_program_index(row_index))
+                return True
+            if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+                result = self._controller.activate_selection(
+                    int(self._window.property("selectedRow")),
+                    int(self._window.property("selectedProgram")),
+                )
+                self._notify(result)
+                if bool(result.get("ok")):
+                    self._window.setProperty("screen", "live")
+                return True
+            return False
 
         if screen != "live":
             return False
@@ -286,7 +379,7 @@ def run_qt(
         screen_changed.connect(sync_video_surface)
 
     key_filter = CouchKeyFilter(controller, window)
-    window.installEventFilter(key_filter)
+    app.installEventFilter(key_filter)
     window._channelos_key_filter = key_filter
 
     app.aboutToQuit.connect(controller.stop)

@@ -366,8 +366,10 @@ def main(argv: list[str] | None = None) -> int:
                     state = "NOW"
                 elif program.is_past:
                     state = "PAST"
-                else:
+                elif program.schedule_id == now_next.next.schedule_id:
                     state = "NEXT"
+                else:
+                    state = "FUTURE"
                 print(
                     f"  {_format_guide_time(program.start_utc)} -> "
                     f"{_format_guide_time(program.end_utc)}  [{state}]  {program.display_label}"

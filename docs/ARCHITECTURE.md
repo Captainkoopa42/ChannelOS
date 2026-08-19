@@ -1,6 +1,6 @@
 # ChannelOS Architecture
 
-**Status:** Draft 0.1  
+**Status:** Draft 0.2  
 **Phase:** 0 — Skeleton
 
 ## Architectural objective
@@ -10,6 +10,8 @@ ChannelOS should behave like a television system while remaining structurally su
 The core architectural rule is simple:
 
 > ChannelOS may index, schedule, remember, and present media. It must not become the only thing capable of interpreting or recovering that media.
+
+The canonical product-level description of the intended system is maintained in [MASTER_DESIGN.md](MASTER_DESIGN.md).
 
 ## System boundaries
 
@@ -23,13 +25,13 @@ The core architectural rule is simple:
                             v
 +---------------------------------------------------------+
 |                    Channel Runtime                     |
-|        tuning | continuity | now/next | handoff        |
+| tuning | broadcast/viewer clocks | now/next | handoff |
 +---------------------+-------------------+---------------+
                       |                   |
                       v                   v
 +---------------------------+   +-------------------------+
 |    Programming Engine     |   |    Playback Adapter     |
-| sequence | shuffle | time |   | mpv / VLC / future     |
+| sequence | shuffle | time |   | libVLC / mpv / future  |
 +-------------+-------------+   +------------+------------+
               |                              |
               +---------------+--------------+
@@ -58,15 +60,25 @@ Channel definitions describe intent: channel number, name, source selectors, and
 
 ### Runtime state
 
-Watch progress, current sequence position, repeat history, generated schedule, and cache data belong in runtime state. Runtime state must never be required to recover the underlying media.
+Watch progress, current sequence position, repeat history, generated schedule, viewer offsets, profile state, and cache data belong in runtime state. Runtime state must never be required to recover the underlying media.
 
 ### Programming
 
 The programming engine converts a channel definition plus indexed media plus runtime state into an ordered timeline. Its choices should be explainable.
 
+### Channel clocks
+
+A channel has a **Broadcast Clock** describing what it would be showing independently of the current viewer. A viewing session has a **Viewer Clock** describing where the user is currently watching within that timeline.
+
+This is what allows ChannelOS to feel like television while still supporting pause, rewind, fast-forward, resume, and a `GO_LIVE` command.
+
+> **The schedule belongs to the channel. The playhead belongs to the user.**
+
 ### Playback
 
-Phase 0 should delegate decoding to a mature player. ChannelOS owns selection and handoff, not codecs.
+ChannelOS delegates decoding to a mature player engine. ChannelOS owns selection, scheduling, handoff, tuning, playback intent, and viewer state; it does not own codec implementation.
+
+Playback is accessed through a backend-neutral adapter. **libVLC is the first reference backend**, while mpv or future engines may be supported behind the same interface.
 
 ### UI
 
@@ -77,7 +89,7 @@ The TV UI is a client of the runtime. It should not contain the authoritative sc
 - **Language:** Python for the first reference core and test harness.
 - **Definitions:** YAML, versioned with `schema_version`.
 - **State:** SQLite when persistent runtime state begins.
-- **Playback:** external adapter first, likely mpv as the initial target.
+- **Playback:** backend-neutral playback adapter; libVLC as the first reference backend.
 - **Communication:** local-only process calls initially; local API/IPC once UI and runtime split.
 - **Networking:** no internet requirement for core channel operation.
 

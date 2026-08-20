@@ -730,42 +730,114 @@ ApplicationWindow {
 
                     Rectangle { anchors.fill: parent; color: "#081522"; border.color: root.line; border.width: 1 }
 
+                    // Exact scheduled occurrences remain in rowData.programs.
+                    // displaySegments is presentation-only aggregation for
+                    // short-form channels at multi-hour Guide scale.
                     Repeater {
-                        model: channelRow.rowData.programs || []
+                        model: channelRow.rowData.displaySegments || []
+
                         delegate: Rectangle {
-                            property real rawX: ((modelData.startMs - root.horizonStartMs) / root.horizonSpanMs) * programArea.width
-                            property real rawWidth: ((modelData.endMs - modelData.startMs) / root.horizonSpanMs) * programArea.width
+                            property bool rowSelected:
+                                channelRow.ListView.view
+                                && channelRow.ListView.view.currentIndex === channelRow.index
+
+                            property bool containsSelection:
+                                root.selectedProgram >= modelData.firstProgramIndex
+                                && root.selectedProgram <= modelData.lastProgramIndex
+
+                            property bool selectedSegment:
+                                rowSelected && containsSelection
+
+                            property real rawX:
+                                ((modelData.startMs - root.horizonStartMs)
+                                 / root.horizonSpanMs) * programArea.width
+
+                            property real rawWidth:
+                                ((modelData.endMs - modelData.startMs)
+                                 / root.horizonSpanMs) * programArea.width
+
                             x: Math.max(0, rawX) + 1
                             y: 3
-                            width: Math.max(5, Math.min(programArea.width - x, rawWidth - 2))
+
+                            width: Math.max(
+                                1,
+                                Math.min(
+                                    programArea.width - x,
+                                    rawWidth - 2
+                                )
+                            )
+
                             height: programArea.height - 6
-                            radius: 4
-                            color: index === root.selectedProgram && channelRow.ListView.view && channelRow.ListView.view.currentIndex === channelRow.index ? "#146ad1" : (modelData.isCurrent ? "#123558" : "#0d2134")
-                            border.color: index === root.selectedProgram && channelRow.ListView.view && channelRow.ListView.view.currentIndex === channelRow.index ? root.accentBright : "#193a55"
-                            border.width: index === root.selectedProgram && channelRow.ListView.view && channelRow.ListView.view.currentIndex === channelRow.index ? 2 : 1
+                            radius: modelData.isCluster ? 6 : 4
+
+                            color: selectedSegment
+                                   ? "#146ad1"
+                                   : (
+                                       modelData.isCurrent
+                                       ? "#123558"
+                                       : (
+                                           modelData.isCluster
+                                           ? "#102a43"
+                                           : "#0d2134"
+                                       )
+                                   )
+
+                            border.color: selectedSegment
+                                          ? root.accentBright
+                                          : (
+                                              modelData.isCluster
+                                              ? "#24577d"
+                                              : "#193a55"
+                                          )
+
+                            border.width: selectedSegment ? 2 : 1
 
                             Column {
                                 anchors.left: parent.left
                                 anchors.right: parent.right
                                 anchors.verticalCenter: parent.verticalCenter
-                                anchors.leftMargin: 14
+                                anchors.leftMargin: 12
                                 anchors.rightMargin: 8
                                 spacing: 3
+
+                                visible: parent.width >= 42
+
                                 Text {
                                     text: modelData.title
                                     color: root.textPrimary
-                                    font.pixelSize: 17
+                                    font.pixelSize: modelData.isCluster ? 14 : 17
                                     font.weight: Font.DemiBold
                                     width: parent.width
                                     elide: Text.ElideRight
                                 }
+
                                 Text {
-                                    text: root.formatClock(modelData.startMs) + " – " + root.formatClock(modelData.endMs)
+                                    text: modelData.isCluster
+                                          ? modelData.programCount + " clips"
+                                          : root.formatClock(modelData.startMs)
+                                            + " - "
+                                            + root.formatClock(modelData.endMs)
+
                                     color: "#b8c7d6"
-                                    font.pixelSize: 13
+                                    font.pixelSize: 12
                                     width: parent.width
                                     elide: Text.ElideRight
+                                    visible: parent.width >= 72
                                 }
+                            }
+
+                            Rectangle {
+                                visible: modelData.isCluster
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                anchors.leftMargin: 5
+                                anchors.rightMargin: 5
+                                anchors.bottomMargin: 5
+                                height: 2
+                                radius: 1
+                                color: root.accent
+                                opacity: 0.65
                             }
                         }
                     }

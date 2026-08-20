@@ -83,6 +83,49 @@ def test_couch_snapshot_preserves_authoritative_current_program(tmp_path: Path) 
     assert current["isFuture"] is False
 
 
+
+def test_short_form_guide_segments_compress_visual_density_without_losing_programs(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    store = RuntimeStore(tmp_path / "short-runtime.db")
+
+    runtime = ChannelRuntime.open(
+        make_resolved(tmp_path, 55, (30.0, 30.0, 30.0)),
+        store,
+        now=epoch,
+    )
+
+    service = GuideService((runtime,))
+
+    snapshot = build_couch_snapshot(
+        service,
+        at=epoch + timedelta(seconds=5),
+        guide_hours=0.5,
+    )
+
+    row = snapshot["rows"][0]
+    programs = row["programs"]
+    segments = row["displaySegments"]
+
+    # Exact schedule remains untouched.
+    assert len(programs) == 60
+
+    # Presentation is substantially less dense.
+    assert len(segments) < len(programs)
+    assert sum(segment["programCount"] for segment in segments) == len(programs)
+
+    assert segments[0]["isCluster"] is True
+    assert segments[0]["firstProgramIndex"] == 0
+    assert segments[0]["startMs"] == programs[0]["startMs"]
+
+    # Every exact program is still represented by a selectable segment.
+    for index, program in enumerate(programs):
+        assert any(
+            segment["firstProgramIndex"] <= index <= segment["lastProgramIndex"]
+            for segment in segments
+        )
+
 def test_couch_snapshot_rejects_non_positive_horizon(tmp_path: Path) -> None:
     epoch = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
     service = make_service(tmp_path, epoch)
@@ -103,3 +146,6 @@ def test_couch_qml_asset_is_present() -> None:
     assert "BEHIND LIVE" in text
     assert "Broadcast Clock" in text
     assert "NEXT" in text
+    assert "displaySegments" in text
+    assert "modelData.isCluster" in text
+    assert 'modelData.programCount + " clips"' in text

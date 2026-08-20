@@ -24,6 +24,7 @@ class TelevisionSession:
     runtime: TelevisionRuntime
     backend: PlaybackBackend
     loaded_asset_id: str | None = None
+    loaded_program_started_at: datetime | None = None
     paused: bool = False
 
     def _apply_selection(self, decision: TuneDecision, *, play: bool) -> Path:
@@ -31,9 +32,14 @@ class TelevisionSession:
         asset_id = selected.asset.asset_id
         path = selected.location.path
 
-        if self.loaded_asset_id != asset_id:
+        program_started_at = decision.viewer_selection.program_started_at
+        if (
+            self.loaded_asset_id != asset_id
+            or self.loaded_program_started_at != program_started_at
+        ):
             self.backend.load(path)
             self.loaded_asset_id = asset_id
+            self.loaded_program_started_at = program_started_at
 
         if play:
             self.backend.play()
@@ -145,6 +151,20 @@ class TelevisionSession:
     def go_live(self, *, now: datetime | None = None) -> TuneDecision:
         decision = self.runtime.go_live(now=now)
         self._apply_selection(decision, play=True)
+        return decision
+
+    def sync(self, *, now: datetime | None = None) -> TuneDecision:
+        """Keep decoder playback aligned when the Viewer Clock crosses a program boundary."""
+
+        decision = self.runtime.status(now=now)
+        selected = decision.viewer_selection
+
+        if (
+            self.loaded_asset_id != selected.media.asset.asset_id
+            or self.loaded_program_started_at != selected.program_started_at
+        ):
+            self._apply_selection(decision, play=not self.paused)
+
         return decision
 
     def stop(self) -> None:

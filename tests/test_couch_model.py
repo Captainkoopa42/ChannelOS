@@ -100,3 +100,6 @@ def test_couch_qml_asset_is_present() -> None:
     assert "GUIDE" in text
     assert "WindowContainer" in text
     assert "channelOSVideoWindow" in text
+    assert "BEHIND LIVE" in text
+    assert "Broadcast Clock" in text
+    assert "NEXT" in text

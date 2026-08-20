@@ -18,9 +18,11 @@ import channelos
 
 class FakeChannelOS(QObject):
     snapshotChanged = Signal()
+    playbackChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
+        self._playback = {"active": False}
         self._snapshot = {
             "generatedAtMs": 1_777_000_000_000,
             "horizonStartMs": 1_777_000_000_000,
@@ -31,6 +33,10 @@ class FakeChannelOS(QObject):
     @Property("QVariantMap", notify=snapshotChanged)
     def snapshot(self):
         return self._snapshot
+
+    @Property("QVariantMap", notify=playbackChanged)
+    def playback(self):
+        return self._playback
 
     @Slot()
     def refresh(self) -> None:

@@ -53,6 +53,18 @@ class CouchController(QObject):
         self._snapshot = build_couch_snapshot(self._service)
         self.snapshotChanged.emit()
 
+    @Slot()
+    def refreshPlayback(self) -> None:
+        if self._actions.last_decision is None:
+            return
+        try:
+            decision = self._actions.sync()
+        except (ChannelRuntimeError, PlaybackError, ValueError):
+            return
+
+        self._playback = self._decision_view(decision)
+        self.playbackChanged.emit()
+
     def scan_media_folder(
         self,
         path: str | Path,
@@ -76,6 +88,10 @@ class CouchController(QObject):
     def _decision_view(self, decision: TuneDecision) -> dict[str, object]:
         selected = decision.viewer_selection
         definition = self._actions.runtime.channels[decision.channel_number].channel.definition
+        next_program = self._service.now_next(
+            decision.channel_number,
+            at=decision.viewer_time_utc,
+        ).next
         return {
             "active": True,
             "channelNumber": decision.channel_number,
@@ -90,6 +106,9 @@ class CouchController(QObject):
             "viewerTimeMs": int(decision.viewer_time_utc.timestamp() * 1000),
             "programStartMs": int(selected.program_started_at.timestamp() * 1000),
             "programEndMs": int(selected.program_ends_at.timestamp() * 1000),
+            "nextTitle": next_program.display_label,
+            "nextStartMs": int(next_program.start_utc.timestamp() * 1000),
+            "nextEndMs": int(next_program.end_utc.timestamp() * 1000),
         }
 
     def _publish(self, decision: TuneDecision) -> dict[str, object]:
@@ -187,6 +206,21 @@ class CouchKeyFilter(QObject):
         super().__init__(window)
         self._controller = controller
         self._window = window
+        self._hud_generation = 0
+
+    def _show_live_hud(self) -> None:
+        self._hud_generation += 1
+        generation = self._hud_generation
+        self._window.setProperty("liveHudVisible", True)
+
+        def hide() -> None:
+            if (
+                generation == self._hud_generation
+                and str(self._window.property("screen")) == "live"
+            ):
+                self._window.setProperty("liveHudVisible", False)
+
+        QTimer.singleShot(4500, hide)
 
     def _notify(self, result: dict[str, object]) -> None:
         message = str(result.get("message", ""))
@@ -366,6 +400,8 @@ class CouchKeyFilter(QObject):
                 self._notify(result)
                 if not bool(result.get("ok")):
                     self._window.setProperty("screen", "guide")
+                else:
+                    self._show_live_hud()
                 return True
             return False
 
@@ -378,21 +414,27 @@ class CouchKeyFilter(QObject):
             return True
         if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
             self._notify(self._controller.togglePause())
+            self._show_live_hud()
             return True
         if key == Qt.Key.Key_Left:
             self._notify(self._controller.skip(-10.0))
+            self._show_live_hud()
             return True
         if key == Qt.Key.Key_Right:
             self._notify(self._controller.skip(30.0))
+            self._show_live_hud()
             return True
         if key == Qt.Key.Key_Up:
             self._notify(self._controller.changeChannel(1))
+            self._show_live_hud()
             return True
         if key == Qt.Key.Key_Down:
             self._notify(self._controller.changeChannel(-1))
+            self._show_live_hud()
             return True
         if key == Qt.Key.Key_L:
             self._notify(self._controller.goLive())
+            self._show_live_hud()
             return True
         return False
 
@@ -464,6 +506,15 @@ def run_qt(
     # Keep Python-owned Qt wrappers alive for the duration of the QML window.
     window._channelos_key_filter = key_filter
     window._channelos_video_window = video_window
+
+    # The channel continues broadcasting independently of UI input.
+    # Poll the Viewer Clock often enough that short-form captures hand off
+    # cleanly at their scheduled boundaries.
+    playback_timer = QTimer(window)
+    playback_timer.setInterval(250)
+    playback_timer.timeout.connect(controller.refreshPlayback)
+    playback_timer.start()
+    window._channelos_playback_timer = playback_timer
 
     app.aboutToQuit.connect(controller.stop)
 

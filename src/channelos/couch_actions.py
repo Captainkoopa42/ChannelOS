@@ -158,6 +158,13 @@ class CouchActions:
         self._last_decision = decision
         return decision
 
+    def sync(self, *, at: datetime | None = None) -> TuneDecision:
+        """Synchronize decoder playback with the authoritative Viewer Clock."""
+
+        decision = self._ensure_session().sync(now=at)
+        self._last_decision = decision
+        return decision
+
     def stop(self) -> None:
         if self._session is not None:
             self._session.stop()

@@ -223,3 +223,28 @@ def test_stale_schedule_identity_is_rejected(tmp_path: Path) -> None:
             epoch.timestamp() * 1000,
             at=epoch,
         )
+
+
+def test_sync_advances_decoder_at_scheduled_program_boundary(tmp_path: Path) -> None:
+    epoch = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
+    actions, service, backend = make_actions(tmp_path, epoch)
+
+    first_now = epoch + timedelta(seconds=5)
+    program = service.now_next(7, at=first_now).now
+    actions.activate_program(
+        program.schedule_id,
+        program.channel_number,
+        program.start_utc.timestamp() * 1000,
+        at=first_now,
+    )
+
+    first_path = backend.loaded
+
+    decision = actions.sync(at=epoch + timedelta(seconds=35))
+
+    assert decision.channel_number == 7
+    assert backend.loaded is not None
+    assert backend.loaded != first_path
+    assert backend.loaded.name == "01.mp4"
+    assert backend.position == pytest.approx(5.0)
+    assert backend.events.count("load") == 2

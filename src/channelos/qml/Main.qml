@@ -28,6 +28,8 @@ ApplicationWindow {
     property int selectedRow: 0
     property int selectedProgram: 0
     property string statusMessage: ""
+    property bool liveHudVisible: true
+    property var playback: channelOS.playback
     property var snapshot: channelOS.snapshot
     property var rows: snapshot.rows || []
     property real horizonStartMs: snapshot.horizonStartMs || 0
@@ -136,6 +138,211 @@ ApplicationWindow {
         visible: root.screen === "live"
         window: channelOSVideoWindow
         z: 50
+    }
+
+    // Live-TV information layer.
+    //
+    // The libVLC target is a native window, so ordinary QML siblings cannot
+    // reliably paint above it. This dedicated transparent child window is
+    // stacked above the video container and owns the television HUD.
+    WindowContainer {
+        id: liveHudContainer
+        anchors.fill: parent
+        visible: root.screen === "live"
+        z: 60
+
+        window: Window {
+            id: liveHudWindow
+            color: "transparent"
+            flags: Qt.FramelessWindowHint
+                   | Qt.WindowDoesNotAcceptFocus
+                   | Qt.WindowTransparentForInput
+
+            readonly property real progressFraction: {
+                var start = Number(root.playback.programStartMs || 0)
+                var end = Number(root.playback.programEndMs || 0)
+                var viewer = Number(root.playback.viewerTimeMs || 0)
+                if (end <= start)
+                    return 0
+                return Math.max(0, Math.min(1, (viewer - start) / (end - start)))
+            }
+
+            Rectangle {
+                anchors.top: parent.top
+                anchors.right: parent.right
+                anchors.topMargin: 26
+                anchors.rightMargin: 34
+                width: liveClockText.implicitWidth + 28
+                height: 42
+                radius: 7
+                color: "#b8081625"
+
+                Text {
+                    id: liveClockText
+                    anchors.centerIn: parent
+                    text: root.formatClock(Date.now())
+                    color: root.textPrimary
+                    font.pixelSize: 18
+                    font.weight: Font.DemiBold
+                }
+            }
+
+            Rectangle {
+                id: liveHudPanel
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 255
+                visible: root.liveHudVisible && root.playback.active
+                color: "#e6081625"
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: 2
+                    color: root.accent
+                    opacity: 0.75
+                }
+
+                Column {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 34
+                    spacing: 10
+
+                    Row {
+                        spacing: 16
+
+                        Text {
+                            text: "CH " + (root.playback.displayNumber || "---")
+                                  + "   " + (root.playback.channelName || "")
+                            color: root.accentBright
+                            font.pixelSize: 22
+                            font.weight: Font.DemiBold
+                            font.letterSpacing: 1
+                        }
+
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            height: 30
+                            width: liveStateText.implicitWidth + 24
+                            radius: 15
+                            color: root.playback.paused
+                                   ? "#9a6a20"
+                                   : (root.playback.isLive ? "#a83232" : "#164d80")
+
+                            Text {
+                                id: liveStateText
+                                anchors.centerIn: parent
+                                text: root.playback.paused
+                                      ? ("PAUSED"
+                                         + (root.playback.lagSeconds >= 1
+                                            ? " ? " + Math.round(root.playback.lagSeconds) + "s BEHIND"
+                                            : ""))
+                                      : (root.playback.isLive
+                                         ? "? LIVE"
+                                         : Math.round(root.playback.lagSeconds) + "s BEHIND LIVE")
+                                color: root.textPrimary
+                                font.pixelSize: 14
+                                font.weight: Font.Bold
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.playback.title || "No Programming"
+                        color: root.textPrimary
+                        font.pixelSize: 30
+                        font.weight: Font.DemiBold
+                        width: parent.width
+                        elide: Text.ElideRight
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: 18
+
+                        Text {
+                            text: root.formatClock(root.playback.programStartMs)
+                                  + " ? "
+                                  + root.formatClock(root.playback.programEndMs)
+                            color: root.textSecondary
+                            font.pixelSize: 17
+                        }
+
+                        Text {
+                            text: root.playback.isLive
+                                  ? "Broadcast Clock"
+                                  : "Viewer Clock"
+                            color: root.playback.isLive
+                                   ? root.liveRed
+                                   : root.accentBright
+                            font.pixelSize: 17
+                            font.weight: Font.DemiBold
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 5
+                        radius: 3
+                        color: "#31465b"
+
+                        Rectangle {
+                            width: parent.width * liveHudWindow.progressFraction
+                            height: parent.height
+                            radius: 3
+                            color: root.accentBright
+                        }
+                    }
+
+                    Row {
+                        width: parent.width
+                        spacing: 20
+
+                        Text {
+                            text: "NEXT"
+                            color: root.textSecondary
+                            font.pixelSize: 14
+                            font.weight: Font.Bold
+                        }
+
+                        Text {
+                            text: root.playback.nextTitle || "?"
+                            color: root.textPrimary
+                            font.pixelSize: 16
+                            width: parent.width * 0.57
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            text: root.playback.nextStartMs
+                                  ? root.formatClock(root.playback.nextStartMs)
+                                  : ""
+                            color: root.textSecondary
+                            font.pixelSize: 15
+                        }
+                    }
+                }
+
+                Row {
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.rightMargin: 32
+                    anchors.bottomMargin: 16
+                    spacing: 25
+
+                    Text { text: "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "?  10s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "30s  ?"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "? ?  Channel"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "L  Go Live"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
+                }
+            }
+        }
     }
 
     // Startup / Home: classic split television landing page.

@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine
 
 import channelos
@@ -42,6 +42,12 @@ def test_main_qml_instantiates_headlessly() -> None:
     controller = FakeChannelOS()
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("channelOS", controller)
+
+    video_window = QWindow()
+    engine.rootContext().setContextProperty(
+        "channelOSVideoWindow",
+        video_window,
+    )
 
     qml_path = Path(channelos.__file__).resolve().parent / "qml" / "Main.qml"
     engine.load(QUrl.fromLocalFile(str(qml_path)))

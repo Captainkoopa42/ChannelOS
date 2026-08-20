@@ -98,4 +98,5 @@ def test_couch_qml_asset_is_present() -> None:
     text = qml.read_text(encoding="utf-8")
     assert "UNASSIGNED" in text
     assert "GUIDE" in text
-    assert "Tune selection captured" in text
+    assert "WindowContainer" in text
+    assert "channelOSVideoWindow" in text

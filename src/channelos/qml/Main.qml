@@ -96,69 +96,7 @@ ApplicationWindow {
         statusTimer.restart()
     }
 
-    Keys.onPressed: function(event) {
-        if (event.key === Qt.Key_G) {
-            screen = "guide"
-            selectRow(selectedRow)
-            event.accepted = true
-            return
-        }
-        if (event.key === Qt.Key_Escape || event.key === Qt.Key_Backspace) {
-            if (screen === "guide")
-                screen = "home"
-            else
-                Qt.quit()
-            event.accepted = true
-            return
-        }
-
-        if (screen === "home") {
-            if (event.key === Qt.Key_Up) {
-                homeSelection = Math.max(0, homeSelection - 1)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Down) {
-                homeSelection = Math.min(4, homeSelection + 1)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
-                if (homeSelection === 1) {
-                    screen = "guide"
-                    selectRow(selectedRow)
-                } else if (homeSelection === 0) {
-                    showStatus("Continue Watching will connect to the Viewer Clock in the playback slice")
-                } else {
-                    showStatus("This section is reserved for the next couch UI slice")
-                }
-                event.accepted = true
-            }
-            return
-        }
-
-        if (screen === "guide") {
-            if (event.key === Qt.Key_Up) {
-                selectRow(selectedRow - 1)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Down) {
-                selectRow(selectedRow + 1)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Left) {
-                selectedProgram = Math.max(0, selectedProgram - 1)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Right) {
-                var programs = programsForRow(selectedRow)
-                selectedProgram = Math.min(Math.max(0, programs.length - 1), selectedProgram + 1)
-                event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
-                showStatus("Tune selection captured — playback surface is the next plumbing slice")
-                event.accepted = true
-            } else if (event.key === Qt.Key_Home) {
-                selectedProgram = currentProgramIndex(selectedRow)
-                event.accepted = true
-            }
-        }
-    }
-
     Component.onCompleted: {
-        forceActiveFocus()
         if (rows.length > 0)
             selectRow(0)
     }
@@ -185,6 +123,19 @@ ApplicationWindow {
     Rectangle {
         anchors.fill: parent
         color: root.appBackground
+    }
+
+    // Native libVLC presentation surface.
+    //
+    // This exists as part of the QML hierarchy from application startup.
+    // Qt owns its native parenting, geometry and visibility; ChannelOS
+    // playback only receives the contained QWindow handle.
+    WindowContainer {
+        id: liveVideoContainer
+        anchors.fill: parent
+        visible: root.screen === "live"
+        window: channelOSVideoWindow
+        z: 50
     }
 
     // Startup / Home: classic split television landing page.

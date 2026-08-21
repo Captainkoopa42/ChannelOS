@@ -111,6 +111,51 @@ Consequences:
 - numeric tuning addresses the new lineup immediately,
 - the UI does not maintain a fake second copy of channel truth.
 
+## External automation and LLM authoring
+
+The human-readable channel definition is intentionally more than an internal persistence format. It is an open authoring boundary.
+
+The Broadcaster UI is one way to create a channel, but it must not become the only way. Any local or external tool that can produce a valid documented ChannelOS definition can act as a broadcaster-side authoring tool while ChannelOS remains responsible for validation and execution.
+
+Possible authors include:
+
+- the built-in Broadcaster UI,
+- a local script,
+- PowerShell or shell automation,
+- a scheduled household task,
+- another media-management application,
+- a local LLM,
+- a browser-hosted LLM used by the owner,
+- or a future third-party ChannelOS programming tool.
+
+For example, once richer programming rules exist, a user should be able to ask an LLM something conceptually like:
+
+> Build me a Saturday-morning cartoon channel, keep older shows before noon, avoid repeats for a week, and make it Channel 4.
+
+The LLM does not need to become part of ChannelOS. It can author or revise a portable definition, which ChannelOS then validates through the same public schema, resolver, and runtime path used by the built-in Broadcaster.
+
+```text
+human request
+      |
+      v
+LLM / script / external tool
+      |
+      v
+portable ChannelOS YAML
+      |
+      v
+ChannelOS validation
+      |
+      v
+real programming/runtime
+```
+
+This preserves an important ownership property: **the automation may be disposable; the television is not.** If the LLM, script, website, or helper application disappears, the resulting channel definition remains readable, portable, editable, and usable by ChannelOS.
+
+Future programming-level schema design should preserve this property. Advanced features such as time blocks, marathons, weighted rotations, seasonal rules, bumpers, and feature slots should remain representable through documented durable definitions wherever practical rather than existing only as opaque UI state.
+
+ChannelOS should therefore avoid making an LLM service, cloud account, or particular automation provider a dependency. AI-assisted programming can be powerful precisely because the durable output belongs to the user rather than to the assistant that generated it.
+
 ## Mouse and keyboard model
 
 Broadcaster is the first management-oriented ChannelOS surface where ordinary mouse and full keyboard interaction are first-class rather than incidental.

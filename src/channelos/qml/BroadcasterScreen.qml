@@ -876,9 +876,19 @@ Item {
                                     readOnly: broadcasterRoot.editorMode === "edit"
                                     activeFocusOnTab: true
                                     color: broadcasterRoot.textPrimary
+                                    placeholderTextColor: broadcasterRoot.textSecondary
                                     selectedTextColor: broadcasterRoot.textPrimary
                                     selectionColor: broadcasterRoot.accent
                                     validator: IntValidator { bottom: 1; top: 9999 }
+
+                                    background: Rectangle {
+                                        radius: 5
+                                        color: broadcasterRoot.panelRaised
+                                        border.color: channelNumberField.activeFocus
+                                                      ? broadcasterRoot.accentBright
+                                                      : broadcasterRoot.line
+                                        border.width: channelNumberField.activeFocus ? 2 : 1
+                                    }
                                 }
                             }
 
@@ -897,8 +907,18 @@ Item {
                                     placeholderText: "Sci-Fi Classics"
                                     activeFocusOnTab: true
                                     color: broadcasterRoot.textPrimary
+                                    placeholderTextColor: broadcasterRoot.textSecondary
                                     selectedTextColor: broadcasterRoot.textPrimary
                                     selectionColor: broadcasterRoot.accent
+
+                                    background: Rectangle {
+                                        radius: 5
+                                        color: broadcasterRoot.panelRaised
+                                        border.color: channelNameField.activeFocus
+                                                      ? broadcasterRoot.accentBright
+                                                      : broadcasterRoot.line
+                                        border.width: channelNameField.activeFocus ? 2 : 1
+                                    }
                                 }
                             }
 
@@ -964,6 +984,15 @@ Item {
                                 text: "Preserve episode/source order"
                                 Layout.alignment: Qt.AlignBottom
                                 activeFocusOnTab: true
+
+                                contentItem: Text {
+                                    text: preserveOrder.text
+                                    color: broadcasterRoot.textPrimary
+                                    font: preserveOrder.font
+                                    verticalAlignment: Text.AlignVCenter
+                                    leftPadding: preserveOrder.indicator.width
+                                                 + preserveOrder.spacing
+                                }
                             }
                         }
 
@@ -981,11 +1010,21 @@ Item {
                                 width: parent.width
                                 height: 82
                                 placeholderText: "What kind of station is this?"
+                                placeholderTextColor: broadcasterRoot.textSecondary
                                 wrapMode: TextEdit.Wrap
                                 activeFocusOnTab: true
                                 color: broadcasterRoot.textPrimary
                                 selectedTextColor: broadcasterRoot.textPrimary
                                 selectionColor: broadcasterRoot.accent
+
+                                background: Rectangle {
+                                    radius: 5
+                                    color: broadcasterRoot.panelRaised
+                                    border.color: descriptionField.activeFocus
+                                                  ? broadcasterRoot.accentBright
+                                                  : broadcasterRoot.line
+                                    border.width: descriptionField.activeFocus ? 2 : 1
+                                }
                             }
                         }
 

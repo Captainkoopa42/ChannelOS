@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
-from PySide6.QtGui import QWindow
+from PySide6.QtGui import QColor, QPalette, QWindow
+from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication
@@ -20,6 +21,58 @@ from .models import ChannelValidationError
 from .playback import NativeVideoSurface
 from .resolve import resolve_channel
 from .runtime import ChannelRuntime, ChannelRuntimeError, RuntimeStore, TelevisionRuntime
+
+
+def _apply_channelos_control_theme(app: QApplication) -> None:
+    # Give Qt Quick Controls the same high-contrast dark palette as ChannelOS.
+    #
+    # The platform-native Windows control style was producing light edit boxes
+    # while ChannelOS supplied light text colors, making typed values almost
+    # invisible. Fusion respects the application palette consistently across
+    # Windows/Linux and still provides normal mouse/keyboard behavior.
+    QQuickStyle.setStyle("Fusion")
+
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#050c15"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#f4f7fb"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#0d2035"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#10283f"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#f4f7fb"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#10283f"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#f4f7fb"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#1a91ff"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#7f93a8"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#0d2035"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#f4f7fb"))
+    palette.setColor(QPalette.ColorRole.Link, QColor("#42adff"))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.Light, QColor("#1a3550"))
+    palette.setColor(QPalette.ColorRole.Midlight, QColor("#17324a"))
+    palette.setColor(QPalette.ColorRole.Mid, QColor("#10283f"))
+    palette.setColor(QPalette.ColorRole.Dark, QColor("#06111e"))
+    palette.setColor(QPalette.ColorRole.Shadow, QColor("#02070d"))
+
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.Text,
+        QColor("#6f8194"),
+    )
+    palette.setColor(
+        QPalette.ColorGroup.Disabled,
+        QPalette.ColorRole.ButtonText,
+        QColor("#6f8194"),
+    )
+
+    app.setPalette(palette)
+
+    # Controls in Broadcaster mode use the application font unless a screen
+    # deliberately specifies a larger size. Raise the floor so form values,
+    # combo boxes, buttons and checkboxes are readable at 1080p couch/desk use.
+    font = app.font()
+    if font.pointSizeF() < 11.0:
+        font.setPointSizeF(11.0)
+        app.setFont(font)
 
 
 class BroadcasterCouchController(CouchController):
@@ -269,6 +322,7 @@ def run_qt(
         app = QApplication(sys.argv[:1])
     app.setApplicationName("ChannelOS")
     app.setOrganizationName("ChannelOS")
+    _apply_channelos_control_theme(app)
 
     controller = BroadcasterCouchController(
         service,

@@ -143,9 +143,23 @@ def test_couch_qml_asset_is_present() -> None:
     assert "GUIDE" in text
     assert "WindowContainer" in text
     assert "channelOSVideoWindow" in text
+    # Bounded-HUD experiment: preserve the original video container and add
+    # only a small native clock sibling. The former full-screen native HUD
+    # must remain absent.
+    assert "Bounded native HUD experiment" in text
+    assert "liveVideoContainer" in text
+    assert "liveClockContainer" in text
+    assert "bottomHudOverlay" in text
+    assert "bottomHudContainer" not in text
+    assert "bottomHudMode" in text
+    assert 'hudMode === "live"' in text
+    assert 'hudMode === "ondemand"' in text
+    assert "channelEntryContainer" in text
+    assert "audioHudContainer" in text
+    assert "liveHudContainer" not in text
     assert "BEHIND LIVE" in text
-    assert "Broadcast Clock" in text
     assert "NEXT" in text
+    assert "Broadcast Clock" in text
     assert "displaySegments" in text
     assert "modelData.isCluster" in text
     assert 'modelData.programCount + " clips"' in text

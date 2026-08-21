@@ -241,18 +241,6 @@ class BroadcasterCouchController(CouchController):
         self._video_surface = surface
         super().attach_video_surface(surface)
 
-    @Slot(result="QVariantMap")
-    def rebindVideoSurface(self) -> dict[str, object]:
-        """Re-assert the native HWND after maximize/fullscreen state changes."""
-
-        if self._video_surface is None:
-            return {"ok": False, "message": "native video surface is unavailable"}
-        try:
-            CouchController.attach_video_surface(self, self._video_surface)
-            return {"ok": True, "message": "video surface rebound"}
-        except Exception as exc:
-            return self._error(exc)
-
     @Slot()
     def refreshBroadcaster(self) -> None:
         self._broadcaster.refresh()
@@ -731,19 +719,6 @@ def run_qt(
     window._channelos_library_item = library_item
     window._channelos_broadcaster_item = broadcaster_item
     window._channelos_component_engine = engine
-
-    # Windows can rebuild native presentation state when a normal application
-    # window is maximized/restored. Re-assert the same libVLC child HWND after
-    # the transition instead of allowing the video surface to remain blank while
-    # the independent QML HUD continues rendering.
-    def repair_native_surface(*_args) -> None:
-        if str(window.property("screen")) not in {"live", "ondemand"}:
-            return
-        QTimer.singleShot(75, controller.rebindVideoSurface)
-        QTimer.singleShot(250, controller.rebindVideoSurface)
-
-    window.windowStateChanged.connect(repair_native_surface)
-    window.visibilityChanged.connect(repair_native_surface)
 
     playback_timer = QTimer(window)
     playback_timer.setInterval(250)

@@ -34,6 +34,18 @@ ApplicationWindow {
     property int volumePercent: 100
     property bool muted: false
     property bool audioHudVisible: false
+
+    // One authoritative lower-third mode. This prevents the bounded HUD from
+    // momentarily rendering Live and then On Demand (or vice versa) while the
+    // controller publishes a screen/playback transition.
+    readonly property string bottomHudMode: {
+        if (screen === "ondemand" && onDemand && onDemand.active)
+            return "ondemand"
+        if (screen === "live" && playback && playback.active)
+            return "live"
+        return "hidden"
+    }
+
     property var playback: channelOS.playback
     property var onDemand: channelOS.onDemand
     property var librarySnapshot: channelOS.librarySnapshot
@@ -220,65 +232,38 @@ ApplicationWindow {
     // The libVLC target is a native window, so ordinary QML siblings cannot
     // reliably paint above it. This dedicated transparent child window is
     // stacked above the video container and owns the television HUD.
+    // Bounded television HUD architecture.
+    //
+    // The former full-screen transparent native HUD was the maximize failure
+    // trigger on Windows. Preserve the old ChannelOS HUD look, but split it
+    // into bounded native surfaces that exist only where pixels are drawn.
+
+    // Top-center numeric channel entry.
     WindowContainer {
-        id: liveHudContainer
-        anchors.fill: parent
-        visible: root.screen === "live" || root.screen === "ondemand"
+        id: channelEntryContainer
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: 44
+        width: Math.max(150, 72 + root.channelEntry.length * 22)
+        height: 64
+        visible: (root.screen === "live" || root.screen === "ondemand")
+                 && root.channelEntry.length > 0
         z: 60
 
         window: Window {
-            id: liveHudWindow
             color: "transparent"
             flags: Qt.FramelessWindowHint
                    | Qt.WindowDoesNotAcceptFocus
                    | Qt.WindowTransparentForInput
 
-            readonly property real progressFraction: {
-                var start = Number(root.playback.programStartMs || 0)
-                var end = Number(root.playback.programEndMs || 0)
-                var viewer = Number(root.playback.viewerTimeMs || 0)
-                if (end <= start)
-                    return 0
-                return Math.max(0, Math.min(1, (viewer - start) / (end - start)))
-            }
-
             Rectangle {
-                anchors.top: parent.top
-                anchors.right: parent.right
-                anchors.topMargin: 26
-                anchors.rightMargin: 34
-                width: liveClockText.implicitWidth + 28
-                height: 42
-                radius: 7
-                color: "#b8081625"
-
-                Text {
-                    id: liveClockText
-                    anchors.centerIn: parent
-                    text: root.formatClock(Date.now())
-                    color: root.textPrimary
-                    font.pixelSize: 18
-                    font.weight: Font.DemiBold
-                }
-            }
-
-            Rectangle {
-                id: channelEntryPanel
-                anchors.top: parent.top
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.topMargin: 44
-                width: channelEntryText.implicitWidth + 46
-                height: 64
+                anchors.fill: parent
                 radius: 10
-                visible: (root.screen === "live"
-                          || root.screen === "ondemand")
-                         && root.channelEntry.length > 0
                 color: "#dc081625"
                 border.color: root.accentBright
                 border.width: 1
 
                 Text {
-                    id: channelEntryText
                     anchors.centerIn: parent
                     text: "CH " + root.channelEntry
                     color: root.textPrimary
@@ -287,44 +272,100 @@ ApplicationWindow {
                     font.letterSpacing: 2
                 }
             }
+        }
+    }
+
+    // Top-left volume / mute popup.
+    WindowContainer {
+        id: audioHudContainer
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.leftMargin: 34
+        anchors.topMargin: 28
+        width: root.muted ? 128 : 118
+        height: 44
+        visible: root.audioHudVisible
+                 && (root.screen === "live" || root.screen === "ondemand")
+        z: 60
+
+        window: Window {
+            color: "transparent"
+            flags: Qt.FramelessWindowHint
+                   | Qt.WindowDoesNotAcceptFocus
+                   | Qt.WindowTransparentForInput
 
             Rectangle {
-                id: audioHudPanel
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.leftMargin: 34
-                anchors.topMargin: 28
-                width: audioHudText.implicitWidth + 34
-                height: 44
+                anchors.fill: parent
                 radius: 8
-                visible: root.audioHudVisible
-                         && (root.screen === "live"
-                             || root.screen === "ondemand")
                 color: "#dc081625"
 
                 Text {
-                    id: audioHudText
                     anchors.centerIn: parent
-                    text: root.muted
-                          ? "MUTED"
-                          : "VOL " + root.volumePercent
-                    color: root.muted
-                           ? root.liveRed
-                           : root.textPrimary
+                    text: root.muted ? "MUTED" : "VOL " + root.volumePercent
+                    color: root.muted ? root.liveRed : root.textPrimary
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
                 }
             }
+        }
+    }
+
+    // Transparent bounded bottom HUD.
+    //
+    // IMPORTANT: this is intentionally a top-level transient Window, NOT a
+    // WindowContainer child. The old full-screen native HUD could obscure VLC
+    // after maximize, while the bounded child HUD could not alpha-compose over
+    // the VLC child reliably. This keeps the old translucent HUD look while
+    // limiting the overlay to only the lower-third pixels.
+    Window {
+        id: bottomHudOverlay
+        transientParent: root
+        flags: Qt.Tool
+               | Qt.FramelessWindowHint
+               | Qt.WindowDoesNotAcceptFocus
+               | Qt.WindowTransparentForInput
+        color: "transparent"
+
+        x: root.x
+        y: root.y + root.height - height
+        width: root.width
+        height: root.bottomHudMode === "live" ? 255 : 220
+
+        visible: root.visible
+                 && root.visibility !== Window.Minimized
+                 && root.bottomHudMode !== "hidden"
+
+        readonly property string hudMode: root.bottomHudMode
+
+        readonly property real liveProgressFraction: {
+            var start = Number(root.playback.programStartMs || 0)
+            var end = Number(root.playback.programEndMs || 0)
+            var viewer = Number(root.playback.viewerTimeMs || 0)
+            if (end <= start)
+                return 0
+            return Math.max(0, Math.min(1, (viewer - start) / (end - start)))
+        }
+
+        readonly property real onDemandProgressFraction: {
+            var duration = Number(root.onDemand.durationSeconds || 0)
+            var position = Number(root.onDemand.positionSeconds || 0)
+            if (duration <= 0)
+                return 0
+            return Math.max(0, Math.min(1, position / duration))
+        }
+
+        // Classic Live-TV lower third.
+        Item {
+            anchors.fill: parent
+            visible: bottomHudOverlay.hudMode === "live"
 
             Rectangle {
-                id: liveHudPanel
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 255
-                visible: root.screen === "live"
-                         && root.liveHudVisible
-                         && root.playback.active
+                anchors.fill: parent
+
+                // Same old ChannelOS lower-third color. Because this Rectangle
+                // now lives in a top-level alpha-composited Window, its alpha
+                // blends with the video instead of resolving against a native
+                // child backing surface.
                 color: "#e6081625"
 
                 Rectangle {
@@ -347,8 +388,10 @@ ApplicationWindow {
                         spacing: 16
 
                         Text {
-                            text: "CH " + (root.playback.displayNumber || "---")
-                                  + "   " + (root.playback.channelName || "")
+                            text: "CH "
+                                  + (root.playback.displayNumber || "---")
+                                  + "   "
+                                  + (root.playback.channelName || "")
                             color: root.accentBright
                             font.pixelSize: 22
                             font.weight: Font.DemiBold
@@ -362,7 +405,9 @@ ApplicationWindow {
                             radius: 15
                             color: root.playback.paused
                                    ? "#9a6a20"
-                                   : (root.playback.isLive ? "#a83232" : "#164d80")
+                                   : (root.playback.isLive
+                                      ? "#a83232"
+                                      : "#164d80")
 
                             Text {
                                 id: liveStateText
@@ -370,11 +415,14 @@ ApplicationWindow {
                                 text: root.playback.paused
                                       ? ("PAUSED"
                                          + (root.playback.lagSeconds >= 1
-                                            ? " - " + Math.round(root.playback.lagSeconds) + "s BEHIND"
+                                            ? " - "
+                                              + Math.round(root.playback.lagSeconds)
+                                              + "s BEHIND"
                                             : ""))
                                       : (root.playback.isLive
                                          ? "LIVE"
-                                         : Math.round(root.playback.lagSeconds) + "s BEHIND LIVE")
+                                         : Math.round(root.playback.lagSeconds)
+                                           + "s BEHIND LIVE")
                                 color: root.textPrimary
                                 font.pixelSize: 14
                                 font.weight: Font.Bold
@@ -422,7 +470,7 @@ ApplicationWindow {
                         color: "#31465b"
 
                         Rectangle {
-                            width: parent.width * liveHudWindow.progressFraction
+                            width: parent.width * bottomHudOverlay.liveProgressFraction
                             height: parent.height
                             radius: 3
                             color: root.accentBright
@@ -477,38 +525,16 @@ ApplicationWindow {
                     Text { text: "G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
                 }
             }
+        }
+
+        // Classic On Demand lower third.
+        Item {
+            anchors.fill: parent
+            visible: bottomHudOverlay.hudMode === "ondemand"
 
             Rectangle {
-                id: onDemandHudPanel
-
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-
-                height: 220
-
-                visible: root.screen === "ondemand"
-                         && root.onDemand.active
-
+                anchors.fill: parent
                 color: "#e6081625"
-
-                readonly property real progressFraction: {
-                    var duration = Number(
-                        root.onDemand.durationSeconds || 0
-                    )
-
-                    var position = Number(
-                        root.onDemand.positionSeconds || 0
-                    )
-
-                    if (duration <= 0)
-                        return 0
-
-                    return Math.max(
-                        0,
-                        Math.min(1, position / duration)
-                    )
-                }
 
                 Rectangle {
                     anchors.left: parent.left
@@ -539,21 +565,16 @@ ApplicationWindow {
                         Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             height: 28
-                            width: odState.implicitWidth + 24
+                            width: odStateText.implicitWidth + 24
                             radius: 14
-
                             color: root.onDemand.paused
                                    ? "#9a6a20"
                                    : "#164d80"
 
                             Text {
-                                id: odState
+                                id: odStateText
                                 anchors.centerIn: parent
-
-                                text: root.onDemand.paused
-                                      ? "PAUSED"
-                                      : "PLAYING"
-
+                                text: root.onDemand.paused ? "PAUSED" : "PLAYING"
                                 color: root.textPrimary
                                 font.pixelSize: 13
                                 font.weight: Font.Bold
@@ -563,24 +584,17 @@ ApplicationWindow {
 
                     Text {
                         text: root.onDemand.title || "Owned Media"
-
                         color: root.textPrimary
                         font.pixelSize: 29
                         font.weight: Font.DemiBold
-
                         width: parent.width
                         elide: Text.ElideRight
                     }
 
                     Text {
-                        text: root.formatDurationSeconds(
-                                  root.onDemand.positionSeconds
-                              )
+                        text: root.formatDurationSeconds(root.onDemand.positionSeconds)
                               + " / "
-                              + root.formatDurationSeconds(
-                                  root.onDemand.durationSeconds
-                              )
-
+                              + root.formatDurationSeconds(root.onDemand.durationSeconds)
                         color: root.textSecondary
                         font.pixelSize: 16
                     }
@@ -593,7 +607,7 @@ ApplicationWindow {
 
                         Rectangle {
                             width: parent.width
-                                   * onDemandHudPanel.progressFraction
+                                   * bottomHudOverlay.onDemandProgressFraction
                             height: parent.height
                             radius: 3
                             color: root.accentBright
@@ -608,57 +622,70 @@ ApplicationWindow {
                     anchors.bottomMargin: 18
                     spacing: 28
 
-                    Text {
-                        text: "SPACE  Pause / Play"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "LEFT  -10s"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "RIGHT  +30s"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "+/-  Volume"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "M  Mute"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "0-9  Tune Channel"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "P  Previous Channel"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "ESC  Library"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
+                    Text { text: "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "LEFT  -10s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "RIGHT  +30s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "0-9  Tune Channel"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "P  Previous Channel"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "ESC  Library"; color: root.textSecondary; font.pixelSize: 13 }
                 }
             }
         }
     }
+
+    // Bounded native HUD experiment.
+    //
+    // Keep the original full-window video WindowContainer, but reintroduce only
+    // a small native clock surface. If maximize/restore remains healthy, we know
+    // native overlays themselves are viable and can add the remaining HUD pieces
+    // back as bounded windows rather than one full-screen transparent sibling.
+    WindowContainer {
+        id: liveClockContainer
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 26
+        anchors.rightMargin: 34
+        width: 154
+        height: 46
+        visible: root.screen === "live" || root.screen === "ondemand"
+        z: 60
+
+        window: Window {
+            id: liveClockWindow
+            color: "transparent"
+            flags: Qt.FramelessWindowHint
+                   | Qt.WindowDoesNotAcceptFocus
+                   | Qt.WindowTransparentForInput
+
+            property real nowMs: Date.now()
+
+            Timer {
+                interval: 1000
+                repeat: true
+                running: true
+                onTriggered: liveClockWindow.nowMs = Date.now()
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 7
+                color: "#b8081625"
+                border.color: "#1a3550"
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: root.formatClock(liveClockWindow.nowMs)
+                    color: root.textPrimary
+                    font.pixelSize: 18
+                    font.weight: Font.DemiBold
+                }
+            }
+        }
+    }
+
 
     // Startup / Home: classic split television landing page.
     Item {

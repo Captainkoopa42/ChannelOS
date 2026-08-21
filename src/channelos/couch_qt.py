@@ -453,18 +453,13 @@ class CouchKeyFilter(QObject):
         self._channel_digits = ""
 
     def _show_live_hud(self) -> None:
+        # Keep the main Live lower-third persistent. The old implementation
+        # auto-hid it after 4.5 seconds, which can look exactly like a
+        # maximize-triggered HUD fallback when the window is enlarged a few
+        # seconds after tuning. Small volume/channel-entry popups remain
+        # transient through their own timers.
         self._hud_generation += 1
-        generation = self._hud_generation
         self._window.setProperty("liveHudVisible", True)
-
-        def hide() -> None:
-            if (
-                generation == self._hud_generation
-                and str(self._window.property("screen")) == "live"
-            ):
-                self._window.setProperty("liveHudVisible", False)
-
-        QTimer.singleShot(4500, hide)
 
     def _show_audio_hud(self, result: dict[str, object]) -> None:
         if not bool(result.get("ok")):

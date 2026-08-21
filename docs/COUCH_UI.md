@@ -1,58 +1,152 @@
 # ChannelOS Couch UI
 
-**Status:** Phase 3 implementation target  
+**Status:** Working local alpha
 **Phase:** 3 — Couch Interface
+**Real-machine gate:** Passed for the current Windows implementation
 
 ## Product rule
 
 > **The runtime decides television state. The UI presents and controls it.**
 
-The couch interface must remain a client of the existing Guide and television runtime. It must not recreate scheduling logic, infer a second Broadcast Clock, or manipulate libVLC directly.
+The couch interface remains a client of the Guide and television runtime.
+
+It does not recreate scheduling logic, invent a second Broadcast Clock, or use libVLC as the product's state authority.
+
+## Current implementation
+
+The current Qt Quick / PySide6 couch application now includes:
+
+- ChannelOS startup/home presentation,
+- deliberate Channel 001 unassigned/static state,
+- real multi-channel Guide,
+- keyboard/D-pad-style navigation,
+- authoritative selected-program detail,
+- current Broadcast Clock marker,
+- adaptive short-form Guide presentation,
+- native embedded libVLC video,
+- embedded audio,
+- hardware-decoded Windows playback,
+- live channel/program HUD,
+- Now / Next,
+- LIVE / behind-live presentation,
+- pause/resume,
+- rewind and skip forward,
+- channel Up / Down,
+- return to LIVE,
+- automatic scheduled program rollover,
+- real Library browser,
+- Add Media Folder,
+- independent On Demand playback,
+- On Demand pause/seek,
+- end-of-file replay/rewind recovery.
 
 ## Approved visual direction
 
-The first ChannelOS couch interface is intentionally television-first rather than streaming-app-first.
+The interface remains television-first rather than streaming-app-first.
 
 ### Startup / Home
 
-Startup uses a classic cable-TV split composition:
+Startup uses the classic cable-TV split composition:
 
 - dark navy / charcoal ChannelOS shell,
 - navigation and identity on the left,
-- large television preview area on the upper right,
+- television preview region on the upper right,
 - quick-action cards across the lower area,
-- Channel 001 as the first-start default when no previous channel exists,
-- an unassigned / unpopulated channel presents deliberate classic television static rather than an error panel.
-
-Later playback plumbing should let the preview show the last tuned channel when viewer state exists. Static remains the default visual identity for an intentionally unassigned channel.
+- Channel 001 as the intentional first-start default,
+- classic television static for an unassigned channel.
 
 ### Guide
 
-The actual Guide is a full-screen modern cable grid, not the startup split layout.
+The Guide is a full-screen modern cable grid:
 
-- channels are vertical,
-- time runs horizontally,
-- program blocks are sized from authoritative schedule start/end times,
-- the current Broadcast Clock has a visible time marker,
-- the selected program drives the information header,
-- a television preview region occupies the upper-right portion of the Guide,
-- focus is a bright cool-blue state suitable for keyboard, controller, or remote navigation,
-- LIVE is restrained red,
-- the Guide remains dense and readable from couch distance.
+- channels vertical,
+- time horizontal,
+- program blocks derived from authoritative start/end times,
+- current Broadcast Clock marker,
+- selected-program header,
+- cool-blue focus state,
+- restrained red LIVE state,
+- couch-readable density.
 
-The interaction model is deliberately familiar: Up/Down changes channel rows, Left/Right moves through scheduled programs, Enter/OK selects, Guide returns to the Guide / current time, and Back returns toward the previous screen.
+Very short captures are grouped only in the **visual projection**.
 
-### Live television and overlays
+The underlying Guide still retains and selects exact scheduled occurrences.
 
-Live television is full-screen video. Information appears as temporary overlays rather than permanently shrinking playback. Channel / program overlays include channel number and identity, title, current/next information, LIVE state, schedule progress, and relevant transport state.
+### Live television
+
+Live television is full-screen native video.
+
+Temporary overlays present:
+
+- channel number/name,
+- title,
+- LIVE or behind-live state,
+- schedule progress,
+- Now / Next,
+- transport state.
+
+The native video surface and overlay are separate Qt child-window layers because the embedded playback target is a native window.
 
 ### Library / On Demand
 
-Library is a separate owned-media browsing mode using the same ChannelOS visual language. It is not the product's default identity; live television and the Guide remain central.
+Library now reads the real canonical ChannelOS media index.
+
+It displays actual indexed assets and source information rather than placeholder catalog content.
+
+On Demand uses a playback session separate from television scheduling.
+
+This preserves the conceptual boundary:
+
+```text
+Library selection
+      |
+      v
+On Demand playhead
+
+Channel schedule
+      |
+      v
+Broadcast / Viewer Clock
+```
+
+Both use the same owned-media index and the same ChannelOS presentation surface, but one does not rewrite the state of the other.
+
+## Real-machine validation
+
+The Windows development machine has validated:
+
+- Channel 007 sequential scheduling,
+- Channel 012 deterministic shuffle scheduling,
+- Guide-to-live playback,
+- embedded video and audio,
+- D3D11VA GPU decoding,
+- automatic short-program rollover,
+- Viewer Clock lag after pause,
+- `GO_LIVE`,
+- channel switching,
+- real indexed Library browsing,
+- On Demand play/pause/seek,
+- On Demand natural-EOF recovery,
+- return from On Demand to live television.
+
+## Remaining Phase 3 UI work
+
+Major remaining couch/release work includes:
+
+- numeric direct tuning,
+- Previous Channel binding,
+- volume/mute,
+- richer Info behavior,
+- controller/remote abstraction,
+- Settings,
+- source-management polish,
+- Continue Watching integration,
+- normal-user playback-runtime packaging,
+- SteamOS/controller validation,
+- autostart/crash recovery,
+- clean-machine release testing.
 
 ## Visual tokens
-
-The initial implementation should stay close to:
 
 ```text
 Background       #050c15
@@ -67,40 +161,22 @@ Bright focus     #42adff
 LIVE             #ff4a4a
 ```
 
-These are implementation anchors, not a requirement that every surface use exactly one literal color value forever.
+These remain implementation anchors rather than immutable theme requirements.
 
-## First implementation slice
+## Architectural result
 
-The first real UI slice proves the presentation boundary before video embedding is added:
-
-1. optional `PySide6` UI dependency and packaged QML assets,
-2. `channelos-couch` launcher,
-3. QML-friendly Guide projection produced from `GuideService`,
-4. approved startup / static Channel 001 composition,
-5. full-screen Guide generated from real ChannelOS schedule rows,
-6. keyboard / D-pad-style focus navigation,
-7. periodic Guide refresh from the same authoritative runtime.
-
-The next plumbing slice adds control actions and an embedded playback surface:
+The original presentation boundary has survived implementation:
 
 ```text
-QML selection
+QML presentation
     -> Qt/Python adapter
-    -> GuideController / TelevisionSession
-    -> TelevisionRuntime
+    -> Guide / On Demand control layer
+    -> authoritative ChannelOS runtime or media selection
     -> PlaybackBackend
-    -> libVLC embedded video surface
+    -> libVLC
+    -> native video surface
 ```
 
-## First real-machine gate
+VLC performs media playback.
 
-The first couch UI gate is successful when a Windows development machine can:
-
-- launch the new interface from the existing Channel 007 and 012 definitions,
-- show the approved startup screen,
-- open the Guide,
-- display real Guide rows for both channels,
-- navigate them with the keyboard,
-- keep the Guide in agreement with the Broadcast Clock as it refreshes.
-
-Playback inside the Qt surface is the following gate, not a reason to duplicate or bypass the runtime during this visual-shell proof.
+ChannelOS performs television.

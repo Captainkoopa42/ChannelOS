@@ -4,9 +4,10 @@
 >
 > Own the library. Own the schedule. Own the interface.
 
-**Status:** Living design / pre-alpha  
-**Design version:** 0.3 — August 2026  
+**Status:** Living design / working alpha implementation
+**Design version:** 0.3 — August 2026
 **Role:** Canonical product and system design reference
+**Implementation audit:** [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)
 
 ---
 

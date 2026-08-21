@@ -2,7 +2,7 @@
 
 This roadmap is intentionally behavior-first. ChannelOS does not need to support every codec, service, or device before it proves that personally owned media can feel like television again.
 
-The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). Phase 0 and Phase 1 are complete. The current milestone is [GUIDE_AND_UI_BOUNDARY.md](GUIDE_AND_UI_BOUNDARY.md).
+The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). Phase 0, Phase 1, and Phase 2 are complete. Phase 3 is the active primary milestone, and the first Phase 4 Library / On Demand slice is already being implemented in parallel because it now uses the same proven media and presentation boundaries. See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for the current fidelity and delivery audit.
 
 ## Phase 0 — Foundation / First Broadcast
 
@@ -64,54 +64,82 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). Phase 0
 
 **Goal:** Make generated timelines visible and navigable through a stable television-facing data boundary before building the polished couch shell.
 
-- [ ] Explicit Guide / television service boundary
-- [ ] Schedule horizon generation
-- [ ] Now / Next model
-- [ ] Program durations from indexed technical data
-- [ ] Traditional grid-guide data model
-- [ ] Schedule regeneration rules
-- [ ] Explain-why trace for programmed items
-- [ ] Tune from Guide through ChannelOS control intents
-- [ ] Watch from Beginning where the owned media permits it
-- [ ] Multi-channel Guide/runtime agreement tests
-- [ ] Real-media Guide-to-playback smoke test
+- [x] Explicit Guide / television service boundary
+- [x] Schedule horizon generation
+- [x] Now / Next model
+- [x] Program durations from indexed technical data
+- [x] Traditional grid-guide data model
+- [x] Schedule regeneration / stale-occurrence validation rules
+- [x] Explain-why trace for programmed items
+- [x] Tune from Guide through ChannelOS control intents
+- [x] Watch from Beginning where the owned media permits it
+- [x] Multi-channel Guide/runtime agreement tests
+- [x] Real-media Guide-to-playback smoke test
 
-**Architectural rule:** The Guide and future UI consume runtime truth; they do not independently invent channel schedules.
+**Architectural rule:** The Guide consumes runtime truth; it does not independently invent channel schedules.
 
-**Exit:** A client can request a believable Guide horizon, display Now/Next, tune a current program, start an eligible scheduled program from its beginning, and explain why each item was scheduled using the same truth that drives playback.
+**Exit:** Passed and merged to `main`.
+
+The Guide service produces stable scheduled occurrences, Now/Next, multi-channel horizons, explanation traces, and validated control actions over the same runtime that drives television playback.
 
 ## Phase 3 — Appliance UX / Control Surface
 
 **Goal:** Make the computer disappear during ordinary viewing while preserving direct control.
 
-- [ ] Full-screen live view
-- [ ] Remote/controller input abstraction
-- [ ] Open ChannelOS control-intent protocol
-- [ ] Numeric direct tuning
-- [ ] Channel up/down
-- [ ] Previous channel
+- [x] Full-screen live view
+- [ ] Remote/controller input abstraction — keyboard/D-pad interaction path is working; dedicated controller/remote mapping remains
+- [ ] Open ChannelOS control-intent protocol / IPC boundary
+- [ ] Numeric direct tuning in the couch UI
+- [x] Channel up/down
+- [ ] Previous Channel couch binding
 - [ ] Volume / mute integration
-- [ ] Play / pause
-- [ ] Rewind / fast-forward / skip
-- [ ] LIVE button behavior
-- [ ] Minimal Now/Next overlay
-- [ ] Guide UI
-- [ ] Home / Back / Info navigation
-- [ ] Large, television-readable focus states and targets
-- [ ] Default dark navy/charcoal + cool-blue ChannelOS visual language
-- [ ] SteamOS/controller compatibility as a first-class couch target
+- [x] Play / pause
+- [x] Rewind / fast-forward / skip
+- [x] LIVE button behavior
+- [x] Minimal Now/Next overlay
+- [x] Guide UI
+- [ ] Home / Back / Info navigation — Home and Back work; dedicated Info behavior remains incomplete
+- [x] Large, television-readable focus states and targets
+- [x] Default dark navy/charcoal + cool-blue ChannelOS visual language
+- [ ] SteamOS/controller compatibility validation
 - [ ] Autostart and crash recovery
 - [ ] Packaged playback runtime so ordinary users do not configure libVLC manually
 
-**Exit:** A keyboard and mouse are optional for ordinary viewing, while pause/seek/volume controls remain under the viewer's command. The same couch UI works as a normal desktop application and as a Steam/SteamOS-launched application.
+Additional Phase 3 work already validated:
+
+- [x] Native embedded libVLC video surface inside Qt Quick
+- [x] Embedded video and audio real-machine validation
+- [x] D3D11VA hardware decoding on Windows
+- [x] Automatic scheduled program-to-program decoder rollover
+- [x] Live channel/program HUD
+- [x] Broadcast vs. Viewer Clock presentation
+- [x] Readable short-form Guide aggregation without modifying schedule truth
+
+**Current state:** ordinary viewing already behaves like television on the Windows development machine. The remaining Phase 3 work is increasingly input, packaging, settings, and release hardening rather than proof that the core experience functions.
+
+**Exit target:** A keyboard and mouse are optional for ordinary viewing, while pause/seek/volume controls remain under the viewer's command. The same couch UI works as a normal desktop application and as a Steam/SteamOS-launched application.
 
 ## Phase 4 — Library / On Demand
 
 **Goal:** Make the owned collection as pleasant to deliberately browse as the channels are to passively watch.
 
+Core Library / On Demand path:
+
+- [x] Real Library browser backed by the canonical media index
+- [x] Local Add Media / folder-selection workflow
+- [x] Independent On Demand playback session
+- [x] Shared native video presentation surface
+- [x] On Demand play / pause
+- [x] On Demand rewind / skip-forward
+- [x] Natural end-of-file replay and rewind recovery
+- [x] Return from On Demand to live television without modifying Broadcast Clock state
+
+Rich Library work still remaining:
+
 - [ ] Movie / television / season / episode model
 - [ ] Poster/backdrop library UI
 - [ ] Search
+- [ ] Sorting and filtering
 - [ ] Genres
 - [ ] User tags
 - [ ] Collections
@@ -119,9 +147,12 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). Phase 0
 - [ ] Recently Added
 - [ ] Favorites
 - [ ] Add to Channel
-- [ ] Local Add Media / folder-selection workflow
+- [ ] Friendly normalized format/media labels
+- [ ] Rich title and metadata presentation
 
-**Exit:** The same canonical media index supports both television channels and deliberate on-demand selection without duplicate libraries.
+**Current state:** The important architectural exit condition is already partly proven: live channels and deliberate On Demand selection operate on the same canonical media index without creating duplicate libraries or inserting On Demand choices into channel schedule truth.
+
+**Exit target:** The same canonical media index supports both television channels and deliberate on-demand selection with rich browsing and organization.
 
 ## Phase 5 — Metadata and Broadcaster Tools
 
@@ -198,6 +229,22 @@ The canonical product direction is [MASTER_DESIGN.md](MASTER_DESIGN.md). Phase 0
 - [ ] Hardware consumes the same open ChannelOS control intents as software remotes
 
 **Exit:** Flash/install ChannelOS onto supported PC-class hardware, connect it to a television, power it on, and reach the couch UI without interacting with a general-purpose desktop.
+
+## Delivery calibration
+
+These are planning ranges, not release promises.
+
+The earlier blanket 3-6 month estimate mixed the focused desktop/couch product with the complete long-range roadmap.
+
+Current planning interpretation:
+
+- **Working local alpha:** achieved.
+- **Focused desktop/couch beta:** approximately 2-4 weeks at the current observed development/test cadence if scope remains focused.
+- **Shareable packaged Windows beta:** approximately 3-6 weeks, with packaging, licensing, controller behavior, clean-machine testing, and failure handling expected to move slower than feature coding.
+- **Steam / SteamOS-quality release candidate:** approximately 6-10 weeks, subject to platform and release requirements.
+- **Complete long-range Master Design:** still measured in months; 3-6+ months remains plausible for profiles, export, multi-device, ecosystem, and dedicated-appliance work.
+
+See [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for the distinction between first-release completion and full-design completion.
 
 ## Distribution and release strategy
 

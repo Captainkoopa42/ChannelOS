@@ -204,6 +204,16 @@ class OnDemandSession:
         self._backend.seek(target)
         return self.state()
 
+    def set_volume(self, percent: int) -> int:
+        volume = max(0, min(100, int(percent)))
+        self._ensure_backend().set_volume(volume)
+        return volume
+
+    def set_muted(self, muted: bool) -> bool:
+        value = bool(muted)
+        self._ensure_backend().set_muted(value)
+        return value
+
     def stop(self) -> None:
         if self._backend is not None:
             self._backend.stop()

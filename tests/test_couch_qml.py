@@ -78,5 +78,13 @@ def test_main_qml_instantiates_headlessly() -> None:
     roots = engine.rootObjects()
     assert roots, "Main.qml failed to instantiate"
     assert roots[0].property("screen") == "home"
+    assert roots[0].property("channelEntry") == ""
+    roots[0].setProperty("screen", "ondemand")
+    roots[0].setProperty("channelEntry", "007")
+    assert roots[0].property("channelEntry") == "007"
+    roots[0].setProperty("channelEntry", "")
+    roots[0].setProperty("screen", "home")
+    assert roots[0].property("volumePercent") == 100
+    assert roots[0].property("muted") is False
     roots[0].close()
     app.processEvents()

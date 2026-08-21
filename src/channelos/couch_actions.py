@@ -128,6 +128,20 @@ class CouchActions:
         self._last_decision = decision
         return decision
 
+    def tune(
+        self,
+        channel_number: int,
+        *,
+        at: datetime | None = None,
+    ) -> TuneDecision:
+        decision = self._ensure_session().tune(
+            int(channel_number),
+            now=at,
+            return_behavior="live",
+        )
+        self._last_decision = decision
+        return decision
+
     def pause(self, *, at: datetime | None = None) -> TuneDecision:
         decision = self._ensure_session().pause(now=at)
         self._last_decision = decision
@@ -158,12 +172,27 @@ class CouchActions:
         self._last_decision = decision
         return decision
 
+    def previous_channel(self, *, at: datetime | None = None) -> TuneDecision:
+        decision = self._ensure_session().previous_channel(now=at)
+        self._last_decision = decision
+        return decision
+
     def sync(self, *, at: datetime | None = None) -> TuneDecision:
         """Synchronize decoder playback with the authoritative Viewer Clock."""
 
         decision = self._ensure_session().sync(now=at)
         self._last_decision = decision
         return decision
+
+    def set_volume(self, percent: int) -> int:
+        volume = max(0, min(100, int(percent)))
+        self._ensure_session().backend.set_volume(volume)
+        return volume
+
+    def set_muted(self, muted: bool) -> bool:
+        value = bool(muted)
+        self._ensure_session().backend.set_muted(value)
+        return value
 
     def suspend_decoder(self) -> None:
         """Release live-TV decoder output while preserving runtime clock state."""

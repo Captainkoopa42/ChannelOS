@@ -30,6 +30,10 @@ ApplicationWindow {
     property int selectedLibrary: 0
     property string statusMessage: ""
     property bool liveHudVisible: true
+    property string channelEntry: ""
+    property int volumePercent: 100
+    property bool muted: false
+    property bool audioHudVisible: false
     property var playback: channelOS.playback
     property var onDemand: channelOS.onDemand
     property var librarySnapshot: channelOS.librarySnapshot
@@ -259,6 +263,60 @@ ApplicationWindow {
             }
 
             Rectangle {
+                id: channelEntryPanel
+                anchors.top: parent.top
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.topMargin: 44
+                width: channelEntryText.implicitWidth + 46
+                height: 64
+                radius: 10
+                visible: (root.screen === "live"
+                          || root.screen === "ondemand")
+                         && root.channelEntry.length > 0
+                color: "#dc081625"
+                border.color: root.accentBright
+                border.width: 1
+
+                Text {
+                    id: channelEntryText
+                    anchors.centerIn: parent
+                    text: "CH " + root.channelEntry
+                    color: root.textPrimary
+                    font.pixelSize: 28
+                    font.weight: Font.Bold
+                    font.letterSpacing: 2
+                }
+            }
+
+            Rectangle {
+                id: audioHudPanel
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.leftMargin: 34
+                anchors.topMargin: 28
+                width: audioHudText.implicitWidth + 34
+                height: 44
+                radius: 8
+                visible: root.audioHudVisible
+                         && (root.screen === "live"
+                             || root.screen === "ondemand")
+                color: "#dc081625"
+
+                Text {
+                    id: audioHudText
+                    anchors.centerIn: parent
+                    text: root.muted
+                          ? "MUTED"
+                          : "VOL " + root.volumePercent
+                    color: root.muted
+                           ? root.liveRed
+                           : root.textPrimary
+                    font.pixelSize: 18
+                    font.weight: Font.DemiBold
+                }
+            }
+
+            Rectangle {
                 id: liveHudPanel
                 anchors.left: parent.left
                 anchors.right: parent.right
@@ -312,10 +370,10 @@ ApplicationWindow {
                                 text: root.playback.paused
                                       ? ("PAUSED"
                                          + (root.playback.lagSeconds >= 1
-                                            ? " ? " + Math.round(root.playback.lagSeconds) + "s BEHIND"
+                                            ? " - " + Math.round(root.playback.lagSeconds) + "s BEHIND"
                                             : ""))
                                       : (root.playback.isLive
-                                         ? "? LIVE"
+                                         ? "LIVE"
                                          : Math.round(root.playback.lagSeconds) + "s BEHIND LIVE")
                                 color: root.textPrimary
                                 font.pixelSize: 14
@@ -339,7 +397,7 @@ ApplicationWindow {
 
                         Text {
                             text: root.formatClock(root.playback.programStartMs)
-                                  + " ? "
+                                  + " - "
                                   + root.formatClock(root.playback.programEndMs)
                             color: root.textSecondary
                             font.pixelSize: 17
@@ -383,7 +441,7 @@ ApplicationWindow {
                         }
 
                         Text {
-                            text: root.playback.nextTitle || "?"
+                            text: root.playback.nextTitle || "No next program"
                             color: root.textPrimary
                             font.pixelSize: 16
                             width: parent.width * 0.57
@@ -408,10 +466,14 @@ ApplicationWindow {
                     spacing: 25
 
                     Text { text: "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "?  10s"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "30s  ?"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "? ?  Channel"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "L  Go Live"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "LEFT  -10s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "RIGHT  +30s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "UP/DOWN  Channel"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "0-9  Tune"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "P  Previous"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "L  Live"; color: root.textSecondary; font.pixelSize: 13 }
                     Text { text: "G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
                 }
             }
@@ -560,6 +622,30 @@ ApplicationWindow {
 
                     Text {
                         text: "RIGHT  +30s"
+                        color: root.textSecondary
+                        font.pixelSize: 13
+                    }
+
+                    Text {
+                        text: "+/-  Volume"
+                        color: root.textSecondary
+                        font.pixelSize: 13
+                    }
+
+                    Text {
+                        text: "M  Mute"
+                        color: root.textSecondary
+                        font.pixelSize: 13
+                    }
+
+                    Text {
+                        text: "0-9  Tune Channel"
+                        color: root.textSecondary
+                        font.pixelSize: 13
+                    }
+
+                    Text {
+                        text: "P  Previous Channel"
                         color: root.textSecondary
                         font.pixelSize: 13
                     }

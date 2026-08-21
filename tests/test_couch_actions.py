@@ -21,6 +21,8 @@ class FakeBackend:
         self.surface: NativeVideoSurface | None = None
         self.loaded: Path | None = None
         self.position = 0.0
+        self.volume = 50
+        self.muted = False
         self.events: list[str] = []
 
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
@@ -48,16 +50,16 @@ class FakeBackend:
         return self.position
 
     def set_volume(self, percent: int) -> None:
-        return None
+        self.volume = int(percent)
 
     def get_volume(self) -> int:
-        return 50
+        return self.volume
 
     def set_muted(self, muted: bool) -> None:
-        return None
+        self.muted = bool(muted)
 
     def get_muted(self) -> bool:
-        return False
+        return self.muted
 
     def set_rate(self, rate: float) -> None:
         return None
@@ -279,3 +281,31 @@ def test_suspend_decoder_reloads_live_media(tmp_path: Path) -> None:
     )
 
     assert backend.events.count("load") == 2
+
+
+
+def test_numeric_tune_previous_channel_and_audio_controls(tmp_path: Path) -> None:
+    epoch = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
+    actions, _, backend = make_actions(tmp_path, epoch)
+
+    first = actions.tune(
+        7,
+        at=epoch + timedelta(seconds=2),
+    )
+    second = actions.tune(
+        12,
+        at=epoch + timedelta(seconds=3),
+    )
+    previous = actions.previous_channel(
+        at=epoch + timedelta(seconds=4),
+    )
+
+    assert first.channel_number == 7
+    assert second.channel_number == 12
+    assert previous.channel_number == 7
+
+    assert actions.set_volume(65) == 65
+    assert backend.volume == 65
+
+    assert actions.set_muted(True)
+    assert backend.muted

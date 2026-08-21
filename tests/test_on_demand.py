@@ -15,6 +15,8 @@ class FakeBackend(PlaybackBackend):
         self.loaded = None
         self.position = 0.0
         self.ended = False
+        self.volume = 50
+        self.muted = False
         self.events = []
 
     def attach_video_surface(self, surface):
@@ -47,16 +49,16 @@ class FakeBackend(PlaybackBackend):
         return self.ended
 
     def set_volume(self, percent):
-        pass
+        self.volume = int(percent)
 
     def get_volume(self):
-        return 50
+        return self.volume
 
     def set_muted(self, muted):
-        pass
+        self.muted = bool(muted)
 
     def get_muted(self):
-        return False
+        return self.muted
 
     def set_rate(self, rate):
         pass
@@ -267,3 +269,19 @@ def test_ended_play_rebuilds_decoder_from_start(tmp_path):
     assert backend.position == pytest.approx(0.0)
     assert not backend.ended
     assert not state.paused
+
+
+
+def test_on_demand_volume_and_mute_use_playback_backend(tmp_path):
+    backend = FakeBackend()
+    session = OnDemandSession(
+        backend_factory=lambda: backend
+    )
+
+    session.play_media(make_media(tmp_path))
+
+    assert session.set_volume(70) == 70
+    assert backend.volume == 70
+
+    assert session.set_muted(True)
+    assert backend.muted

@@ -46,6 +46,8 @@ class CouchController(QObject):
         self._playback: dict[str, object] = {"active": False}
         self._surface_ready = False
         self._surface_error = "embedded video surface has not been created"
+        self._volume = 100
+        self._muted = False
 
     def _build_library_snapshot(self) -> dict[str, object]:
         online = self._library.list_online_media()
@@ -214,6 +216,8 @@ class CouchController(QObject):
         }
 
     def _publish(self, decision: TuneDecision) -> dict[str, object]:
+        self._actions.set_volume(self._volume)
+        self._actions.set_muted(self._muted)
         self._playback = self._decision_view(decision)
         self.playbackChanged.emit()
         return {
@@ -279,6 +283,8 @@ class CouchController(QObject):
             state = self._on_demand.play_media(
                 self._library_media[selected]
             )
+            self._on_demand.set_volume(self._volume)
+            self._on_demand.set_muted(self._muted)
             self._on_demand_view = self._on_demand_state_view(state)
             self.onDemandChanged.emit()
 
@@ -367,6 +373,68 @@ class CouchController(QObject):
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
             return self._error(exc)
 
+    @Slot(int, result="QVariantMap")
+    def tuneChannel(self, channel_number: int) -> dict[str, object]:
+        if not self._surface_ready:
+            return {"ok": False, "message": self._surface_error}
+        try:
+            return self._publish(
+                self._actions.tune(int(channel_number))
+            )
+        except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(result="QVariantMap")
+    def previousChannel(self) -> dict[str, object]:
+        try:
+            return self._publish(self._actions.previous_channel())
+        except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+            return self._error(exc)
+
+    def _apply_audio_state(self) -> None:
+        if self._on_demand.active:
+            self._on_demand.set_volume(self._volume)
+            self._on_demand.set_muted(self._muted)
+        elif self._actions.last_decision is not None:
+            self._actions.set_volume(self._volume)
+            self._actions.set_muted(self._muted)
+
+    @Slot(int, result="QVariantMap")
+    def changeVolume(self, delta: int) -> dict[str, object]:
+        try:
+            self._volume = max(
+                0,
+                min(100, self._volume + int(delta)),
+            )
+            self._muted = False
+            self._apply_audio_state()
+            return {
+                "ok": True,
+                "message": f"Volume {self._volume}%",
+                "volume": self._volume,
+                "muted": self._muted,
+            }
+        except (PlaybackError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(result="QVariantMap")
+    def toggleMute(self) -> dict[str, object]:
+        try:
+            self._muted = not self._muted
+            self._apply_audio_state()
+            return {
+                "ok": True,
+                "message": (
+                    "Muted"
+                    if self._muted
+                    else f"Volume {self._volume}%"
+                ),
+                "volume": self._volume,
+                "muted": self._muted,
+            }
+        except (PlaybackError, ValueError) as exc:
+            return self._error(exc)
+
     def stop(self) -> None:
         self._on_demand.stop()
         self._actions.stop()
@@ -380,6 +448,9 @@ class CouchKeyFilter(QObject):
         self._controller = controller
         self._window = window
         self._hud_generation = 0
+        self._audio_generation = 0
+        self._channel_generation = 0
+        self._channel_digits = ""
 
     def _show_live_hud(self) -> None:
         self._hud_generation += 1
@@ -394,6 +465,109 @@ class CouchKeyFilter(QObject):
                 self._window.setProperty("liveHudVisible", False)
 
         QTimer.singleShot(4500, hide)
+
+    def _show_audio_hud(self, result: dict[str, object]) -> None:
+        if not bool(result.get("ok")):
+            return
+
+        self._audio_generation += 1
+        generation = self._audio_generation
+        self._window.setProperty(
+            "volumePercent",
+            int(result.get("volume", 100)),
+        )
+        self._window.setProperty(
+            "muted",
+            bool(result.get("muted", False)),
+        )
+        self._window.setProperty("audioHudVisible", True)
+
+        def hide() -> None:
+            if generation == self._audio_generation:
+                self._window.setProperty("audioHudVisible", False)
+
+        QTimer.singleShot(2200, hide)
+
+    def _handle_audio_key(self, key: int) -> bool:
+        if key in {Qt.Key.Key_Plus, Qt.Key.Key_Equal}:
+            result = self._controller.changeVolume(5)
+        elif key == Qt.Key.Key_Minus:
+            result = self._controller.changeVolume(-5)
+        elif key == Qt.Key.Key_M:
+            result = self._controller.toggleMute()
+        else:
+            return False
+
+        self._notify(result)
+        self._show_audio_hud(result)
+        return True
+
+    @staticmethod
+    def _digit_for_key(key: int) -> str | None:
+        keys = {
+            Qt.Key.Key_0: "0",
+            Qt.Key.Key_1: "1",
+            Qt.Key.Key_2: "2",
+            Qt.Key.Key_3: "3",
+            Qt.Key.Key_4: "4",
+            Qt.Key.Key_5: "5",
+            Qt.Key.Key_6: "6",
+            Qt.Key.Key_7: "7",
+            Qt.Key.Key_8: "8",
+            Qt.Key.Key_9: "9",
+        }
+        return keys.get(key)
+
+    def _commit_channel_entry(self) -> None:
+        digits = self._channel_digits
+        if not digits:
+            return
+
+        self._channel_digits = ""
+        self._channel_generation += 1
+        self._window.setProperty("channelEntry", "")
+
+        came_from_on_demand = (
+            str(self._window.property("screen")) == "ondemand"
+        )
+        if came_from_on_demand:
+            self._controller.stopOnDemand()
+            self._window.setProperty("screen", "live")
+            QApplication.processEvents()
+
+        result = self._controller.tuneChannel(int(digits))
+        self._notify(result)
+
+        if bool(result.get("ok")):
+            self._show_live_hud()
+        elif came_from_on_demand:
+            self._window.setProperty("screen", "library")
+
+    def _queue_channel_digit(self, digit: str) -> None:
+        if len(self._channel_digits) >= 4:
+            self._channel_digits = ""
+
+        self._channel_digits += digit
+        self._window.setProperty(
+            "channelEntry",
+            self._channel_digits,
+        )
+        self._channel_generation += 1
+        generation = self._channel_generation
+
+        if len(self._channel_digits) >= 4:
+            self._commit_channel_entry()
+            return
+
+        def commit_if_current() -> None:
+            if (
+                generation == self._channel_generation
+                and self._channel_digits
+                and str(self._window.property("screen")) in {"live", "ondemand"}
+            ):
+                self._commit_channel_entry()
+
+        QTimer.singleShot(1300, commit_if_current)
 
     def _notify(self, result: dict[str, object]) -> None:
         message = str(result.get("message", ""))
@@ -655,6 +829,35 @@ class CouchKeyFilter(QObject):
             return False
 
         if screen == "ondemand":
+            digit = self._digit_for_key(key)
+            if digit is not None:
+                self._queue_channel_digit(digit)
+                return True
+
+            if (
+                self._channel_digits
+                and key in {Qt.Key.Key_Return, Qt.Key.Key_Enter}
+            ):
+                self._commit_channel_entry()
+                return True
+
+            if self._handle_audio_key(key):
+                return True
+
+            if key == Qt.Key.Key_P:
+                self._controller.stopOnDemand()
+                self._window.setProperty("screen", "live")
+                QApplication.processEvents()
+
+                result = self._controller.previousChannel()
+                self._notify(result)
+
+                if bool(result.get("ok")):
+                    self._show_live_hud()
+                else:
+                    self._window.setProperty("screen", "library")
+                return True
+
             if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
                 self._controller.stopOnDemand()
                 self._window.setProperty("screen", "library")
@@ -683,6 +886,21 @@ class CouchKeyFilter(QObject):
         if screen != "live":
             return False
 
+        digit = self._digit_for_key(key)
+        if digit is not None:
+            self._queue_channel_digit(digit)
+            return True
+
+        if (
+            self._channel_digits
+            and key in {Qt.Key.Key_Return, Qt.Key.Key_Enter}
+        ):
+            self._commit_channel_entry()
+            return True
+
+        if self._handle_audio_key(key):
+            return True
+
         if key in {Qt.Key.Key_G, Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
             self._controller.refresh()
             self._window.setProperty("screen", "guide")
@@ -709,6 +927,10 @@ class CouchKeyFilter(QObject):
             return True
         if key == Qt.Key.Key_L:
             self._notify(self._controller.goLive())
+            self._show_live_hud()
+            return True
+        if key == Qt.Key.Key_P:
+            self._notify(self._controller.previousChannel())
             self._show_live_hud()
             return True
         return False

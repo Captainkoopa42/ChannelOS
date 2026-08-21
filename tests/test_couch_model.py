@@ -143,10 +143,10 @@ def test_couch_qml_asset_is_present() -> None:
     assert "GUIDE" in text
     assert "WindowContainer" in text
     assert "channelOSVideoWindow" in text
-    # Bounded-HUD experiment: preserve the original video container and add
-    # only a small native clock sibling. The former full-screen native HUD
-    # must remain absent.
-    assert "Bounded native HUD experiment" in text
+    # Production HUD architecture: preserve the original video container,
+    # keep native overlays bounded, and never recreate the full-screen native
+    # HUD sibling that broke Windows maximize/restore presentation.
+    assert "Windows-safe television HUD architecture" in text
     assert "liveVideoContainer" in text
     assert "liveClockContainer" in text
     assert "bottomHudOverlay" in text
@@ -157,6 +157,8 @@ def test_couch_qml_asset_is_present() -> None:
     assert "channelEntryContainer" in text
     assert "audioHudContainer" in text
     assert "liveHudContainer" not in text
+    assert "channelOS ? channelOS.playback" in text
+    assert "channelOS ? channelOS.onDemand" in text
     assert "BEHIND LIVE" in text
     assert "NEXT" in text
     assert "Broadcast Clock" in text

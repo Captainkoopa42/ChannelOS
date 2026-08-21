@@ -46,11 +46,13 @@ ApplicationWindow {
         return "hidden"
     }
 
-    property var playback: channelOS.playback
-    property var onDemand: channelOS.onDemand
-    property var librarySnapshot: channelOS.librarySnapshot
+    // Context properties are cleared during engine teardown. Guarding
+    // these bindings keeps shutdown quiet without changing runtime behavior.
+    property var playback: channelOS ? channelOS.playback : ({ active: false })
+    property var onDemand: channelOS ? channelOS.onDemand : ({ active: false })
+    property var librarySnapshot: channelOS ? channelOS.librarySnapshot : ({ items: [] })
     property var libraryItems: librarySnapshot.items || []
-    property var snapshot: channelOS.snapshot
+    property var snapshot: channelOS ? channelOS.snapshot : ({ rows: [] })
     property var rows: snapshot.rows || []
     property real horizonStartMs: snapshot.horizonStartMs || 0
     property real horizonEndMs: snapshot.horizonEndMs || 1
@@ -199,7 +201,10 @@ ApplicationWindow {
         interval: 15000
         repeat: true
         running: true
-        onTriggered: channelOS.refresh()
+        onTriggered: {
+            if (channelOS)
+                channelOS.refresh()
+        }
     }
 
     Timer {
@@ -227,16 +232,13 @@ ApplicationWindow {
         z: 50
     }
 
-    // Live-TV information layer.
+    // Windows-safe television HUD architecture.
     //
-    // The libVLC target is a native window, so ordinary QML siblings cannot
-    // reliably paint above it. This dedicated transparent child window is
-    // stacked above the video container and owns the television HUD.
-    // Bounded television HUD architecture.
-    //
-    // The former full-screen transparent native HUD was the maximize failure
-    // trigger on Windows. Preserve the old ChannelOS HUD look, but split it
-    // into bounded native surfaces that exist only where pixels are drawn.
+    // The libVLC target is a native child window. A second full-screen
+    // transparent native sibling can obscure it across maximize/restore
+    // transitions, so ChannelOS keeps HUD surfaces bounded to the pixels they
+    // actually draw. The translucent lower-third is a bounded transient
+    // top-level Window so Windows/DWM owns its alpha composition.
 
     // Top-center numeric channel entry.
     WindowContainer {
@@ -635,12 +637,9 @@ ApplicationWindow {
         }
     }
 
-    // Bounded native HUD experiment.
-    //
-    // Keep the original full-window video WindowContainer, but reintroduce only
-    // a small native clock surface. If maximize/restore remains healthy, we know
-    // native overlays themselves are viable and can add the remaining HUD pieces
-    // back as bounded windows rather than one full-screen transparent sibling.
+    // Bounded clock overlay. Keeping this native surface small avoids
+    // recreating the full-screen transparent sibling that conflicted with the
+    // embedded libVLC presentation surface on Windows.
     WindowContainer {
         id: liveClockContainer
         anchors.top: parent.top

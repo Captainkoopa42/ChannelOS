@@ -23,8 +23,12 @@ Item {
     readonly property color warning: "#ffb84a"
     readonly property color danger: "#ff6666"
 
-    property var snapshot: channelOS.librarySnapshot || ({})
-    property var scan: channelOS.libraryScan || ({ active: false })
+    property var snapshot: channelOS
+                           ? (channelOS.librarySnapshot || ({}))
+                           : ({})
+    property var scan: channelOS
+                       ? (channelOS.libraryScan || ({ active: false }))
+                       : ({ active: false })
     property var allItems: snapshot.items || []
     property var sources: snapshot.sources || []
     property var filteredItems: []

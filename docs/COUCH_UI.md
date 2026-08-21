@@ -32,13 +32,18 @@ The current Qt Quick / PySide6 couch application now includes:
 - pause/resume,
 - rewind and skip forward,
 - channel Up / Down,
+- numeric direct tuning,
+- Previous Channel,
+- volume/mute controls,
 - return to LIVE,
 - automatic scheduled program rollover,
 - real Library browser,
-- Add Media Folder,
+- explicit media-source management,
+- responsive/cancellable source scans,
 - independent On Demand playback,
 - On Demand pause/seek,
-- end-of-file replay/rewind recovery.
+- end-of-file replay/rewind recovery,
+- stable maximize/restore behavior during native Windows playback.
 
 ## Approved visual direction
 
@@ -76,22 +81,26 @@ The underlying Guide still retains and selects exact scheduled occurrences.
 
 Live television is full-screen native video.
 
-Temporary overlays present:
+The television HUD presents:
 
 - channel number/name,
 - title,
 - LIVE or behind-live state,
 - schedule progress,
 - Now / Next,
-- transport state.
+- transport state,
+- clock,
+- transient volume/mute and numeric-channel entry.
 
-The native video surface and overlay are separate Qt child-window layers because the embedded playback target is a native window.
+The libVLC target remains a native child window. The Windows-safe HUD presentation deliberately avoids a second full-screen transparent native child above it. Small bounded overlays use native child windows where appropriate, while the translucent lower-third is a bounded transient top-level window so Windows can alpha-compose it without obscuring the video during maximize/restore.
 
 ### Library / On Demand
 
-Library now reads the real canonical ChannelOS media index.
+Library reads the canonical ChannelOS media index and now has an explicit source-management foundation.
 
-It displays actual indexed assets and source information rather than placeholder catalog content.
+It can add, rescan, cancel scans, remove a source from the index without touching the files, search/sort indexed media, and launch On Demand playback by stable asset identity.
+
+The present three-pane management-oriented Library is an infrastructure step, not the final product-facing visual target. The intended consumer surface remains content-first: navigation rail, artwork/thumbnail shelves, Continue Watching, categories, and prominent media presentation with source/storage management moved into a secondary surface.
 
 On Demand uses a playback session separate from television scheduling.
 
@@ -124,23 +133,28 @@ The Windows development machine has validated:
 - Viewer Clock lag after pause,
 - `GO_LIVE`,
 - channel switching,
+- numeric direct tuning,
+- Previous Channel,
+- volume/mute,
 - real indexed Library browsing,
+- source preflight and large responsive rescans,
+- cooperative scan cancellation without corrupting the previous successful index,
 - On Demand play/pause/seek,
 - On Demand natural-EOF recovery,
-- return from On Demand to live television.
+- return from On Demand to live television,
+- maximize/restore during active native video with the bounded translucent HUD architecture.
 
-## Remaining Phase 3 UI work
+## Remaining Phase 3 / first-release UI work
 
 Major remaining couch/release work includes:
 
-- numeric direct tuning,
-- Previous Channel binding,
-- volume/mute,
 - richer Info behavior,
 - controller/remote abstraction,
 - Settings,
-- source-management polish,
+- content-first Library visual pass,
+- artwork/video-thumbnail pipeline,
 - Continue Watching integration,
+- Library -> Add to Channel authoring flow,
 - normal-user playback-runtime packaging,
 - SteamOS/controller validation,
 - autostart/crash recovery,

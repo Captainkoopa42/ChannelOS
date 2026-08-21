@@ -4,6 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from .broadcaster import BroadcasterError, BroadcasterService
 from .guide import GuideError, GuideService
 from .library import MediaLibrary
 from .loader import load_channel
@@ -18,6 +19,7 @@ from .runtime import (
 
 DEFAULT_DATABASE = Path(".channelos") / "library.db"
 DEFAULT_RUNTIME_DATABASE = Path(".channelos") / "runtime.db"
+DEFAULT_CHANNEL_DIRECTORY = Path("channels")
 
 
 class CouchUIError(RuntimeError):
@@ -25,7 +27,7 @@ class CouchUIError(RuntimeError):
 
 
 def _open_runtimes(
-    paths: list[Path],
+    paths: list[Path] | tuple[Path, ...],
     library: MediaLibrary,
     store: RuntimeStore,
 ) -> tuple[ChannelRuntime, ...]:
@@ -46,7 +48,10 @@ def _open_runtimes(
         except ChannelRuntimeError as exc:
             raise CouchUIError(str(exc)) from exc
     if not opened:
-        raise CouchUIError("couch UI requires at least one channel")
+        raise CouchUIError(
+            "couch UI requires at least one channel. Provide a channel YAML "
+            f"or create one in {DEFAULT_CHANNEL_DIRECTORY}."
+        )
     return tuple(opened)
 
 
@@ -55,23 +60,41 @@ def run_couch(
     *,
     db: Path = DEFAULT_DATABASE,
     state_db: Path = DEFAULT_RUNTIME_DATABASE,
+    channels_dir: Path = DEFAULT_CHANNEL_DIRECTORY,
     windowed: bool = False,
 ) -> int:
     library = MediaLibrary(db)
     store = RuntimeStore(state_db)
-    runtimes = _open_runtimes(paths, library, store)
+
+    try:
+        broadcaster = BroadcasterService(
+            paths,
+            channels_dir,
+            library,
+        )
+    except (BroadcasterError, ChannelValidationError) as exc:
+        raise CouchUIError(str(exc)) from exc
+
+    runtimes = _open_runtimes(broadcaster.paths, library, store)
     service = GuideService(runtimes)
     television = TelevisionRuntime(runtimes, store)
 
     try:
-        from .couch_qt import run_qt
+        from .broadcaster_qt import run_qt
     except (ImportError, OSError) as exc:
         raise CouchUIError(
             "ChannelOS couch UI requires the optional Qt package. "
             "Install it with: python -m pip install -e \".[ui]\""
         ) from exc
 
-    return run_qt(service, television, library, windowed=windowed)
+    return run_qt(
+        service,
+        television,
+        library,
+        broadcaster,
+        store,
+        windowed=windowed,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -79,7 +102,15 @@ def build_parser() -> argparse.ArgumentParser:
         prog="channelos-couch",
         description="Launch the ChannelOS fullscreen couch interface.",
     )
-    parser.add_argument("paths", nargs="+", type=Path, help="one or more channel YAML files")
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        help=(
+            "zero or more channel YAML files; Broadcaster-managed definitions "
+            "are also discovered automatically"
+        ),
+    )
     parser.add_argument(
         "--db",
         type=Path,
@@ -91,6 +122,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_RUNTIME_DATABASE,
         help=f"runtime state database path (default: {DEFAULT_RUNTIME_DATABASE})",
+    )
+    parser.add_argument(
+        "--channels-dir",
+        type=Path,
+        default=DEFAULT_CHANNEL_DIRECTORY,
+        help=(
+            "directory for Broadcaster-managed portable channel definitions "
+            f"(default: {DEFAULT_CHANNEL_DIRECTORY})"
+        ),
     )
     parser.add_argument(
         "--windowed",
@@ -107,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
             args.paths,
             db=args.db,
             state_db=args.state_db,
+            channels_dir=args.channels_dir,
             windowed=args.windowed,
         )
     except (CouchUIError, GuideError) as exc:

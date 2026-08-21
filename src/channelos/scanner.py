@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 from .library import MediaLibrary, sha256_file
 from .probe import FFprobeMediaProbe, MediaProbe, MediaProbeError, MediaProbeResult
@@ -36,6 +37,24 @@ class ScanSummary:
     probe_errors: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class ScanProgress:
+    """One user-facing checkpoint while a media source is being indexed."""
+
+    current: int
+    total: int
+    path: Path | None = None
+
+    @property
+    def fraction(self) -> float:
+        if self.total <= 0:
+            return 1.0
+        return min(1.0, max(0.0, self.current / self.total))
+
+
+ScanProgressCallback = Callable[[ScanProgress], None]
+
+
 class MediaScanner:
     def __init__(
         self,
@@ -65,7 +84,23 @@ class MediaScanner:
             or (cached.container_format is None and result.container_format is not None)
         )
 
-    def scan(self, source: str | Path) -> ScanSummary:
+    @staticmethod
+    def _report(
+        callback: ScanProgressCallback | None,
+        *,
+        current: int,
+        total: int,
+        path: Path | None,
+    ) -> None:
+        if callback is not None:
+            callback(ScanProgress(current=current, total=total, path=path))
+
+    def scan(
+        self,
+        source: str | Path,
+        *,
+        on_progress: ScanProgressCallback | None = None,
+    ) -> ScanSummary:
         source_path = Path(source).expanduser().resolve(strict=False)
         if not source_path.exists():
             raise FileNotFoundError(f"media source does not exist: {source_path}")
@@ -73,9 +108,16 @@ class MediaScanner:
         source_root = source_path
         self.library.mark_source_offline(source_root)
 
+        # Materializing the supported paths once gives UI clients a stable total
+        # without changing the scanner's indexing semantics. The list contains
+        # paths only, so even a large library is cheap compared with media data.
+        media_files = tuple(self._iter_media_files(source_path))
+        total = len(media_files)
+        self._report(on_progress, current=0, total=total, path=None)
+
         discovered = hashed = cache_hits = metadata_enriched = 0
         new_assets = known_assets = probe_errors = 0
-        for path in self._iter_media_files(source_path):
+        for index, path in enumerate(media_files, start=1):
             discovered += 1
             cached = self.library.cached_asset_for_unchanged_path(path)
             if cached is not None:
@@ -103,6 +145,7 @@ class MediaScanner:
                         self.library.mark_seen_cached(path, source_root)
                 else:
                     self.library.mark_seen_cached(path, source_root)
+                self._report(on_progress, current=index, total=total, path=path)
                 continue
 
             digest = sha256_file(path)
@@ -121,6 +164,7 @@ class MediaScanner:
                 new_assets += 1
             else:
                 known_assets += 1
+            self._report(on_progress, current=index, total=total, path=path)
 
         return ScanSummary(
             discovered=discovered,

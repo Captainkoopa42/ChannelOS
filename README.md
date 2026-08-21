@@ -10,21 +10,33 @@ The goal is not to build another streaming service or another thumbnail browser.
 
 ## Project status
 
-**Pre-alpha / Phase 2 — Guide and UI-facing plumbing**
+**Working local alpha / Phase 3 active / Phase 4 first slice functional**
 
-Phase 0 and Phase 1 are complete and merged to `main`.
+Phase 0, Phase 1, and Phase 2 are complete. The active couch implementation now exercises the real ChannelOS television path on Windows rather than only a console or visual-shell proof.
 
-The reference core has now been verified on real Windows hardware with genuine indexed media and libVLC playback. It supports stable media identity, persistent numeric channels, deterministic sequential and shuffle programming, independently advancing Broadcast Clocks, per-channel Viewer Clocks, restart continuity, missing-file recovery, live/resume/ask return behavior, direct tuning, Channel Up/Down, Previous Channel, pause/play/seek, and `GO_LIVE`.
+Real-machine validation currently includes:
 
-The key runtime rule is:
+- persistent Channel 007 and 012 schedules,
+- authoritative multi-channel Guide navigation,
+- embedded video and audio inside the ChannelOS Qt couch UI,
+- D3D11VA hardware decoding through libVLC,
+- automatic scheduled program rollover,
+- Broadcast Clock / Viewer Clock lag and `GO_LIVE`,
+- pause, rewind, skip-forward, and channel switching,
+- readable short-form Guide aggregation without modifying schedule truth,
+- a real Library view backed by the canonical SQLite media index,
+- local Add Media Folder,
+- independent On Demand playback over the same indexed media,
+- end-of-file replay/rewind recovery,
+- return from On Demand to television without destroying channel clock state.
+
+The key runtime rule remains:
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**
 
-A channel does **not** need a hidden player decoding in the background. Given its persistent schedule epoch, indexed media durations, and wall-clock time, ChannelOS calculates what that channel would currently be airing and the exact seek offset into that program.
+The implementation is now close enough to the original design that progress is tracked explicitly against it rather than by replacing it. See **[Implementation Status](docs/IMPLEMENTATION_STATUS.md)** for the current design-fidelity audit, completion estimates, and delivery calibration.
 
-Phase 2 now builds the stable UI-facing television data layer on top of that runtime: schedule horizons, Now/Next, Guide rows, explain-why traces, tune-from-Guide, Watch from Beginning, and the local service/API boundary that future interfaces consume.
-
-The canonical complete product direction is maintained in **[ChannelOS Master Design](docs/MASTER_DESIGN.md)**. The current milestone is **[Guide and UI Boundary](docs/GUIDE_AND_UI_BOUNDARY.md)**. The completed television runtime is documented in **[Persistent Channel Runtime](docs/PERSISTENT_CHANNEL_RUNTIME.md)**.
+The canonical complete product direction remains **[ChannelOS Master Design](docs/MASTER_DESIGN.md)**. The active television UI is documented in **[Couch UI](docs/COUCH_UI.md)**, and the phase sequence remains in **[Roadmap](docs/ROADMAP.md)**.
 
 ## Core promise
 
@@ -226,7 +238,7 @@ This remains an engineering harness. The finished product is intended to hide th
 ## Read first
 
 1. **[Master Design — start here](docs/MASTER_DESIGN.md)**
-2. **[Guide and UI Boundary — current Phase 2 milestone](docs/GUIDE_AND_UI_BOUNDARY.md)**
+2. **[Implementation Status — current reality](docs/IMPLEMENTATION_STATUS.md)**
 3. [Persistent Channel Runtime — completed Phase 1](docs/PERSISTENT_CHANNEL_RUNTIME.md)
 4. [First Broadcast — completed Phase 0](docs/FIRST_BROADCAST.md)
 5. [Architecture](docs/ARCHITECTURE.md)

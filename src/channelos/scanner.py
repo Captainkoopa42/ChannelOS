@@ -26,6 +26,10 @@ SUPPORTED_MEDIA_EXTENSIONS = {
 }
 
 
+class ScanCancelled(RuntimeError):
+    """Raised when a caller cooperatively cancels an in-progress media scan."""
+
+
 @dataclass(frozen=True, slots=True)
 class ScanSummary:
     discovered: int = 0
@@ -53,6 +57,7 @@ class ScanProgress:
 
 
 ScanProgressCallback = Callable[[ScanProgress], None]
+ScanCancellationCheck = Callable[[], bool]
 
 
 class MediaScanner:
@@ -95,76 +100,134 @@ class MediaScanner:
         if callback is not None:
             callback(ScanProgress(current=current, total=total, path=path))
 
+    @staticmethod
+    def _cancel_requested(check: ScanCancellationCheck | None) -> bool:
+        return bool(check is not None and check())
+
+    @classmethod
+    def _raise_if_cancelled(cls, check: ScanCancellationCheck | None) -> None:
+        if cls._cancel_requested(check):
+            raise ScanCancelled("media scan cancelled")
+
+    def discover(self, source: str | Path) -> tuple[Path, ...]:
+        """Return supported media paths without mutating the library index."""
+
+        source_path = Path(source).expanduser().resolve(strict=False)
+        if not source_path.exists():
+            raise FileNotFoundError(f"media source does not exist: {source_path}")
+        return tuple(self._iter_media_files(source_path))
+
     def scan(
         self,
         source: str | Path,
         *,
         on_progress: ScanProgressCallback | None = None,
+        should_cancel: ScanCancellationCheck | None = None,
     ) -> ScanSummary:
         source_path = Path(source).expanduser().resolve(strict=False)
-        if not source_path.exists():
-            raise FileNotFoundError(f"media source does not exist: {source_path}")
-
-        source_root = source_path
-        self.library.mark_source_offline(source_root)
-
-        # Materializing the supported paths once gives UI clients a stable total
-        # without changing the scanner's indexing semantics. The list contains
-        # paths only, so even a large library is cheap compared with media data.
-        media_files = tuple(self._iter_media_files(source_path))
+        media_files = self.discover(source_path)
         total = len(media_files)
+
+        self.library.begin_source_scan(
+            source_path,
+            discovered_count=total,
+        )
         self._report(on_progress, current=0, total=total, path=None)
 
         discovered = hashed = cache_hits = metadata_enriched = 0
         new_assets = known_assets = probe_errors = 0
-        for index, path in enumerate(media_files, start=1):
-            discovered += 1
-            cached = self.library.cached_asset_for_unchanged_path(path)
-            if cached is not None:
-                cache_hits += 1
-                known_assets += 1
 
-                # A content cache hit must not permanently freeze an asset at the
-                # metadata quality of its first scan. If a file was originally
-                # indexed with --no-probe (or while ffprobe was unavailable), a
-                # later technical scan can enrich it using the already-trusted
-                # content hash instead of reading and hashing the whole file again.
-                if cached.duration_seconds is None or cached.container_format is None:
-                    probe_result, probe_failed = self._probe(path)
-                    if probe_failed:
-                        probe_errors += 1
-                    if self._adds_technical_data(cached, probe_result):
-                        self.library.upsert_file(
-                            path,
-                            source_root,
-                            content_sha256=cached.content_sha256,
-                            probe=probe_result,
-                        )
-                        metadata_enriched += 1
+        try:
+            self._raise_if_cancelled(should_cancel)
+
+            for index, path in enumerate(media_files, start=1):
+                self._raise_if_cancelled(should_cancel)
+                discovered += 1
+                cached = self.library.cached_asset_for_unchanged_path(path)
+                if cached is not None:
+                    cache_hits += 1
+                    known_assets += 1
+
+                    # A content cache hit must not permanently freeze an asset at
+                    # the metadata quality of its first scan. If a file was
+                    # originally indexed with --no-probe (or while ffprobe was
+                    # unavailable), a later technical scan can enrich it using
+                    # the already-trusted content hash instead of re-reading it.
+                    if cached.duration_seconds is None or cached.container_format is None:
+                        probe_result, probe_failed = self._probe(path)
+                        if probe_failed:
+                            probe_errors += 1
+                        if self._adds_technical_data(cached, probe_result):
+                            self.library.upsert_file(
+                                path,
+                                source_path,
+                                content_sha256=cached.content_sha256,
+                                probe=probe_result,
+                            )
+                            metadata_enriched += 1
+                        else:
+                            self.library.mark_seen_cached(path, source_path)
                     else:
-                        self.library.mark_seen_cached(path, source_root)
+                        self.library.mark_seen_cached(path, source_path)
+                    self._report(
+                        on_progress,
+                        current=index,
+                        total=total,
+                        path=path,
+                    )
+                    continue
+
+                try:
+                    digest = sha256_file(
+                        path,
+                        should_cancel=should_cancel,
+                    )
+                except InterruptedError as exc:
+                    raise ScanCancelled("media scan cancelled") from exc
+
+                hashed += 1
+                self._raise_if_cancelled(should_cancel)
+                probe_result, probe_failed = self._probe(path)
+                if probe_failed:
+                    probe_errors += 1
+
+                _, created = self.library.upsert_file(
+                    path,
+                    source_path,
+                    content_sha256=digest,
+                    probe=probe_result,
+                )
+                if created:
+                    new_assets += 1
                 else:
-                    self.library.mark_seen_cached(path, source_root)
-                self._report(on_progress, current=index, total=total, path=path)
-                continue
+                    known_assets += 1
+                self._report(
+                    on_progress,
+                    current=index,
+                    total=total,
+                    path=path,
+                )
 
-            digest = sha256_file(path)
-            hashed += 1
-            probe_result, probe_failed = self._probe(path)
-            if probe_failed:
-                probe_errors += 1
-
-            _, created = self.library.upsert_file(
-                path,
-                source_root,
-                content_sha256=digest,
-                probe=probe_result,
+            self._raise_if_cancelled(should_cancel)
+            self.library.reconcile_source(source_path, media_files)
+            self.library.complete_source_scan(
+                source_path,
+                discovered_count=total,
             )
-            if created:
-                new_assets += 1
-            else:
-                known_assets += 1
-            self._report(on_progress, current=index, total=total, path=path)
+
+        except ScanCancelled:
+            self.library.cancel_source_scan(
+                source_path,
+                discovered_count=total,
+            )
+            raise
+        except Exception as exc:
+            self.library.fail_source_scan(
+                source_path,
+                discovered_count=total,
+                message=str(exc),
+            )
+            raise
 
         return ScanSummary(
             discovered=discovered,

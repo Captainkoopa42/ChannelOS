@@ -14,6 +14,14 @@ RUNTIME_SCHEMA_VERSION = 1
 SECONDS_PER_DAY = 86400.0
 
 
+class _ClosingSQLiteConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 class ChannelRuntimeError(RuntimeError):
     """Raised when a resolved channel cannot form a valid television runtime."""
 
@@ -280,7 +288,10 @@ class RuntimeStore:
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite3.connect(
+            self.database_path,
+            factory=_ClosingSQLiteConnection,
+        )
         connection.row_factory = sqlite3.Row
         return connection
 

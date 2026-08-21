@@ -248,3 +248,34 @@ def test_sync_advances_decoder_at_scheduled_program_boundary(tmp_path: Path) -> 
     assert backend.loaded.name == "01.mp4"
     assert backend.position == pytest.approx(5.0)
     assert backend.events.count("load") == 2
+
+
+def test_suspend_decoder_reloads_live_media(tmp_path: Path) -> None:
+    epoch = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
+    now = epoch + timedelta(seconds=5)
+
+    actions, service, backend = make_actions(
+        tmp_path,
+        epoch,
+    )
+
+    program = service.now_next(7, at=now).now
+
+    actions.activate_program(
+        program.schedule_id,
+        program.channel_number,
+        program.start_utc.timestamp() * 1000,
+        at=now,
+    )
+
+    assert backend.events.count("load") == 1
+
+    actions.suspend_decoder()
+
+    assert backend.events[-1] == "stop"
+
+    actions.sync(
+        at=now + timedelta(seconds=2)
+    )
+
+    assert backend.events.count("load") == 2

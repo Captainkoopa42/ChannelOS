@@ -149,3 +149,7 @@ def test_couch_qml_asset_is_present() -> None:
     assert "displaySegments" in text
     assert "modelData.isCluster" in text
     assert 'modelData.programCount + " clips"' in text
+    assert "LIBRARY / ON DEMAND" in text
+    assert "PLAY ON DEMAND" in text
+    assert "ADD MEDIA FOLDER" in text
+    assert "libraryItems" in text

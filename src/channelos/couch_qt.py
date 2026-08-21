@@ -12,7 +12,8 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
 from .guide import GuideError, GuideService
-from .library import MediaLibrary
+from .library import IndexedMedia, MediaLibrary
+from .on_demand import OnDemandSession, OnDemandState
 from .playback import NativeVideoSurface, PlaybackError
 from .runtime import ChannelRuntimeError, TelevisionRuntime, TuneDecision
 from .scanner import MediaScanner, ScanProgress, ScanSummary
@@ -24,6 +25,8 @@ class CouchController(QObject):
 
     snapshotChanged = Signal()
     playbackChanged = Signal()
+    libraryChanged = Signal()
+    onDemandChanged = Signal()
 
     def __init__(
         self,
@@ -35,10 +38,82 @@ class CouchController(QObject):
         self._service = service
         self._library = library
         self._actions = CouchActions(service, television)
+        self._on_demand = OnDemandSession()
+        self._library_media: list[IndexedMedia] = []
+        self._library_snapshot = self._build_library_snapshot()
+        self._on_demand_view: dict[str, object] = {"active": False}
         self._snapshot = build_couch_snapshot(service)
         self._playback: dict[str, object] = {"active": False}
         self._surface_ready = False
         self._surface_error = "embedded video surface has not been created"
+
+    def _build_library_snapshot(self) -> dict[str, object]:
+        online = self._library.list_online_media()
+        unique: list[IndexedMedia] = []
+        seen_assets: set[str] = set()
+
+        for media in online:
+            if media.asset.asset_id in seen_assets:
+                continue
+            seen_assets.add(media.asset.asset_id)
+            unique.append(media)
+
+        self._library_media = unique
+
+        sources = {
+            str(media.location.source_root)
+            for media in online
+        }
+
+        items: list[dict[str, object]] = []
+        for media in unique:
+            path = media.location.path
+            container = (
+                media.asset.container_format
+                or path.suffix.lstrip(".")
+                or "media"
+            )
+
+            items.append(
+                {
+                    "assetId": media.asset.asset_id,
+                    "title": path.stem,
+                    "fileName": path.name,
+                    "path": str(path),
+                    "sourceRoot": str(media.location.source_root),
+                    "sourceName": (
+                        media.location.source_root.name
+                        or str(media.location.source_root)
+                    ),
+                    "durationSeconds": float(
+                        media.asset.duration_seconds or 0.0
+                    ),
+                    "sizeBytes": int(media.asset.size_bytes),
+                    "containerFormat": str(container).upper(),
+                }
+            )
+
+        return {
+            "count": len(items),
+            "locationCount": len(online),
+            "sourceCount": len(sources),
+            "items": items,
+        }
+
+    @staticmethod
+    def _on_demand_state_view(
+        state: OnDemandState,
+    ) -> dict[str, object]:
+        return {
+            "active": bool(state.active),
+            "assetId": state.asset_id,
+            "title": state.title,
+            "path": "" if state.path is None else str(state.path),
+            "durationSeconds": float(state.duration_seconds),
+            "positionSeconds": float(state.position_seconds),
+            "paused": bool(state.paused),
+            "ended": bool(state.ended),
+        }
 
     @Property("QVariantMap", notify=snapshotChanged)
     def snapshot(self) -> dict[str, object]:
@@ -48,13 +123,28 @@ class CouchController(QObject):
     def playback(self) -> dict[str, object]:
         return self._playback
 
+    @Property("QVariantMap", notify=libraryChanged)
+    def librarySnapshot(self) -> dict[str, object]:
+        return self._library_snapshot
+
+    @Property("QVariantMap", notify=onDemandChanged)
+    def onDemand(self) -> dict[str, object]:
+        return self._on_demand_view
+
     @Slot()
     def refresh(self) -> None:
         self._snapshot = build_couch_snapshot(self._service)
         self.snapshotChanged.emit()
 
     @Slot()
+    def refreshLibrary(self) -> None:
+        self._library_snapshot = self._build_library_snapshot()
+        self.libraryChanged.emit()
+
+    @Slot()
     def refreshPlayback(self) -> None:
+        if self._on_demand.active:
+            return
         if self._actions.last_decision is None:
             return
         try:
@@ -65,6 +155,15 @@ class CouchController(QObject):
         self._playback = self._decision_view(decision)
         self.playbackChanged.emit()
 
+    @Slot()
+    def refreshOnDemand(self) -> None:
+        if not self._on_demand.active:
+            return
+        self._on_demand_view = self._on_demand_state_view(
+            self._on_demand.state()
+        )
+        self.onDemandChanged.emit()
+
     def scan_media_folder(
         self,
         path: str | Path,
@@ -74,10 +173,13 @@ class CouchController(QObject):
         """Index one user-selected media source into the existing local library."""
 
         scanner = MediaScanner(self._library)
-        return scanner.scan(path, on_progress=on_progress)
+        summary = scanner.scan(path, on_progress=on_progress)
+        self.refreshLibrary()
+        return summary
 
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         self._actions.attach_video_surface(surface)
+        self._on_demand.attach_video_surface(surface)
         self._surface_ready = True
         self._surface_error = ""
 
@@ -160,6 +262,76 @@ class CouchController(QObject):
         except (GuideError, ChannelRuntimeError, PlaybackError, ValueError) as exc:
             return self._error(exc)
 
+    @Slot(int, result="QVariantMap")
+    def playLibraryIndex(self, index: int) -> dict[str, object]:
+        if not self._surface_ready:
+            return {"ok": False, "message": self._surface_error}
+
+        selected = int(index)
+        if not 0 <= selected < len(self._library_media):
+            return {
+                "ok": False,
+                "message": "Library selection is no longer available",
+            }
+
+        try:
+            self._actions.suspend_decoder()
+            state = self._on_demand.play_media(
+                self._library_media[selected]
+            )
+            self._on_demand_view = self._on_demand_state_view(state)
+            self.onDemandChanged.emit()
+
+            return {
+                "ok": True,
+                "message": f"On Demand - {state.title}",
+                "onDemand": self._on_demand_view,
+            }
+
+        except (PlaybackError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(result="QVariantMap")
+    def toggleOnDemandPause(self) -> dict[str, object]:
+        try:
+            state = self._on_demand.toggle_pause()
+            self._on_demand_view = self._on_demand_state_view(state)
+            self.onDemandChanged.emit()
+
+            return {
+                "ok": True,
+                "message": (
+                    "On Demand paused"
+                    if state.paused
+                    else "On Demand playing"
+                ),
+            }
+
+        except (PlaybackError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(float, result="QVariantMap")
+    def skipOnDemand(self, delta_seconds: float) -> dict[str, object]:
+        try:
+            state = self._on_demand.skip(float(delta_seconds))
+            self._on_demand_view = self._on_demand_state_view(state)
+            self.onDemandChanged.emit()
+
+            return {
+                "ok": True,
+                "message": f"On Demand @ {state.position_seconds:.1f}s",
+            }
+
+        except (PlaybackError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(result="QVariantMap")
+    def stopOnDemand(self) -> dict[str, object]:
+        self._on_demand.stop()
+        self._on_demand_view = {"active": False}
+        self.onDemandChanged.emit()
+        return {"ok": True, "message": "On Demand stopped"}
+
     @Slot(result="QVariantMap")
     def togglePause(self) -> dict[str, object]:
         try:
@@ -196,6 +368,7 @@ class CouchController(QObject):
             return self._error(exc)
 
     def stop(self) -> None:
+        self._on_demand.stop()
         self._actions.stop()
 
 
@@ -266,6 +439,27 @@ class CouchKeyFilter(QObject):
         current = int(self._window.property("selectedProgram"))
         selected = max(0, min(len(programs) - 1, current + delta))
         self._window.setProperty("selectedProgram", selected)
+
+    def _library_items(self) -> list[dict[str, object]]:
+        items = self._controller.librarySnapshot.get("items", [])
+        if not isinstance(items, list):
+            return []
+        return [
+            item
+            for item in items
+            if isinstance(item, dict)
+        ]
+
+    def _select_library(self, index: int) -> None:
+        items = self._library_items()
+        if not items:
+            self._window.setProperty("selectedLibrary", 0)
+            return
+
+        self._window.setProperty(
+            "selectedLibrary",
+            max(0, min(len(items) - 1, int(index))),
+        )
 
     def _choose_and_scan_media_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(
@@ -355,12 +549,67 @@ class CouchKeyFilter(QObject):
                     self._window.setProperty("screen", "guide")
                     self._select_row(int(self._window.property("selectedRow")))
                 elif selection == 2:
-                    self._choose_and_scan_media_folder()
+                    self._controller.refreshLibrary()
+                    self._window.setProperty("screen", "library")
+                    self._select_library(
+                        int(self._window.property("selectedLibrary"))
+                    )
                 elif selection == 0:
                     self._notify({"message": "Continue Watching will connect to the Viewer Clock in a later slice"})
                 else:
                     self._notify({"message": "This section is reserved for a later couch UI slice"})
                 return True
+            return False
+
+        if screen == "library":
+            if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
+                self._window.setProperty("screen", "home")
+                return True
+
+            if key == Qt.Key.Key_A:
+                self._choose_and_scan_media_folder()
+                self._select_library(
+                    int(self._window.property("selectedLibrary"))
+                )
+                return True
+
+            if key == Qt.Key.Key_Up:
+                self._select_library(
+                    int(self._window.property("selectedLibrary")) - 1
+                )
+                return True
+
+            if key == Qt.Key.Key_Down:
+                self._select_library(
+                    int(self._window.property("selectedLibrary")) + 1
+                )
+                return True
+
+            if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
+                if not self._library_items():
+                    self._notify(
+                        {
+                            "message": (
+                                "Library is empty - press A "
+                                "to add a media folder"
+                            )
+                        }
+                    )
+                    return True
+
+                self._window.setProperty("screen", "ondemand")
+                QApplication.processEvents()
+
+                result = self._controller.playLibraryIndex(
+                    int(self._window.property("selectedLibrary"))
+                )
+                self._notify(result)
+
+                if not bool(result.get("ok")):
+                    self._window.setProperty("screen", "library")
+
+                return True
+
             return False
 
         if screen == "guide":
@@ -403,6 +652,32 @@ class CouchKeyFilter(QObject):
                 else:
                     self._show_live_hud()
                 return True
+            return False
+
+        if screen == "ondemand":
+            if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
+                self._controller.stopOnDemand()
+                self._window.setProperty("screen", "library")
+                return True
+
+            if key == Qt.Key.Key_Space:
+                self._notify(
+                    self._controller.toggleOnDemandPause()
+                )
+                return True
+
+            if key == Qt.Key.Key_Left:
+                self._notify(
+                    self._controller.skipOnDemand(-10.0)
+                )
+                return True
+
+            if key == Qt.Key.Key_Right:
+                self._notify(
+                    self._controller.skipOnDemand(30.0)
+                )
+                return True
+
             return False
 
         if screen != "live":
@@ -513,6 +788,7 @@ def run_qt(
     playback_timer = QTimer(window)
     playback_timer.setInterval(250)
     playback_timer.timeout.connect(controller.refreshPlayback)
+    playback_timer.timeout.connect(controller.refreshOnDemand)
     playback_timer.start()
     window._channelos_playback_timer = playback_timer
 

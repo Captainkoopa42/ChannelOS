@@ -27,9 +27,13 @@ ApplicationWindow {
     property int homeSelection: 0
     property int selectedRow: 0
     property int selectedProgram: 0
+    property int selectedLibrary: 0
     property string statusMessage: ""
     property bool liveHudVisible: true
     property var playback: channelOS.playback
+    property var onDemand: channelOS.onDemand
+    property var librarySnapshot: channelOS.librarySnapshot
+    property var libraryItems: librarySnapshot.items || []
     property var snapshot: channelOS.snapshot
     property var rows: snapshot.rows || []
     property real horizonStartMs: snapshot.horizonStartMs || 0
@@ -73,6 +77,59 @@ ApplicationWindow {
         return programs[selectedProgram]
     }
 
+    function selectedLibraryData() {
+        if (!libraryItems
+                || selectedLibrary < 0
+                || selectedLibrary >= libraryItems.length) {
+            return ({
+                title: "No media indexed",
+                fileName: "",
+                path: "",
+                sourceRoot: "",
+                sourceName: "",
+                durationSeconds: 0,
+                sizeBytes: 0,
+                containerFormat: ""
+            })
+        }
+
+        return libraryItems[selectedLibrary]
+    }
+
+    function formatDurationSeconds(seconds) {
+        var total = Math.max(0, Math.floor(Number(seconds) || 0))
+
+        if (total <= 0)
+            return "Unknown duration"
+
+        var hours = Math.floor(total / 3600)
+        var minutes = Math.floor((total % 3600) / 60)
+        var secs = total % 60
+
+        if (hours > 0) {
+            return hours + ":"
+                   + (minutes < 10 ? "0" : "") + minutes + ":"
+                   + (secs < 10 ? "0" : "") + secs
+        }
+
+        return minutes + ":" + (secs < 10 ? "0" : "") + secs
+    }
+
+    function formatBytes(bytes) {
+        var value = Number(bytes) || 0
+
+        if (value >= 1073741824)
+            return (value / 1073741824).toFixed(2) + " GB"
+
+        if (value >= 1048576)
+            return (value / 1048576).toFixed(1) + " MB"
+
+        if (value >= 1024)
+            return (value / 1024).toFixed(1) + " KB"
+
+        return value + " B"
+    }
+
     function formatClock(ms) {
         if (!ms)
             return "--:--"
@@ -108,6 +165,20 @@ ApplicationWindow {
             selectRow(Math.min(selectedRow, rows.length - 1))
     }
 
+    onLibraryItemsChanged: {
+        if (libraryItems.length === 0) {
+            selectedLibrary = 0
+        } else {
+            selectedLibrary = Math.max(
+                0,
+                Math.min(
+                    selectedLibrary,
+                    libraryItems.length - 1
+                )
+            )
+        }
+    }
+
     Timer {
         interval: 15000
         repeat: true
@@ -135,7 +206,7 @@ ApplicationWindow {
     WindowContainer {
         id: liveVideoContainer
         anchors.fill: parent
-        visible: root.screen === "live"
+        visible: root.screen === "live" || root.screen === "ondemand"
         window: channelOSVideoWindow
         z: 50
     }
@@ -148,7 +219,7 @@ ApplicationWindow {
     WindowContainer {
         id: liveHudContainer
         anchors.fill: parent
-        visible: root.screen === "live"
+        visible: root.screen === "live" || root.screen === "ondemand"
         z: 60
 
         window: Window {
@@ -193,7 +264,9 @@ ApplicationWindow {
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
                 height: 255
-                visible: root.liveHudVisible && root.playback.active
+                visible: root.screen === "live"
+                         && root.liveHudVisible
+                         && root.playback.active
                 color: "#e6081625"
 
                 Rectangle {
@@ -340,6 +413,162 @@ ApplicationWindow {
                     Text { text: "? ?  Channel"; color: root.textSecondary; font.pixelSize: 13 }
                     Text { text: "L  Go Live"; color: root.textSecondary; font.pixelSize: 13 }
                     Text { text: "G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
+                }
+            }
+
+            Rectangle {
+                id: onDemandHudPanel
+
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+
+                height: 220
+
+                visible: root.screen === "ondemand"
+                         && root.onDemand.active
+
+                color: "#e6081625"
+
+                readonly property real progressFraction: {
+                    var duration = Number(
+                        root.onDemand.durationSeconds || 0
+                    )
+
+                    var position = Number(
+                        root.onDemand.positionSeconds || 0
+                    )
+
+                    if (duration <= 0)
+                        return 0
+
+                    return Math.max(
+                        0,
+                        Math.min(1, position / duration)
+                    )
+                }
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: 2
+                    color: root.accent
+                }
+
+                Column {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 34
+                    spacing: 10
+
+                    Row {
+                        spacing: 18
+
+                        Text {
+                            text: "CHANNEL OS  |  ON DEMAND"
+                            color: root.accentBright
+                            font.pixelSize: 20
+                            font.weight: Font.DemiBold
+                            font.letterSpacing: 1
+                        }
+
+                        Rectangle {
+                            anchors.verticalCenter: parent.verticalCenter
+                            height: 28
+                            width: odState.implicitWidth + 24
+                            radius: 14
+
+                            color: root.onDemand.paused
+                                   ? "#9a6a20"
+                                   : "#164d80"
+
+                            Text {
+                                id: odState
+                                anchors.centerIn: parent
+
+                                text: root.onDemand.paused
+                                      ? "PAUSED"
+                                      : "PLAYING"
+
+                                color: root.textPrimary
+                                font.pixelSize: 13
+                                font.weight: Font.Bold
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: root.onDemand.title || "Owned Media"
+
+                        color: root.textPrimary
+                        font.pixelSize: 29
+                        font.weight: Font.DemiBold
+
+                        width: parent.width
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        text: root.formatDurationSeconds(
+                                  root.onDemand.positionSeconds
+                              )
+                              + " / "
+                              + root.formatDurationSeconds(
+                                  root.onDemand.durationSeconds
+                              )
+
+                        color: root.textSecondary
+                        font.pixelSize: 16
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 5
+                        radius: 3
+                        color: "#31465b"
+
+                        Rectangle {
+                            width: parent.width
+                                   * onDemandHudPanel.progressFraction
+                            height: parent.height
+                            radius: 3
+                            color: root.accentBright
+                        }
+                    }
+                }
+
+                Row {
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.rightMargin: 32
+                    anchors.bottomMargin: 18
+                    spacing: 28
+
+                    Text {
+                        text: "SPACE  Pause / Play"
+                        color: root.textSecondary
+                        font.pixelSize: 13
+                    }
+
+                    Text {
+                        text: "LEFT  -10s"
+                        color: root.textSecondary
+                        font.pixelSize: 13
+                    }
+
+                    Text {
+                        text: "RIGHT  +30s"
+                        color: root.textSecondary
+                        font.pixelSize: 13
+                    }
+
+                    Text {
+                        text: "ESC  Library"
+                        color: root.textSecondary
+                        font.pixelSize: 13
+                    }
                 }
             }
         }
@@ -526,6 +755,443 @@ ApplicationWindow {
                             Text { text: modelData.subtitle; color: root.textSecondary; font.pixelSize: 16; wrapMode: Text.WordWrap; width: parent.width }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Library / On Demand: real user-owned indexed media.
+    Item {
+        id: libraryScreen
+
+        anchors.fill: parent
+        visible: root.screen === "library"
+
+        readonly property var selectedItem:
+            root.selectedLibraryData()
+
+        Rectangle {
+            id: libraryHeader
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+
+            height: 112
+
+            color: "#071322"
+            border.color: root.line
+            border.width: 1
+
+            Row {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.leftMargin: 34
+                anchors.topMargin: 28
+                spacing: 10
+
+                Text {
+                    text: "Channel"
+                    color: root.textPrimary
+                    font.pixelSize: 28
+                    font.weight: Font.DemiBold
+                }
+
+                Text {
+                    text: "OS"
+                    color: root.accentBright
+                    font.pixelSize: 28
+                    font.weight: Font.DemiBold
+                }
+
+                Text {
+                    text: "  |  LIBRARY / ON DEMAND"
+                    color: root.accentBright
+                    font.pixelSize: 21
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+
+            Text {
+                anchors.left: parent.left
+                anchors.leftMargin: 34
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 17
+
+                text: (root.librarySnapshot.count || 0)
+                      + " owned media item"
+                      + (
+                          (root.librarySnapshot.count || 0) === 1
+                          ? ""
+                          : "s"
+                      )
+                      + "   |   "
+                      + (root.librarySnapshot.sourceCount || 0)
+                      + " source"
+                      + (
+                          (root.librarySnapshot.sourceCount || 0) === 1
+                          ? ""
+                          : "s"
+                      )
+
+                color: root.textSecondary
+                font.pixelSize: 15
+            }
+        }
+
+        Rectangle {
+            id: libraryListPanel
+
+            anchors.left: parent.left
+            anchors.top: libraryHeader.bottom
+            anchors.bottom: libraryFooter.top
+
+            width: parent.width * 0.62
+
+            color: "#06111e"
+            border.color: root.line
+            border.width: 1
+
+            ListView {
+                id: libraryList
+
+                anchors.fill: parent
+                anchors.margins: 18
+
+                spacing: 6
+                clip: true
+
+                model: root.libraryItems
+                currentIndex: root.selectedLibrary
+
+                boundsBehavior: Flickable.StopAtBounds
+
+                delegate: Rectangle {
+                    width: libraryList.width
+                    height: 76
+                    radius: 7
+
+                    color: index === root.selectedLibrary
+                           ? "#12396a"
+                           : "#0a1a2b"
+
+                    border.color: index === root.selectedLibrary
+                                  ? root.accentBright
+                                  : "#17324a"
+
+                    border.width:
+                        index === root.selectedLibrary ? 2 : 1
+
+                    Column {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+
+                        anchors.leftMargin: 18
+                        anchors.rightMargin: 18
+
+                        spacing: 4
+
+                        Text {
+                            text: modelData.title
+
+                            color: root.textPrimary
+                            font.pixelSize: 18
+
+                            font.weight:
+                                index === root.selectedLibrary
+                                ? Font.DemiBold
+                                : Font.Normal
+
+                            width: parent.width
+                            elide: Text.ElideRight
+                        }
+
+                        Row {
+                            spacing: 16
+
+                            Text {
+                                text: root.formatDurationSeconds(
+                                    modelData.durationSeconds
+                                )
+
+                                color: root.textSecondary
+                                font.pixelSize: 13
+                            }
+
+                            Text {
+                                text: modelData.containerFormat
+                                color: root.accentBright
+                                font.pixelSize: 13
+                            }
+
+                            Text {
+                                text: modelData.sourceName
+                                color: root.textSecondary
+                                font.pixelSize: 13
+                            }
+                        }
+                    }
+                }
+            }
+
+            Column {
+                anchors.centerIn: parent
+                spacing: 12
+
+                visible: root.libraryItems.length === 0
+
+                Text {
+                    anchors.horizontalCenter:
+                        parent.horizontalCenter
+
+                    text: "YOUR LIBRARY IS EMPTY"
+
+                    color: root.textPrimary
+                    font.pixelSize: 25
+                    font.weight: Font.DemiBold
+                }
+
+                Text {
+                    anchors.horizontalCenter:
+                        parent.horizontalCenter
+
+                    text: "Press A to add a media folder."
+
+                    color: root.textSecondary
+                    font.pixelSize: 16
+                }
+            }
+        }
+
+        Rectangle {
+            id: libraryDetails
+
+            anchors.left: libraryListPanel.right
+            anchors.right: parent.right
+            anchors.top: libraryHeader.bottom
+            anchors.bottom: libraryFooter.top
+
+            color: "#091827"
+
+            border.color: root.line
+            border.width: 1
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+
+                anchors.margins: 24
+
+                height: parent.height * 0.34
+                radius: 10
+
+                gradient: Gradient {
+                    GradientStop {
+                        position: 0.0
+                        color: "#12304a"
+                    }
+
+                    GradientStop {
+                        position: 1.0
+                        color: "#08131f"
+                    }
+                }
+
+                border.color: root.accent
+                border.width: 1
+
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 8
+
+                    Text {
+                        anchors.horizontalCenter:
+                            parent.horizontalCenter
+
+                        text: "OWNED MEDIA"
+
+                        color: root.accentBright
+                        font.pixelSize: 17
+                        font.letterSpacing: 3
+                    }
+
+                    Text {
+                        anchors.horizontalCenter:
+                            parent.horizontalCenter
+
+                        text:
+                            libraryScreen.selectedItem.containerFormat
+                            || "MEDIA"
+
+                        color: root.textPrimary
+                        font.pixelSize: 34
+                        font.weight: Font.DemiBold
+                    }
+                }
+            }
+
+            Column {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+
+                anchors.topMargin: parent.height * 0.39
+                anchors.leftMargin: 28
+                anchors.rightMargin: 28
+
+                spacing: 12
+
+                Text {
+                    text: libraryScreen.selectedItem.title
+
+                    color: root.textPrimary
+                    font.pixelSize: 25
+                    font.weight: Font.DemiBold
+
+                    width: parent.width
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    text:
+                        root.formatDurationSeconds(
+                            libraryScreen.selectedItem.durationSeconds
+                        )
+                        + "   |   "
+                        + root.formatBytes(
+                            libraryScreen.selectedItem.sizeBytes
+                        )
+                        + "   |   "
+                        + libraryScreen.selectedItem.containerFormat
+
+                    color: root.textSecondary
+                    font.pixelSize: 15
+                    width: parent.width
+                }
+
+                Rectangle {
+                    width: parent.width
+                    height: 1
+                    color: root.line
+                }
+
+                Text {
+                    text: "SOURCE"
+                    color: root.accentBright
+                    font.pixelSize: 12
+                    font.weight: Font.Bold
+                    font.letterSpacing: 2
+                }
+
+                Text {
+                    text: libraryScreen.selectedItem.sourceRoot
+
+                    color: root.textSecondary
+                    font.pixelSize: 14
+
+                    width: parent.width
+                    wrapMode: Text.WrapAnywhere
+                    maximumLineCount: 2
+                }
+
+                Text {
+                    text: "FILE"
+                    color: root.accentBright
+                    font.pixelSize: 12
+                    font.weight: Font.Bold
+                    font.letterSpacing: 2
+                }
+
+                Text {
+                    text: libraryScreen.selectedItem.fileName
+
+                    color: root.textSecondary
+                    font.pixelSize: 14
+
+                    width: parent.width
+                    elide: Text.ElideMiddle
+                }
+            }
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+
+                anchors.margins: 28
+
+                height: 58
+                radius: 7
+
+                color: root.libraryItems.length > 0
+                       ? "#12396a"
+                       : "#0a1826"
+
+                border.color:
+                    root.libraryItems.length > 0
+                    ? root.accentBright
+                    : root.line
+
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+
+                    text: root.libraryItems.length > 0
+                          ? "ENTER   PLAY ON DEMAND"
+                          : "A   ADD MEDIA FOLDER"
+
+                    color: root.textPrimary
+                    font.pixelSize: 16
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 1
+                }
+            }
+        }
+
+        Rectangle {
+            id: libraryFooter
+
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+
+            height: 56
+
+            color: "#06111e"
+            border.color: root.line
+            border.width: 1
+
+            Row {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 26
+                spacing: 34
+
+                Text {
+                    text: "UP/DOWN  Browse"
+                    color: root.textSecondary
+                    font.pixelSize: 14
+                }
+
+                Text {
+                    text: "ENTER  Play On Demand"
+                    color: root.textSecondary
+                    font.pixelSize: 14
+                }
+
+                Text {
+                    text: "A  Add Media Folder"
+                    color: root.textSecondary
+                    font.pixelSize: 14
+                }
+
+                Text {
+                    text: "ESC  Home"
+                    color: root.textSecondary
+                    font.pixelSize: 14
                 }
             }
         }

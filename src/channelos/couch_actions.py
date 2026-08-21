@@ -165,6 +165,12 @@ class CouchActions:
         self._last_decision = decision
         return decision
 
+    def suspend_decoder(self) -> None:
+        """Release live-TV decoder output while preserving runtime clock state."""
+
+        if self._session is not None:
+            self._session.suspend_decoder()
+
     def stop(self) -> None:
         if self._session is not None:
             self._session.stop()

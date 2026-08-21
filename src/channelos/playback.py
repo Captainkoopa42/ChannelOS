@@ -127,6 +127,11 @@ class PlaybackBackend(ABC):
     @abstractmethod
     def set_rate(self, rate: float) -> None: ...
 
+    def has_ended(self) -> bool:
+        """Return whether the current media reached its natural end."""
+
+        return False
+
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         """Attach a native presentation target when this backend supports embedding."""
 
@@ -214,6 +219,12 @@ class LibVLCBackend(PlaybackBackend):
         if milliseconds is None or milliseconds < 0:
             return 0.0
         return float(milliseconds) / 1000.0
+
+    def has_ended(self) -> bool:
+        try:
+            return self._player.get_state() == self._vlc.State.Ended
+        except Exception:
+            return False
 
     def set_volume(self, percent: int) -> None:
         if not 0 <= percent <= 100:

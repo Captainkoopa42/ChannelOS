@@ -167,6 +167,13 @@ class TelevisionSession:
 
         return decision
 
+    def suspend_decoder(self) -> None:
+        """Release active decoder output without changing television clock state."""
+
+        self.backend.stop()
+        self.loaded_asset_id = None
+        self.loaded_program_started_at = None
+
     def stop(self) -> None:
         self.backend.stop()
 

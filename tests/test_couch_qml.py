@@ -19,10 +19,19 @@ import channelos
 class FakeChannelOS(QObject):
     snapshotChanged = Signal()
     playbackChanged = Signal()
+    libraryChanged = Signal()
+    onDemandChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self._playback = {"active": False}
+        self._on_demand = {"active": False}
+        self._library_snapshot = {
+            "count": 0,
+            "locationCount": 0,
+            "sourceCount": 0,
+            "items": [],
+        }
         self._snapshot = {
             "generatedAtMs": 1_777_000_000_000,
             "horizonStartMs": 1_777_000_000_000,
@@ -37,6 +46,14 @@ class FakeChannelOS(QObject):
     @Property("QVariantMap", notify=playbackChanged)
     def playback(self):
         return self._playback
+
+    @Property("QVariantMap", notify=libraryChanged)
+    def librarySnapshot(self):
+        return self._library_snapshot
+
+    @Property("QVariantMap", notify=onDemandChanged)
+    def onDemand(self):
+        return self._on_demand
 
     @Slot()
     def refresh(self) -> None:

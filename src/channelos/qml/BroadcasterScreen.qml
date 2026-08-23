@@ -21,7 +21,9 @@ Item {
     readonly property color danger: "#ff6666"
 
     property var hostWindow: null
-    property var snapshot: channelOS.broadcasterSnapshot
+    property var snapshot: channelOS
+                           ? channelOS.broadcasterSnapshot
+                           : ({ channels: [], sourceOptions: [] })
     property var channels: snapshot.channels || []
     property var sourceOptions: snapshot.sourceOptions || []
     property int selectedChannelIndex: 0

@@ -1,8 +1,8 @@
 # ChannelOS Implementation Status
 
-**Snapshot:** August 20, 2026  
+**Snapshot:** August 21, 2026  
 **Status:** Working local alpha  
-**Active implementation:** Phase 3 couch experience with the first functional Phase 4 Library / On Demand slice  
+**Active implementation:** Library 2.0 / first-release couch experience  
 **Canonical product definition:** [MASTER_DESIGN.md](MASTER_DESIGN.md)
 
 This document records implementation progress against the original ChannelOS design.
@@ -15,12 +15,14 @@ The Master Design remains the yardstick.
 
 ## Executive assessment
 
-ChannelOS has moved beyond a proof-of-concept core.
+ChannelOS is now a functioning local television system with real media, persistent channel state, a real Guide, embedded native video, an independent On Demand path, a usable Broadcaster, and first-class media-source lifecycle management.
 
 A real Windows machine can now:
 
 - index ordinary user-owned media without taking ownership of the files,
 - preserve stable media identity independently of file path,
+- track explicit media sources and source status,
+- preflight, rescan, cancel, and safely remove sources from the index,
 - run persistent numbered television channels,
 - advance channels while they are not being watched,
 - maintain separate Broadcast and Viewer Clocks,
@@ -28,50 +30,36 @@ A real Windows machine can now:
 - tune Guide selections through the authoritative runtime,
 - display embedded video and audio inside the ChannelOS couch UI,
 - use hardware video decoding through libVLC / D3D11VA,
+- maximize and restore the Windows UI during active playback without losing video,
 - automatically roll from one scheduled program into the next,
-- pause, resume, rewind, skip forward, change channels, and return LIVE,
-- visually aggregate very short scheduled clips without altering schedule truth,
-- browse the real indexed media library,
-- add media folders from inside the Library,
+- pause, resume, rewind, skip forward, change channels, tune numerically, use Previous Channel, control volume/mute, and return LIVE,
+- browse/search/sort the real indexed media library,
 - play indexed media through an independent On Demand session,
 - pause and seek On Demand media,
 - recover correctly when replaying or rewinding after natural end-of-file,
-- return from On Demand to live television while preserving television clock state.
+- return from On Demand to live television while preserving television clock state,
+- create and edit portable channel definitions through the Broadcaster,
+- reload created/edited channels immediately into runtime and Guide state.
 
-This is now a working local television system rather than only an architectural prototype.
+The largest remaining first-release work is now product experience and release hardening rather than proving the television model.
 
 ---
 
 ## Completion uses two different denominators
 
-Earlier estimates blurred together a focused first release and the complete long-range design.
-
-Those are not the same target.
-
 ### Focused desktop / couch v1
 
 Estimated completion:
 
-**approximately 60-65%**
+**approximately 75%**
 
-This means the experience required for a credible local Windows/Linux television application:
-
-- media ownership/indexing,
-- persistent channels,
-- Guide,
-- live playback,
-- television controls,
-- Library / On Demand,
-- minimum broadcaster/channel management,
-- normal-user packaging,
-- controller/remote polish,
-- settings and release hardening.
+This is the focused first-release experience: local ownership/indexing, persistent channels, Guide, live playback, television controls, Library / On Demand, minimum broadcaster/channel management, normal-user packaging, controller/remote polish, settings, and release hardening.
 
 ### Full Master Design
 
 Estimated completion:
 
-**approximately 35-40%**
+**approximately 40-45%**
 
 The complete design also includes substantial later systems:
 
@@ -87,17 +75,13 @@ The complete design also includes substantial later systems:
 - dedicated appliance experiments,
 - open physical remote work.
 
-These later systems are real parts of the design but should not be confused with the amount of work remaining before ChannelOS becomes useful.
-
 ### Fidelity to the original idea
 
-Estimated fidelity of the implemented system:
+Estimated fidelity of the implemented architecture:
 
 **approximately 90-95%**
 
-This is a design-audit estimate, not a mathematical quality score.
-
-The important result is that implementation progress has not required changing the fundamental identity of ChannelOS.
+This is a design-audit estimate, not a mathematical quality score. Implementation has not required changing the fundamental identity of ChannelOS.
 
 ---
 
@@ -108,6 +92,7 @@ The important result is that implementation progress has not required changing t
 | User-owned files remain ordinary files | Implemented | Very high |
 | Local-first core | Implemented for current core | Very high |
 | One canonical media index | Implemented | Very high |
+| Explicit source lifecycle without taking file ownership | Implemented and real-machine tested | Very high |
 | Numbered persistent television channels | Implemented | Very high |
 | Channels advance while untuned | Implemented | Very high |
 | Broadcast Clock | Implemented | Very high |
@@ -116,13 +101,13 @@ The important result is that implementation progress has not required changing t
 | Traditional television Guide | Implemented and real-machine tested | Very high |
 | Guide derives from runtime truth | Implemented | Very high |
 | Live television is passive by default | Implemented | High |
-| Library is separate active-selection mode | Implemented first functional slice | High |
+| Library is separate active-selection mode | Functional management foundation; consumer presentation incomplete | High |
 | Library and channels share one media index | Implemented | Very high |
 | On Demand does not contaminate channel scheduling | Implemented with separate playback session | Very high |
 | Couch-first presentation | Working keyboard/D-pad implementation | High |
-| User is broadcaster | Runtime exists; management UI still incomplete | Partial |
+| User is broadcaster | Safe Channel Builder MVP implemented | High |
 | Rich metadata/artwork | Not yet | Low |
-| Advanced scheduling/programming tools | Not yet | Low |
+| Advanced scheduling/programming tools | Foundation only | Partial |
 | Profiles | Not yet | None |
 | Export/import | Not yet | None |
 | Multi-device household | Not yet | None |
@@ -132,8 +117,6 @@ The important result is that implementation progress has not required changing t
 ---
 
 ## Four-mode audit
-
-The Master Design defines four major user-facing modes.
 
 ### 1. Live TV
 
@@ -145,27 +128,29 @@ Implemented:
 - persistent channels,
 - automatic scheduled program rollover,
 - channel Up / Down,
+- numeric direct tuning,
+- Previous Channel,
+- volume/mute,
 - pause / resume,
 - rewind and skip forward,
 - LIVE return,
 - Viewer Clock lag,
-- temporary channel/program HUD,
+- channel/program HUD,
 - Now / Next,
 - schedule progress,
-- hardware-decoded real-media validation.
+- D3D11VA hardware-decoded real-media validation,
+- stable maximize/restore using a bounded translucent HUD architecture.
 
 Still needed:
 
-- numeric direct-tuning UI,
-- Previous Channel couch binding,
-- volume/mute couch controls,
 - fuller Info behavior,
 - controller/remote abstraction,
-- startup/resume polish.
+- startup/resume polish,
+- release hardening.
 
 Estimated mode completion:
 
-**85-90% of the first-release viewing experience.**
+**90-95% of the first-release viewing experience.**
 
 ### 2. Guide
 
@@ -177,7 +162,6 @@ Implemented:
 - Now / Next,
 - exact program durations,
 - stable schedule occurrence IDs,
-- explain-why data,
 - current Broadcast Clock marker,
 - selected-program detail,
 - tune current program,
@@ -185,194 +169,161 @@ Implemented:
 - adaptive short-form visual aggregation,
 - real-machine Guide-to-playback validation.
 
-The Guide model remains exact even when the presentation groups many very short programs into readable visual blocks.
-
 Estimated mode completion:
 
 **90-95% of the first-release Guide experience.**
 
 ### 3. Library / On Demand
 
-**Status: functional first slice**
+**Status: backend/source-management foundation strong; consumer surface incomplete**
 
 Implemented:
 
-- real indexed media list,
-- real file names,
-- real duration and file-size data,
-- real source location,
-- Add Media Folder workflow,
-- dedicated On Demand playback session,
-- play/pause,
-- rewind/skip,
-- end-of-file replay recovery,
-- return to Library,
+- canonical indexed media,
+- first-class `media_sources`,
+- source status/counts/scan timestamps/errors,
+- preflight with no persistence side effect,
+- worker-thread hashing/probing,
+- cooperative cancellation including large-file hashing,
+- successful-only membership reconciliation,
+- safe index-only source removal,
+- shared-asset preservation,
+- source/channel dependency protection,
+- search and sort,
+- stable-asset On Demand launch,
+- On Demand play/pause/seek,
+- natural-EOF recovery,
 - successful handoff back to live television.
 
-Still needed:
+Still needed for the intended consumer Library:
 
-- normalized media/container labels,
-- title/media-type model,
-- Movies / Television / seasons / episodes,
-- search,
-- sorting/filtering,
-- artwork,
-- metadata,
-- collections,
-- favorites,
+- content-first navigation and presentation,
+- artwork/video thumbnails,
+- horizontal shelves/cards,
 - Continue Watching,
-- Recently Added,
-- Add to Channel.
+- Recently Added/categories,
+- richer title/media-type model,
+- Movies / Television / seasons / episodes,
+- metadata,
+- collections/favorites,
+- Library -> Add to Channel,
+- move source/storage management into a secondary surface.
 
-Estimated mode completion:
+Estimated completion:
 
-**45-55% of the intended Library experience**, despite the core playback path already working.
+- **Library backend/source lifecycle: 80-85%**
+- **consumer Library experience: 35-40%**
 
 ### 4. Broadcaster / Management
 
-**Status: runtime foundation exists; product UI largely unbuilt**
+**Status: safe Channel Builder MVP implemented**
 
-Already underneath the UI:
+Implemented:
 
-- versioned channel definitions,
-- numeric channel identity,
-- sequential programming,
-- deterministic shuffle,
-- repeat avoidance,
-- source resolution,
-- generated schedule timelines,
-- explainable scheduling primitives.
-
-Still needed in the product interface:
-
-- channel creation/editing,
+- Broadcaster Home with channel/current/next state,
+- create/edit channel flow,
+- display number and width,
+- sequential/shuffle modes,
+- preserve-order option,
+- repeat window,
 - source selection,
-- Add to Channel,
-- channel numbering,
+- real resolver/runtime preview,
+- duplicate number/file overwrite prevention,
+- explicit Edit path with identity lock,
+- `.bak` backup before updates,
+- atomic replace,
+- portable Channel Definition 0.1 YAML in `channels/`,
+- immediate Guide/runtime/numeric-tuning reload,
+- external/LLM authoring documentation.
+
+Still needed:
+
+- Library -> Add to Channel,
 - programming-block editor,
 - weighted rotations,
 - time-of-day schedules,
-- marathons,
-- feature slots,
+- marathons/feature slots,
 - seasonal rules,
 - bumpers/station IDs,
-- metadata correction,
+- richer metadata correction,
 - backup/export controls.
 
 Estimated mode completion:
 
-**20-30%**, because the engine foundation exists but broadcaster-facing tooling does not.
+**80-85% of the minimum first-release Broadcaster, with advanced programming intentionally later.**
 
 ---
 
-## Architectural decisions that strengthened rather than changed the idea
+## Architectural decisions validated by implementation
 
 ### Qt Quick / PySide6
 
-The original design intentionally did not make the product dependent on one UI technology.
-
-Qt Quick is therefore an implementation choice, not a product-definition change.
+Qt Quick remains an implementation choice rather than a product-definition dependency.
 
 ### libVLC embedded playback
 
-ChannelOS still owns television state and control.
+ChannelOS owns television state and control. libVLC remains a replaceable playback backend.
 
-libVLC remains a replaceable decoder/playback backend.
+### Windows native video + bounded HUD composition
 
-The successful native WindowContainer integration therefore follows the original abstraction rather than exposing VLC as the product.
+The libVLC target is a native child window. A second full-screen transparent native child above it proved unsafe across Windows maximize/restore transitions: the video could remain active while presentation was obscured.
 
-### Short-form Guide aggregation
+The validated architecture keeps the native video surface unchanged, uses small bounded native overlays where appropriate, and renders the translucent lower-third as a bounded transient top-level window. This preserves the old HUD appearance while allowing Windows to alpha-compose it without covering the entire video surface.
 
-Short captures created a presentation problem in a multi-hour Guide.
-
-The solution deliberately preserved every exact scheduled occurrence and grouped only their visual presentation.
-
-Schedule truth was not changed to make the UI easier.
+No decoder restart or HWND-rebind recovery loop is required for maximize/restore.
 
 ### Separate On Demand session
 
-On Demand playback uses the same canonical media index but does not insert a selected Library asset into the television schedule.
-
-This is especially close to the original Master Design:
-
-- television remains television,
-- On Demand remains direct selection,
-- both operate on the same owned library.
+On Demand playback uses the same canonical media index but does not insert a Library asset into television scheduling. Television remains television; On Demand remains direct selection.
 
 ### Decoder suspension during On Demand
 
-When On Demand temporarily owns the video presentation surface, ChannelOS may stop the live decoder.
-
-It does **not** stop the channel's Broadcast Clock.
-
-Returning to television therefore correctly reveals that the Viewer Clock may now be behind LIVE.
-
-This behavior is a direct consequence of the original Broadcast Clock / Viewer Clock design.
+When On Demand temporarily owns the presentation surface, ChannelOS may stop the live decoder without stopping the channel's Broadcast Clock. Returning to television can therefore correctly reveal Viewer Clock lag.
 
 ---
 
 ## Important remaining first-release work
 
-The largest remaining first-release work is no longer proving that ChannelOS can behave like television.
-
-The remaining work is increasingly productization:
-
-1. Library metadata/title cleanup, search, sorting, and media organization.
-2. Minimum viable Broadcaster / Channel Management UI.
-3. Numeric tuning, Previous Channel, volume/mute, and controller abstraction.
-4. Settings and source management.
-5. Continue Watching / resume integration.
-6. Packaging libVLC so ordinary users do not configure a runtime directory.
+1. Content-first Library visual pass.
+2. Artwork/video-thumbnail cache and card/shelf browsing.
+3. Continue Watching / persistent resume state.
+4. Library -> Add to Channel authoring flow.
+5. Controller/remote abstraction and Settings.
+6. Normal-user libVLC/runtime packaging.
 7. Windows installer / repeatable package.
 8. Linux and SteamOS validation.
 9. License and third-party notice review.
-10. Crash recovery and ordinary-user hardening.
+10. Crash recovery, clean-machine testing, and ordinary-user hardening.
 
 ---
 
 ## Delivery calibration
 
-These are planning ranges, not promises.
-
-The previous blanket **3-6 month** estimate was too coarse for the focused v1 because it treated later ecosystem/appliance work as though it were required before ChannelOS became useful.
-
-Observed development has also moved materially faster than that estimate assumed.
+These remain planning ranges, not promises.
 
 ### Working local alpha
 
-**Achieved now.**
-
-The system already performs the core ChannelOS loop with real media.
+**Achieved.**
 
 ### Focused desktop/couch beta
 
 At the current observed development and test cadence:
 
-**roughly 2-4 weeks** is a reasonable planning range.
-
-This assumes scope remains focused on the first-release experience rather than pulling later roadmap phases forward.
+**roughly 2-4 weeks** remains a reasonable planning range if scope stays focused.
 
 ### Shareable packaged Windows beta
 
-A more cautious range is:
-
-**roughly 3-6 weeks.**
+**roughly 3-6 weeks** remains a reasonable planning range.
 
 Packaging, licensing, controller behavior, clean-machine testing, migration, failure recovery, and installer behavior can take disproportionately longer than feature coding.
 
 ### Steam / SteamOS-quality release candidate
 
-A reasonable current planning range is:
-
 **roughly 6-10 weeks**, subject to packaging quality, SteamOS behavior, release requirements, and platform acceptance.
 
 ### Full long-range Master Design
 
-The original multi-device, profiles, export, ecosystem, and dedicated-appliance roadmap remains a project measured in **months**, not days.
-
-A **3-6+ month** range can still be reasonable for that broad target.
-
-It should no longer be presented as the wait before ChannelOS itself becomes a usable product.
+The multi-device, profiles, export, ecosystem, and dedicated-appliance roadmap remains a project measured in **months**, not days. A **3-6+ month** range can still be reasonable for that broad target.
 
 ---
 
@@ -382,10 +333,8 @@ The implementation still supports the original one-sentence definition:
 
 > **ChannelOS is a user-owned cable network built from a user-owned media library.**
 
-And the current implementation has made the second statement increasingly literal:
+And the second statement is now literal in the running product:
 
 > **The user is not merely the audience. The user is the broadcaster.**
 
-The remaining major gap is no longer whether ChannelOS can operate the television.
-
-It is giving the broadcaster the complete set of tools to program it.
+The largest visible gap before a focused beta is now the consumer-facing Library experience, not the television/runtime foundation.

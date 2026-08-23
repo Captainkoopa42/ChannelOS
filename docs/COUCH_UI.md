@@ -32,13 +32,18 @@ The current Qt Quick / PySide6 couch application now includes:
 - pause/resume,
 - rewind and skip forward,
 - channel Up / Down,
+- numeric direct tuning,
+- Previous Channel,
+- volume/mute controls,
 - return to LIVE,
 - automatic scheduled program rollover,
 - real Library browser,
-- Add Media Folder,
+- explicit media-source management,
+- responsive/cancellable source scans,
 - independent On Demand playback,
 - On Demand pause/seek,
-- end-of-file replay/rewind recovery.
+- end-of-file replay/rewind recovery,
+- stable maximize/restore behavior during native Windows playback.
 
 ## Approved visual direction
 
@@ -53,7 +58,48 @@ Startup uses the classic cable-TV split composition:
 - television preview region on the upper right,
 - quick-action cards across the lower area,
 - Channel 001 as the intentional first-start default,
-- classic television static for an unassigned channel.
+- classic television static for an unassigned channel,
+- Current Channel as the authoritative Home television state when one is tuned.
+
+Home resolves its television presentation in this order:
+
+1. the persisted/current tuned channel and its Viewer Clock,
+2. real Channel 001 at the Broadcast Clock when no channel is currently tuned,
+3. a presentation-only `001 ChannelOS / UNASSIGNED / NO PROGRAMMING` static slot.
+
+The reserved 001 state is not a fake `ChannelRuntime`: it has no media identity,
+Viewer Clock, or generated schedule. The Guide projects the same unassigned 001
+slot only when no real Channel 001 exists, and Enter on that row explains how
+to assign it instead of attempting a runtime tune. A real Channel 001 always
+replaces the synthetic slot.
+
+The Guide keeps **selection** separate from **tuning**. Opening the Guide anchors
+the cursor on the current tuned channel when possible, while a `WATCHING`
+indicator remains on that row even if the user browses elsewhere. Merely opening
+Home or Guide never retunes television state.
+
+`Continue Watching` is now a real television intent rather than a placeholder.
+Its resolution order is current persisted Viewer Clock, previous channel with
+saved continuity, then real Channel 001 live. If none exists, Home remains on
+the presentation-only unassigned 001 static state and does not manufacture a
+runtime channel. Resuming a paused Viewer Clock starts it from the exact saved
+schedule position; opening Home itself still never advances or retunes state.
+
+On application startup, after the Qt window and native video child have become
+visible, ChannelOS starts that same continuation/default resolution once so the
+Home television picture is already running on boot. This is a startup action,
+not a Home-navigation side effect: returning to Home later still does not
+retune the television.
+
+When a television decoder is already active, Home and Guide reuse the **same**
+native libVLC `QWindow` as a bounded picture-in-guide/picture-in-home surface.
+ChannelOS does not create a second decoder, duplicate the video window, retune
+the channel, or manually reparent the native HWND. The Guide keeps the direct
+root-coordinate geometry already validated on Windows. Home uses the same
+approach but derives its root position from the stable split-layout dimensions
+instead of repeatedly mapping nested item coordinates. Returning to Live expands
+that same surface back to the root. Guide browsing therefore keeps the tuned
+channel running while selection/program metadata can move independently.
 
 ### Guide
 
@@ -76,22 +122,37 @@ The underlying Guide still retains and selects exact scheduled occurrences.
 
 Live television is full-screen native video.
 
-Temporary overlays present:
+The television HUD presents:
 
 - channel number/name,
 - title,
 - LIVE or behind-live state,
 - schedule progress,
 - Now / Next,
-- transport state.
+- transport state,
+- clock,
+- transient volume/mute and numeric-channel entry.
 
-The native video surface and overlay are separate Qt child-window layers because the embedded playback target is a native window.
+The main Live information layer is transient: tuning or transport/channel input
+shows the lower-third and clock, and ten seconds without another qualifying Live
+interaction hides them again. Repeated Live interaction restarts the timer.
+Compact volume/mute and numeric-channel-entry overlays keep their own shorter
+timers.
+
+The libVLC target remains a native child window. The Windows-safe HUD presentation deliberately avoids a second full-screen transparent native child above it. Small bounded overlays use native child windows where appropriate, while the translucent lower-third is a bounded transient top-level window so Windows can alpha-compose it without obscuring the video during maximize/restore.
+
+The couch launcher is fullscreen by default via Qt `showFullScreen()`; `--windowed`
+is the explicit development override. On Windows this is the borderless
+fullscreen presentation path rather than an exclusive decoder-owned fullscreen
+mode.
 
 ### Library / On Demand
 
-Library now reads the real canonical ChannelOS media index.
+Library reads the canonical ChannelOS media index and now has an explicit source-management foundation.
 
-It displays actual indexed assets and source information rather than placeholder catalog content.
+It can add, rescan, cancel scans, remove a source from the index without touching the files, search/sort indexed media, and launch On Demand playback by stable asset identity.
+
+The present three-pane management-oriented Library is an infrastructure step, not the final product-facing visual target. The intended consumer surface remains content-first: navigation rail, artwork/thumbnail shelves, Continue Watching, categories, and prominent media presentation with source/storage management moved into a secondary surface.
 
 On Demand uses a playback session separate from television scheduling.
 
@@ -124,23 +185,28 @@ The Windows development machine has validated:
 - Viewer Clock lag after pause,
 - `GO_LIVE`,
 - channel switching,
+- numeric direct tuning,
+- Previous Channel,
+- volume/mute,
 - real indexed Library browsing,
+- source preflight and large responsive rescans,
+- cooperative scan cancellation without corrupting the previous successful index,
 - On Demand play/pause/seek,
 - On Demand natural-EOF recovery,
-- return from On Demand to live television.
+- return from On Demand to live television,
+- maximize/restore during active native video with the bounded translucent HUD architecture.
 
-## Remaining Phase 3 UI work
+## Remaining Phase 3 / first-release UI work
 
 Major remaining couch/release work includes:
 
-- numeric direct tuning,
-- Previous Channel binding,
-- volume/mute,
 - richer Info behavior,
 - controller/remote abstraction,
 - Settings,
-- source-management polish,
+- content-first Library visual pass,
+- artwork/video-thumbnail pipeline,
 - Continue Watching integration,
+- Library -> Add to Channel authoring flow,
 - normal-user playback-runtime packaging,
 - SteamOS/controller validation,
 - autostart/crash recovery,

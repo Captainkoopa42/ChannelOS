@@ -6,10 +6,11 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable, Iterable
 
 from .probe import MediaProbeResult
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 HASH_CHUNK_SIZE = 4 * 1024 * 1024
 
 
@@ -23,16 +24,33 @@ def normalize_path(path: str | Path) -> tuple[str, str]:
     return text, os.path.normcase(os.path.normpath(text))
 
 
-def sha256_file(path: Path, chunk_size: int = HASH_CHUNK_SIZE) -> str:
+def sha256_file(
+    path: Path,
+    chunk_size: int = HASH_CHUNK_SIZE,
+    *,
+    should_cancel: Callable[[], bool] | None = None,
+) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         while chunk := handle.read(chunk_size):
+            if should_cancel is not None and should_cancel():
+                raise InterruptedError("media hashing cancelled")
             digest.update(chunk)
     return digest.hexdigest()
 
 
 def media_asset_id(content_sha256: str) -> str:
     return f"sha256:{content_sha256.lower()}"
+
+
+class _ClosingSQLiteConnection(sqlite3.Connection):
+    """Context-managed sqlite connection that actually releases its OS handle."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +77,29 @@ class IndexedMedia:
     location: MediaLocation
 
 
+@dataclass(frozen=True, slots=True)
+class MediaSource:
+    """One user-selected media root tracked by the canonical library index."""
+
+    source_root: Path
+    source_root_key: str
+    status: str
+    discovered_count: int
+    location_count: int
+    online_location_count: int
+    asset_count: int
+    last_scan_started_at: str | None
+    last_scan_finished_at: str | None
+    last_error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRemovalResult:
+    source_root: Path
+    removed_locations: int
+    pruned_assets: int
+
+
 class MediaLibrary:
     """SQLite-backed local index. It references user media; it never owns the files."""
 
@@ -68,7 +109,10 @@ class MediaLibrary:
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path)
+        connection = sqlite3.connect(
+            self.database_path,
+            factory=_ClosingSQLiteConnection,
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
@@ -110,6 +154,42 @@ class MediaLibrary:
                     ON media_locations(asset_id);
                 CREATE INDEX IF NOT EXISTS idx_media_locations_root
                     ON media_locations(source_root_key, online);
+
+                CREATE TABLE IF NOT EXISTS media_sources (
+                    source_root_key TEXT PRIMARY KEY,
+                    source_root TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'ready',
+                    discovered_count INTEGER NOT NULL DEFAULT 0,
+                    last_scan_started_at TEXT,
+                    last_scan_finished_at TEXT,
+                    last_error TEXT
+                );
+                """
+            )
+            # Existing databases already contain source roots implicitly in
+            # media_locations. Promote them to first-class source records without
+            # rewriting media identity or file ownership state.
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO media_sources(
+                    source_root_key,
+                    source_root,
+                    status,
+                    discovered_count,
+                    last_scan_started_at,
+                    last_scan_finished_at,
+                    last_error
+                )
+                SELECT
+                    source_root_key,
+                    MAX(source_root),
+                    'ready',
+                    COUNT(*),
+                    NULL,
+                    MAX(last_seen_at),
+                    NULL
+                FROM media_locations
+                GROUP BY source_root_key
                 """
             )
             connection.execute(
@@ -117,11 +197,155 @@ class MediaLibrary:
                 (str(SCHEMA_VERSION),),
             )
 
+    def _upsert_source_state(
+        self,
+        source_root: str | Path,
+        *,
+        status: str,
+        discovered_count: int,
+        scan_started_at: str | None = None,
+        scan_finished_at: str | None = None,
+        last_error: str | None = None,
+    ) -> None:
+        source_text, source_key = normalize_path(source_root)
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO media_sources(
+                    source_root_key,
+                    source_root,
+                    status,
+                    discovered_count,
+                    last_scan_started_at,
+                    last_scan_finished_at,
+                    last_error
+                ) VALUES(?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_root_key) DO UPDATE SET
+                    source_root = excluded.source_root,
+                    status = excluded.status,
+                    discovered_count = excluded.discovered_count,
+                    last_scan_started_at = COALESCE(
+                        excluded.last_scan_started_at,
+                        media_sources.last_scan_started_at
+                    ),
+                    last_scan_finished_at = excluded.last_scan_finished_at,
+                    last_error = excluded.last_error
+                """,
+                (
+                    source_key,
+                    source_text,
+                    status,
+                    max(0, int(discovered_count)),
+                    scan_started_at,
+                    scan_finished_at,
+                    last_error,
+                ),
+            )
+
+    def begin_source_scan(
+        self,
+        source_root: str | Path,
+        *,
+        discovered_count: int,
+    ) -> None:
+        self._upsert_source_state(
+            source_root,
+            status="indexing",
+            discovered_count=discovered_count,
+            scan_started_at=utc_now_text(),
+            scan_finished_at=None,
+            last_error=None,
+        )
+
+    def complete_source_scan(
+        self,
+        source_root: str | Path,
+        *,
+        discovered_count: int,
+    ) -> None:
+        self._upsert_source_state(
+            source_root,
+            status="ready",
+            discovered_count=discovered_count,
+            scan_finished_at=utc_now_text(),
+            last_error=None,
+        )
+
+    def cancel_source_scan(
+        self,
+        source_root: str | Path,
+        *,
+        discovered_count: int,
+    ) -> None:
+        self._upsert_source_state(
+            source_root,
+            status="cancelled",
+            discovered_count=discovered_count,
+            scan_finished_at=utc_now_text(),
+            last_error=None,
+        )
+
+    def fail_source_scan(
+        self,
+        source_root: str | Path,
+        *,
+        discovered_count: int,
+        message: str,
+    ) -> None:
+        self._upsert_source_state(
+            source_root,
+            status="error",
+            discovered_count=discovered_count,
+            scan_finished_at=utc_now_text(),
+            last_error=str(message),
+        )
+
     def mark_source_offline(self, source_root: str | Path) -> None:
+        """Compatibility helper for callers that deliberately invalidate a root."""
+
         _, source_key = normalize_path(source_root)
         with self.connect() as connection:
             connection.execute(
                 "UPDATE media_locations SET online = 0 WHERE source_root_key = ?",
+                (source_key,),
+            )
+
+    def reconcile_source(
+        self,
+        source_root: str | Path,
+        seen_paths: Iterable[str | Path],
+    ) -> None:
+        """Apply source membership only after a complete successful scan.
+
+        A cancelled or failed scan therefore cannot make unprocessed library
+        entries disappear merely because the user stopped an in-progress job.
+        """
+
+        _, source_key = normalize_path(source_root)
+        seen_keys = [normalize_path(path)[1] for path in seen_paths]
+
+        with self.connect() as connection:
+            connection.execute(
+                "CREATE TEMP TABLE scan_seen_paths(path_key TEXT PRIMARY KEY)"
+            )
+            if seen_keys:
+                connection.executemany(
+                    "INSERT OR IGNORE INTO scan_seen_paths(path_key) VALUES(?)",
+                    ((key,) for key in seen_keys),
+                )
+            connection.execute(
+                """
+                UPDATE media_locations
+                SET online = CASE
+                    WHEN EXISTS(
+                        SELECT 1
+                        FROM scan_seen_paths s
+                        WHERE s.path_key = media_locations.path_key
+                    ) THEN 1
+                    ELSE 0
+                END
+                WHERE source_root_key = ?
+                """,
                 (source_key,),
             )
 
@@ -261,6 +485,103 @@ class MediaLibrary:
                 """
             ).fetchall()
         return [self._indexed_from_row(row) for row in rows]
+
+    def list_sources(self) -> list[MediaSource]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT
+                    s.source_root,
+                    s.source_root_key,
+                    s.status,
+                    s.discovered_count,
+                    s.last_scan_started_at,
+                    s.last_scan_finished_at,
+                    s.last_error,
+                    COUNT(l.path_key) AS location_count,
+                    COALESCE(SUM(CASE WHEN l.online = 1 THEN 1 ELSE 0 END), 0)
+                        AS online_location_count,
+                    COUNT(DISTINCT l.asset_id) AS asset_count
+                FROM media_sources s
+                LEFT JOIN media_locations l
+                    ON l.source_root_key = s.source_root_key
+                GROUP BY
+                    s.source_root_key,
+                    s.source_root,
+                    s.status,
+                    s.discovered_count,
+                    s.last_scan_started_at,
+                    s.last_scan_finished_at,
+                    s.last_error
+                ORDER BY s.source_root
+                """
+            ).fetchall()
+
+        return [
+            MediaSource(
+                source_root=Path(row["source_root"]),
+                source_root_key=row["source_root_key"],
+                status=row["status"],
+                discovered_count=int(row["discovered_count"]),
+                location_count=int(row["location_count"]),
+                online_location_count=int(row["online_location_count"]),
+                asset_count=int(row["asset_count"]),
+                last_scan_started_at=row["last_scan_started_at"],
+                last_scan_finished_at=row["last_scan_finished_at"],
+                last_error=row["last_error"],
+            )
+            for row in rows
+        ]
+
+    def remove_source_from_index(
+        self,
+        source_root: str | Path,
+    ) -> SourceRemovalResult:
+        """Forget one source without touching any file on disk."""
+
+        source_text, source_key = normalize_path(source_root)
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM media_locations WHERE source_root_key = ?",
+                (source_key,),
+            ).fetchone()
+            removed_locations = int(row["n"])
+
+            connection.execute(
+                "DELETE FROM media_locations WHERE source_root_key = ?",
+                (source_key,),
+            )
+            connection.execute(
+                "DELETE FROM media_sources WHERE source_root_key = ?",
+                (source_key,),
+            )
+
+            orphan_row = connection.execute(
+                """
+                SELECT COUNT(*) AS n
+                FROM media_assets a
+                WHERE NOT EXISTS(
+                    SELECT 1 FROM media_locations l WHERE l.asset_id = a.asset_id
+                )
+                """
+            ).fetchone()
+            pruned_assets = int(orphan_row["n"])
+            connection.execute(
+                """
+                DELETE FROM media_assets
+                WHERE NOT EXISTS(
+                    SELECT 1
+                    FROM media_locations l
+                    WHERE l.asset_id = media_assets.asset_id
+                )
+                """
+            )
+
+        return SourceRemovalResult(
+            source_root=Path(source_text),
+            removed_locations=removed_locations,
+            pruned_assets=pruned_assets,
+        )
 
     def locations_for_asset(self, asset_id: str) -> list[MediaLocation]:
         with self.connect() as connection:

@@ -29,16 +29,41 @@ ApplicationWindow {
     property int selectedProgram: 0
     property int selectedLibrary: 0
     property string statusMessage: ""
-    property bool liveHudVisible: true
+    property bool liveHudVisible: false
     property string channelEntry: ""
     property int volumePercent: 100
     property bool muted: false
     property bool audioHudVisible: false
-    property var playback: channelOS.playback
-    property var onDemand: channelOS.onDemand
-    property var librarySnapshot: channelOS.librarySnapshot
+
+    // One authoritative lower-third mode. This prevents the bounded HUD from
+    // momentarily rendering Live and then On Demand (or vice versa) while the
+    // controller publishes a screen/playback transition.
+    readonly property string bottomHudMode: {
+        if (screen === "ondemand" && onDemand && onDemand.active)
+            return "ondemand"
+        if (screen === "live" && playback && playback.active)
+            return "live"
+        return "hidden"
+    }
+
+    // Context properties are cleared during engine teardown. Guarding
+    // these bindings keeps shutdown quiet without changing runtime behavior.
+    property var playback: channelOS ? channelOS.playback : ({ active: false })
+    property var homeTelevision: channelOS
+                                ? channelOS.homeTelevision
+                                : ({
+                                      mode: "static",
+                                      isUnassigned: true,
+                                      channelNumber: 1,
+                                      displayNumber: "001",
+                                      channelName: "ChannelOS",
+                                      title: "NO PROGRAMMING",
+                                      continueLabel: "Set Up Channel 001"
+                                  })
+    property var onDemand: channelOS ? channelOS.onDemand : ({ active: false })
+    property var librarySnapshot: channelOS ? channelOS.librarySnapshot : ({ items: [] })
     property var libraryItems: librarySnapshot.items || []
-    property var snapshot: channelOS.snapshot
+    property var snapshot: channelOS ? channelOS.snapshot : ({ rows: [] })
     property var rows: snapshot.rows || []
     property real horizonStartMs: snapshot.horizonStartMs || 0
     property real horizonEndMs: snapshot.horizonEndMs || 1
@@ -70,14 +95,14 @@ ApplicationWindow {
 
     function selectedRowData() {
         if (!rows || rows.length === 0 || selectedRow < 0 || selectedRow >= rows.length)
-            return ({ channelNumber: 1, displayNumber: "001", channelName: "Unassigned", programs: [] })
+            return ({ channelNumber: 1, displayNumber: "001", channelName: "ChannelOS", isUnassigned: true, programs: [] })
         return rows[selectedRow]
     }
 
     function selectedProgramData() {
         var programs = programsForRow(selectedRow)
         if (selectedProgram < 0 || selectedProgram >= programs.length)
-            return ({ title: "No Programming", startMs: 0, endMs: 0, isCurrent: false })
+            return ({ title: "No Programming", startMs: 0, endMs: 0, isCurrent: false, isUnassigned: false })
         return programs[selectedProgram]
     }
 
@@ -98,6 +123,23 @@ ApplicationWindow {
         }
 
         return libraryItems[selectedLibrary]
+    }
+
+    function paintStatic(canvas) {
+        var ctx = canvas.getContext("2d")
+        ctx.fillStyle = "#111820"
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        for (var i = 0; i < 1800; ++i) {
+            var g = 45 + Math.floor(Math.random() * 160)
+            ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")"
+            var size = 1 + Math.floor(Math.random() * 3)
+            ctx.fillRect(
+                Math.random() * canvas.width,
+                Math.random() * canvas.height,
+                size,
+                size
+            )
+        }
     }
 
     function formatDurationSeconds(seconds) {
@@ -187,7 +229,10 @@ ApplicationWindow {
         interval: 15000
         repeat: true
         running: true
-        onTriggered: channelOS.refresh()
+        onTriggered: {
+            if (channelOS)
+                channelOS.refresh()
+        }
     }
 
     Timer {
@@ -209,76 +254,83 @@ ApplicationWindow {
     // playback only receives the contained QWindow handle.
     WindowContainer {
         id: liveVideoContainer
-        anchors.fill: parent
-        visible: root.screen === "live" || root.screen === "ondemand"
+
+        // Keep the Guide geometry on the path already validated on Windows.
+        // Home uses the same root-coordinate idea, but derives its position
+        // directly from the stable split-layout dimensions so repeated visits
+        // cannot accumulate nested-position drift.
+        readonly property bool fullPresentation:
+            root.screen === "live" || root.screen === "ondemand"
+        readonly property bool showHomePreview:
+            root.screen === "home" && Boolean(root.playback.active)
+        readonly property bool showGuidePreview:
+            root.screen === "guide" && Boolean(root.playback.active)
+
+        x: fullPresentation
+           ? 0
+           : (showHomePreview
+              ? homeLeft.width + 24
+              : guideScreen.x + guideHeader.x
+                + guidePreviewPanel.x + guideVideoSlot.x)
+
+        y: fullPresentation
+           ? 0
+           : (showHomePreview
+              ? 24
+              : guideScreen.y + guideHeader.y
+                + guidePreviewPanel.y + guideVideoSlot.y)
+
+        width: fullPresentation
+               ? root.width
+               : (showHomePreview
+                  ? homePreview.width - 12
+                  : guideVideoSlot.width)
+
+        height: fullPresentation
+                ? root.height
+                : (showHomePreview
+                   ? homeVideoSlot.height
+                   : guideVideoSlot.height)
+
+        visible: fullPresentation || showHomePreview || showGuidePreview
         window: channelOSVideoWindow
         z: 50
     }
 
-    // Live-TV information layer.
+    // Windows-safe television HUD architecture.
     //
-    // The libVLC target is a native window, so ordinary QML siblings cannot
-    // reliably paint above it. This dedicated transparent child window is
-    // stacked above the video container and owns the television HUD.
+    // The libVLC target is a native child window. A second full-screen
+    // transparent native sibling can obscure it across maximize/restore
+    // transitions, so ChannelOS keeps HUD surfaces bounded to the pixels they
+    // actually draw. The translucent lower-third is a bounded transient
+    // top-level Window so Windows/DWM owns its alpha composition.
+
+    // Top-center numeric channel entry.
     WindowContainer {
-        id: liveHudContainer
-        anchors.fill: parent
-        visible: root.screen === "live" || root.screen === "ondemand"
+        id: channelEntryContainer
+        anchors.top: parent.top
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.topMargin: 44
+        width: Math.max(150, 72 + root.channelEntry.length * 22)
+        height: 64
+        visible: (root.screen === "live" || root.screen === "ondemand")
+                 && root.channelEntry.length > 0
         z: 60
 
         window: Window {
-            id: liveHudWindow
             color: "transparent"
             flags: Qt.FramelessWindowHint
                    | Qt.WindowDoesNotAcceptFocus
                    | Qt.WindowTransparentForInput
 
-            readonly property real progressFraction: {
-                var start = Number(root.playback.programStartMs || 0)
-                var end = Number(root.playback.programEndMs || 0)
-                var viewer = Number(root.playback.viewerTimeMs || 0)
-                if (end <= start)
-                    return 0
-                return Math.max(0, Math.min(1, (viewer - start) / (end - start)))
-            }
-
             Rectangle {
-                anchors.top: parent.top
-                anchors.right: parent.right
-                anchors.topMargin: 26
-                anchors.rightMargin: 34
-                width: liveClockText.implicitWidth + 28
-                height: 42
-                radius: 7
-                color: "#b8081625"
-
-                Text {
-                    id: liveClockText
-                    anchors.centerIn: parent
-                    text: root.formatClock(Date.now())
-                    color: root.textPrimary
-                    font.pixelSize: 18
-                    font.weight: Font.DemiBold
-                }
-            }
-
-            Rectangle {
-                id: channelEntryPanel
-                anchors.top: parent.top
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.topMargin: 44
-                width: channelEntryText.implicitWidth + 46
-                height: 64
+                anchors.fill: parent
                 radius: 10
-                visible: (root.screen === "live"
-                          || root.screen === "ondemand")
-                         && root.channelEntry.length > 0
                 color: "#dc081625"
                 border.color: root.accentBright
                 border.width: 1
 
                 Text {
-                    id: channelEntryText
                     anchors.centerIn: parent
                     text: "CH " + root.channelEntry
                     color: root.textPrimary
@@ -287,44 +339,102 @@ ApplicationWindow {
                     font.letterSpacing: 2
                 }
             }
+        }
+    }
+
+    // Top-left volume / mute popup.
+    WindowContainer {
+        id: audioHudContainer
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.leftMargin: 34
+        anchors.topMargin: 28
+        width: root.muted ? 128 : 118
+        height: 44
+        visible: root.audioHudVisible
+                 && (root.screen === "live" || root.screen === "ondemand")
+        z: 60
+
+        window: Window {
+            color: "transparent"
+            flags: Qt.FramelessWindowHint
+                   | Qt.WindowDoesNotAcceptFocus
+                   | Qt.WindowTransparentForInput
 
             Rectangle {
-                id: audioHudPanel
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.leftMargin: 34
-                anchors.topMargin: 28
-                width: audioHudText.implicitWidth + 34
-                height: 44
+                anchors.fill: parent
                 radius: 8
-                visible: root.audioHudVisible
-                         && (root.screen === "live"
-                             || root.screen === "ondemand")
                 color: "#dc081625"
 
                 Text {
-                    id: audioHudText
                     anchors.centerIn: parent
-                    text: root.muted
-                          ? "MUTED"
-                          : "VOL " + root.volumePercent
-                    color: root.muted
-                           ? root.liveRed
-                           : root.textPrimary
+                    text: root.muted ? "MUTED" : "VOL " + root.volumePercent
+                    color: root.muted ? root.liveRed : root.textPrimary
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
                 }
             }
+        }
+    }
+
+    // Transparent bounded bottom HUD.
+    //
+    // IMPORTANT: this is intentionally a top-level transient Window, NOT a
+    // WindowContainer child. The old full-screen native HUD could obscure VLC
+    // after maximize, while the bounded child HUD could not alpha-compose over
+    // the VLC child reliably. This keeps the old translucent HUD look while
+    // limiting the overlay to only the lower-third pixels.
+    Window {
+        id: bottomHudOverlay
+        transientParent: root
+        flags: Qt.Tool
+               | Qt.FramelessWindowHint
+               | Qt.WindowDoesNotAcceptFocus
+               | Qt.WindowTransparentForInput
+        color: "transparent"
+
+        x: root.x
+        y: root.y + root.height - height
+        width: root.width
+        height: root.bottomHudMode === "live" ? 255 : 220
+
+        visible: root.visible
+                 && root.visibility !== Window.Minimized
+                 && root.bottomHudMode !== "hidden"
+                 && (root.bottomHudMode !== "live"
+                     || root.liveHudVisible)
+
+        readonly property string hudMode: root.bottomHudMode
+
+        readonly property real liveProgressFraction: {
+            var start = Number(root.playback.programStartMs || 0)
+            var end = Number(root.playback.programEndMs || 0)
+            var viewer = Number(root.playback.viewerTimeMs || 0)
+            if (end <= start)
+                return 0
+            return Math.max(0, Math.min(1, (viewer - start) / (end - start)))
+        }
+
+        readonly property real onDemandProgressFraction: {
+            var duration = Number(root.onDemand.durationSeconds || 0)
+            var position = Number(root.onDemand.positionSeconds || 0)
+            if (duration <= 0)
+                return 0
+            return Math.max(0, Math.min(1, position / duration))
+        }
+
+        // Classic Live-TV lower third.
+        Item {
+            anchors.fill: parent
+            visible: bottomHudOverlay.hudMode === "live"
 
             Rectangle {
-                id: liveHudPanel
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: 255
-                visible: root.screen === "live"
-                         && root.liveHudVisible
-                         && root.playback.active
+                anchors.fill: parent
+
+                // Same old ChannelOS lower-third color. Because this Rectangle
+                // now lives in a top-level alpha-composited Window, its alpha
+                // blends with the video instead of resolving against a native
+                // child backing surface.
                 color: "#e6081625"
 
                 Rectangle {
@@ -347,8 +457,10 @@ ApplicationWindow {
                         spacing: 16
 
                         Text {
-                            text: "CH " + (root.playback.displayNumber || "---")
-                                  + "   " + (root.playback.channelName || "")
+                            text: "CH "
+                                  + (root.playback.displayNumber || "---")
+                                  + "   "
+                                  + (root.playback.channelName || "")
                             color: root.accentBright
                             font.pixelSize: 22
                             font.weight: Font.DemiBold
@@ -362,7 +474,9 @@ ApplicationWindow {
                             radius: 15
                             color: root.playback.paused
                                    ? "#9a6a20"
-                                   : (root.playback.isLive ? "#a83232" : "#164d80")
+                                   : (root.playback.isLive
+                                      ? "#a83232"
+                                      : "#164d80")
 
                             Text {
                                 id: liveStateText
@@ -370,11 +484,14 @@ ApplicationWindow {
                                 text: root.playback.paused
                                       ? ("PAUSED"
                                          + (root.playback.lagSeconds >= 1
-                                            ? " - " + Math.round(root.playback.lagSeconds) + "s BEHIND"
+                                            ? " - "
+                                              + Math.round(root.playback.lagSeconds)
+                                              + "s BEHIND"
                                             : ""))
                                       : (root.playback.isLive
                                          ? "LIVE"
-                                         : Math.round(root.playback.lagSeconds) + "s BEHIND LIVE")
+                                         : Math.round(root.playback.lagSeconds)
+                                           + "s BEHIND LIVE")
                                 color: root.textPrimary
                                 font.pixelSize: 14
                                 font.weight: Font.Bold
@@ -422,7 +539,7 @@ ApplicationWindow {
                         color: "#31465b"
 
                         Rectangle {
-                            width: parent.width * liveHudWindow.progressFraction
+                            width: parent.width * bottomHudOverlay.liveProgressFraction
                             height: parent.height
                             radius: 3
                             color: root.accentBright
@@ -477,38 +594,16 @@ ApplicationWindow {
                     Text { text: "G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
                 }
             }
+        }
+
+        // Classic On Demand lower third.
+        Item {
+            anchors.fill: parent
+            visible: bottomHudOverlay.hudMode === "ondemand"
 
             Rectangle {
-                id: onDemandHudPanel
-
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-
-                height: 220
-
-                visible: root.screen === "ondemand"
-                         && root.onDemand.active
-
+                anchors.fill: parent
                 color: "#e6081625"
-
-                readonly property real progressFraction: {
-                    var duration = Number(
-                        root.onDemand.durationSeconds || 0
-                    )
-
-                    var position = Number(
-                        root.onDemand.positionSeconds || 0
-                    )
-
-                    if (duration <= 0)
-                        return 0
-
-                    return Math.max(
-                        0,
-                        Math.min(1, position / duration)
-                    )
-                }
 
                 Rectangle {
                     anchors.left: parent.left
@@ -539,21 +634,16 @@ ApplicationWindow {
                         Rectangle {
                             anchors.verticalCenter: parent.verticalCenter
                             height: 28
-                            width: odState.implicitWidth + 24
+                            width: odStateText.implicitWidth + 24
                             radius: 14
-
                             color: root.onDemand.paused
                                    ? "#9a6a20"
                                    : "#164d80"
 
                             Text {
-                                id: odState
+                                id: odStateText
                                 anchors.centerIn: parent
-
-                                text: root.onDemand.paused
-                                      ? "PAUSED"
-                                      : "PLAYING"
-
+                                text: root.onDemand.paused ? "PAUSED" : "PLAYING"
                                 color: root.textPrimary
                                 font.pixelSize: 13
                                 font.weight: Font.Bold
@@ -563,24 +653,17 @@ ApplicationWindow {
 
                     Text {
                         text: root.onDemand.title || "Owned Media"
-
                         color: root.textPrimary
                         font.pixelSize: 29
                         font.weight: Font.DemiBold
-
                         width: parent.width
                         elide: Text.ElideRight
                     }
 
                     Text {
-                        text: root.formatDurationSeconds(
-                                  root.onDemand.positionSeconds
-                              )
+                        text: root.formatDurationSeconds(root.onDemand.positionSeconds)
                               + " / "
-                              + root.formatDurationSeconds(
-                                  root.onDemand.durationSeconds
-                              )
-
+                              + root.formatDurationSeconds(root.onDemand.durationSeconds)
                         color: root.textSecondary
                         font.pixelSize: 16
                     }
@@ -593,7 +676,7 @@ ApplicationWindow {
 
                         Rectangle {
                             width: parent.width
-                                   * onDemandHudPanel.progressFraction
+                                   * bottomHudOverlay.onDemandProgressFraction
                             height: parent.height
                             radius: 3
                             color: root.accentBright
@@ -608,57 +691,68 @@ ApplicationWindow {
                     anchors.bottomMargin: 18
                     spacing: 28
 
-                    Text {
-                        text: "SPACE  Pause / Play"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "LEFT  -10s"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "RIGHT  +30s"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "+/-  Volume"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "M  Mute"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "0-9  Tune Channel"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "P  Previous Channel"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
-
-                    Text {
-                        text: "ESC  Library"
-                        color: root.textSecondary
-                        font.pixelSize: 13
-                    }
+                    Text { text: "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "LEFT  -10s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "RIGHT  +30s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "0-9  Tune Channel"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "P  Previous Channel"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "ESC  Library"; color: root.textSecondary; font.pixelSize: 13 }
                 }
             }
         }
     }
+
+    // Bounded clock overlay. Keeping this native surface small avoids
+    // recreating the full-screen transparent sibling that conflicted with the
+    // embedded libVLC presentation surface on Windows.
+    WindowContainer {
+        id: liveClockContainer
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.topMargin: 26
+        anchors.rightMargin: 34
+        width: 154
+        height: 46
+        visible: root.screen === "ondemand"
+                 || (root.screen === "live" && root.liveHudVisible)
+        z: 60
+
+        window: Window {
+            id: liveClockWindow
+            color: "transparent"
+            flags: Qt.FramelessWindowHint
+                   | Qt.WindowDoesNotAcceptFocus
+                   | Qt.WindowTransparentForInput
+
+            property real nowMs: Date.now()
+
+            Timer {
+                interval: 1000
+                repeat: true
+                running: true
+                onTriggered: liveClockWindow.nowMs = Date.now()
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 7
+                color: "#b8081625"
+                border.color: "#1a3550"
+                border.width: 1
+
+                Text {
+                    anchors.centerIn: parent
+                    text: root.formatClock(liveClockWindow.nowMs)
+                    color: root.textPrimary
+                    font.pixelSize: 18
+                    font.weight: Font.DemiBold
+                }
+            }
+        }
+    }
+
 
     // Startup / Home: classic split television landing page.
     Item {
@@ -711,7 +805,13 @@ ApplicationWindow {
                 Item { width: 1; height: 12 }
 
                 Repeater {
-                    model: ["Continue Watching", "Open Guide", "Library / On Demand", "Channels", "Settings"]
+                    model: [
+                        root.homeTelevision.continueLabel || "Continue Watching",
+                        "Open Guide",
+                        "Library / On Demand",
+                        "Channels",
+                        "Settings"
+                    ]
                     delegate: Rectangle {
                         width: parent.width
                         height: 54
@@ -744,6 +844,20 @@ ApplicationWindow {
 
         Rectangle {
             id: homePreview
+            readonly property bool unassigned:
+                root.homeTelevision.mode === "static"
+
+            // Geometry-only reservation for the existing native libVLC child.
+            // The video does not overlap the program metadata below it.
+            Item {
+                id: homeVideoSlot
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 6
+                height: Math.max(1, parent.height - 178)
+            }
+
             anchors.left: homeLeft.right
             anchors.right: parent.right
             anchors.top: parent.top
@@ -758,23 +872,24 @@ ApplicationWindow {
             Canvas {
                 id: staticCanvas
                 anchors.fill: parent
-                onPaint: {
-                    var ctx = getContext("2d")
-                    ctx.fillStyle = "#111820"
-                    ctx.fillRect(0, 0, width, height)
-                    for (var i = 0; i < 1800; ++i) {
-                        var g = 45 + Math.floor(Math.random() * 160)
-                        ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")"
-                        var size = 1 + Math.floor(Math.random() * 3)
-                        ctx.fillRect(Math.random() * width, Math.random() * height, size, size)
-                    }
-                }
+                visible: homePreview.unassigned
+                onPaint: root.paintStatic(staticCanvas)
             }
             Timer {
                 interval: 95
                 repeat: true
-                running: root.screen === "home"
+                running: root.screen === "home" && homePreview.unassigned
                 onTriggered: staticCanvas.requestPaint()
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                visible: !homePreview.unassigned
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#153b60" }
+                    GradientStop { position: 0.55; color: "#0b2034" }
+                    GradientStop { position: 1.0; color: "#06101a" }
+                }
             }
 
             Rectangle {
@@ -782,13 +897,70 @@ ApplicationWindow {
                 color: "#020913"
                 opacity: 0.17
             }
+
             Column {
                 anchors.centerIn: parent
                 spacing: 12
+                visible: homePreview.unassigned
                 Text { anchors.horizontalCenter: parent.horizontalCenter; text: "CH 001"; color: root.textPrimary; font.pixelSize: 56; font.letterSpacing: 5 }
                 Rectangle { width: 230; height: 2; color: root.accent; anchors.horizontalCenter: parent.horizontalCenter }
                 Text { anchors.horizontalCenter: parent.horizontalCenter; text: "UNASSIGNED"; color: root.accentBright; font.pixelSize: 28; font.letterSpacing: 8 }
                 Text { anchors.horizontalCenter: parent.horizontalCenter; text: "NO PROGRAMMING"; color: "#c5ccd4"; font.pixelSize: 16; font.letterSpacing: 4 }
+            }
+
+            Column {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: 34
+                anchors.rightMargin: 34
+                anchors.bottomMargin: 34
+                spacing: 8
+                visible: !homePreview.unassigned
+
+                Text {
+                    text: root.homeTelevision.stateLabel || "TELEVISION"
+                    color: root.accentBright
+                    font.pixelSize: 15
+                    font.weight: Font.Bold
+                    font.letterSpacing: 3
+                }
+                Text {
+                    text: "CH " + (root.homeTelevision.displayNumber || "---")
+                          + "  " + (root.homeTelevision.channelName || "")
+                    color: root.textPrimary
+                    font.pixelSize: 22
+                    font.weight: Font.DemiBold
+                }
+                Text {
+                    text: root.homeTelevision.title || "No Programming"
+                    color: root.textPrimary
+                    font.pixelSize: 34
+                    font.weight: Font.DemiBold
+                    width: parent.width
+                    elide: Text.ElideRight
+                }
+                Text {
+                    text: root.homeTelevision.programStartMs
+                          ? root.formatClock(root.homeTelevision.programStartMs)
+                            + " - "
+                            + root.formatClock(root.homeTelevision.programEndMs)
+                          : "No scheduled programming"
+                    color: root.textSecondary
+                    font.pixelSize: 17
+                }
+                Text {
+                    visible: root.homeTelevision.mode === "current"
+                    text: root.homeTelevision.isLive
+                          ? "LIVE • Broadcast Clock"
+                          : Math.round(root.homeTelevision.lagSeconds || 0)
+                            + "s behind live • Viewer Clock"
+                    color: root.homeTelevision.isLive
+                           ? root.liveRed
+                           : root.accentBright
+                    font.pixelSize: 15
+                    font.weight: Font.DemiBold
+                }
             }
 
             Row {
@@ -796,8 +968,18 @@ ApplicationWindow {
                 anchors.top: parent.top
                 anchors.margins: 18
                 spacing: 12
-                Rectangle { width: 10; height: 10; radius: 5; color: root.accent; anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "CH 001"; color: root.textPrimary; font.pixelSize: 19 }
+                Rectangle {
+                    width: 10
+                    height: 10
+                    radius: 5
+                    color: homePreview.unassigned ? root.accent : root.liveRed
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                    text: "CH " + (root.homeTelevision.displayNumber || "001")
+                    color: root.textPrimary
+                    font.pixelSize: 19
+                }
             }
         }
 
@@ -1333,6 +1515,7 @@ ApplicationWindow {
             }
 
             Rectangle {
+                id: guidePreviewPanel
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
@@ -1343,9 +1526,22 @@ ApplicationWindow {
                 border.color: root.accent
                 border.width: guideScreen.programData.isCurrent ? 1 : 0
 
+                // Keep the bottom status strip in QML while the single native
+                // video surface occupies the picture area above it.
+                Item {
+                    id: guideVideoSlot
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 6
+                    height: Math.max(1, parent.height - 52)
+                }
+
                 Rectangle {
                     anchors.fill: parent
                     anchors.margins: 1
+                    visible: !guideScreen.rowData.isUnassigned
+                             && !root.playback.active
                     gradient: Gradient {
                         GradientStop { position: 0.0; color: "#12304a" }
                         GradientStop { position: 0.55; color: "#0a1a29" }
@@ -1353,28 +1549,100 @@ ApplicationWindow {
                     }
                     radius: 7
                 }
+
+                Canvas {
+                    id: guideStaticCanvas
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    visible: Boolean(guideScreen.rowData.isUnassigned)
+                             && !root.playback.active
+                    onPaint: root.paintStatic(guideStaticCanvas)
+                }
+
+                Timer {
+                    interval: 95
+                    repeat: true
+                    running: root.screen === "guide"
+                             && Boolean(guideScreen.rowData.isUnassigned)
+                             && !root.playback.active
+                    onTriggered: guideStaticCanvas.requestPaint()
+                }
+
                 Text {
                     anchors.centerIn: parent
+                    visible: !guideScreen.rowData.isUnassigned
+                             && !root.playback.active
                     text: guideScreen.rowData.displayNumber + "\n" + guideScreen.rowData.channelName
                     horizontalAlignment: Text.AlignHCenter
                     color: root.textPrimary
                     font.pixelSize: 28
                     lineHeight: 1.25
                 }
+
+                Column {
+                    anchors.centerIn: parent
+                    visible: Boolean(guideScreen.rowData.isUnassigned)
+                             && !root.playback.active
+                    spacing: 7
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "CH 001"
+                        color: root.textPrimary
+                        font.pixelSize: 30
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: 3
+                    }
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "UNASSIGNED"
+                        color: root.accentBright
+                        font.pixelSize: 18
+                        font.weight: Font.Bold
+                        font.letterSpacing: 5
+                    }
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "STATIC / NO PROGRAMMING"
+                        color: root.textSecondary
+                        font.pixelSize: 12
+                        font.letterSpacing: 2
+                    }
+                }
                 Row {
                     anchors.left: parent.left
                     anchors.bottom: parent.bottom
                     anchors.margins: 18
                     spacing: 8
-                    Rectangle { width: 9; height: 9; radius: 5; color: root.liveRed; anchors.verticalCenter: parent.verticalCenter; visible: guideScreen.programData.isCurrent }
-                    Text { text: guideScreen.programData.isCurrent ? "LIVE" : "PROGRAM PREVIEW"; color: root.textPrimary; font.pixelSize: 15 }
+                    Rectangle {
+                        width: 9
+                        height: 9
+                        radius: 5
+                        color: root.liveRed
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.playback.active
+                                 || (guideScreen.programData.isCurrent
+                                     && !guideScreen.rowData.isUnassigned)
+                    }
+                    Text {
+                        text: root.playback.active
+                              ? "WATCHING CH "
+                                + (root.playback.displayNumber || "---")
+                              : (guideScreen.rowData.isUnassigned
+                                 ? "NO PROGRAMMING"
+                                 : (guideScreen.programData.isCurrent
+                                    ? "LIVE"
+                                    : "PROGRAM PREVIEW"))
+                        color: root.textPrimary
+                        font.pixelSize: 15
+                    }
                 }
             }
 
             Text {
-                anchors.right: parent.right
+                // Keep the Guide clock outside the live television viewport.
+                anchors.right: guidePreviewPanel.left
                 anchors.top: parent.top
-                anchors.rightMargin: 36
+                anchors.rightMargin: 18
                 anchors.topMargin: 16
                 text: root.formatClock(root.generatedAtMs)
                 color: root.textPrimary
@@ -1462,13 +1730,28 @@ ApplicationWindow {
                     Text {
                         anchors.left: parent.left
                         anchors.leftMargin: 92
-                        anchors.right: parent.right
-                        anchors.rightMargin: 18
+                        anchors.right: watchingBadge.left
+                        anchors.rightMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
                         text: channelRow.rowData.channelName
                         color: index === root.selectedRow ? root.accentBright : root.textSecondary
                         font.pixelSize: 18
                         elide: Text.ElideRight
+                    }
+
+                    Text {
+                        id: watchingBadge
+                        anchors.right: parent.right
+                        anchors.rightMargin: 14
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.homeTelevision.mode === "current"
+                                 && Number(root.homeTelevision.channelNumber)
+                                    === Number(channelRow.rowData.channelNumber)
+                        text: "WATCHING"
+                        color: root.liveRed
+                        font.pixelSize: 11
+                        font.weight: Font.Bold
+                        font.letterSpacing: 1
                     }
                 }
 
@@ -1525,12 +1808,16 @@ ApplicationWindow {
                             color: selectedSegment
                                    ? "#146ad1"
                                    : (
-                                       modelData.isCurrent
-                                       ? "#123558"
+                                       modelData.isUnassigned
+                                       ? "#17202a"
                                        : (
-                                           modelData.isCluster
-                                           ? "#102a43"
-                                           : "#0d2134"
+                                           modelData.isCurrent
+                                           ? "#123558"
+                                           : (
+                                               modelData.isCluster
+                                               ? "#102a43"
+                                               : "#0d2134"
+                                           )
                                        )
                                    )
 

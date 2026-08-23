@@ -177,6 +177,19 @@ class CouchActions:
         self._last_decision = decision
         return decision
 
+    def continue_watching(
+        self,
+        *,
+        at: datetime | None = None,
+        default_channel: int = 1,
+    ) -> TuneDecision:
+        decision = self._ensure_session().continue_watching(
+            now=at,
+            default_channel=default_channel,
+        )
+        self._last_decision = decision
+        return decision
+
     def sync(self, *, at: datetime | None = None) -> TuneDecision:
         """Synchronize decoder playback with the authoritative Viewer Clock."""
 

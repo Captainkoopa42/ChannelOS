@@ -222,6 +222,93 @@ def test_resume_returns_to_saved_viewer_clock_instead_of_live(tmp_path: Path) ->
     assert not resumed.is_live
 
 
+def test_continue_watching_resumes_paused_current_viewer_clock(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+
+    tv.tune(7, now=epoch)
+    tv.pause(now=epoch + timedelta(seconds=20))
+
+    continued = tv.continue_watching(
+        now=epoch + timedelta(seconds=50),
+    )
+
+    assert continued.channel_number == 7
+    assert continued.viewer_selection.media.location.path.name == "00.mp4"
+    assert continued.viewer_selection.offset_seconds == pytest.approx(20.0)
+    assert continued.lag_seconds == pytest.approx(30.0)
+
+    moving = tv.status(now=epoch + timedelta(seconds=55))
+    assert moving.viewer_selection.offset_seconds == pytest.approx(25.0)
+    assert moving.lag_seconds == pytest.approx(30.0)
+
+
+def test_continue_watching_uses_previous_saved_channel_when_current_is_missing(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    first = open_two_channel_tv(tmp_path, epoch)
+    first.tune(7, now=epoch)
+    first.tune(12, now=epoch + timedelta(seconds=20))
+
+    first.store.set_tuning(None, 7)
+    restarted = open_two_channel_tv(
+        tmp_path,
+        epoch + timedelta(seconds=50),
+    )
+
+    continued = restarted.continue_watching(
+        now=epoch + timedelta(seconds=50),
+    )
+
+    assert continued.channel_number == 7
+    assert continued.viewer_selection.offset_seconds == pytest.approx(20.0)
+    assert continued.lag_seconds == pytest.approx(30.0)
+
+
+def test_continue_watching_falls_back_to_real_default_channel(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    channel_1 = build_resolved_channel(
+        tmp_path,
+        [30.0, 30.0],
+        channel_number=1,
+    )
+    channel_7 = build_resolved_channel(
+        tmp_path,
+        [30.0, 30.0],
+        channel_number=7,
+    )
+    store = RuntimeStore(tmp_path / "default-runtime.db")
+    runtime_1 = ChannelRuntime.open(channel_1, store, now=epoch)
+    runtime_7 = ChannelRuntime.open(channel_7, store, now=epoch)
+    tv = TelevisionRuntime((runtime_1, runtime_7), store)
+
+    continued = tv.continue_watching(
+        now=epoch + timedelta(seconds=10),
+        default_channel=1,
+    )
+
+    assert continued.channel_number == 1
+    assert continued.is_live
+
+
+def test_continue_watching_refuses_synthetic_unassigned_default(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+
+    with pytest.raises(
+        ChannelRuntimeError,
+        match="default channel 001 is unassigned",
+    ):
+        tv.continue_watching(now=epoch, default_channel=1)
+
+
 def test_ask_return_behavior_exposes_saved_continuity_choice(tmp_path: Path) -> None:
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     tv = open_two_channel_tv(tmp_path, epoch)

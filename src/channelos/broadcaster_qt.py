@@ -499,7 +499,9 @@ class BroadcasterCouchController(CouchController):
         self._service = service
         self._actions = actions
         self._snapshot = build_couch_snapshot(service)
+        self._home_television = self._build_home_television_view()
         self.snapshotChanged.emit()
+        self.homeTelevisionChanged.emit()
 
         self._playback = {"active": False}
         self.playbackChanged.emit()

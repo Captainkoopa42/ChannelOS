@@ -58,7 +58,48 @@ Startup uses the classic cable-TV split composition:
 - television preview region on the upper right,
 - quick-action cards across the lower area,
 - Channel 001 as the intentional first-start default,
-- classic television static for an unassigned channel.
+- classic television static for an unassigned channel,
+- Current Channel as the authoritative Home television state when one is tuned.
+
+Home resolves its television presentation in this order:
+
+1. the persisted/current tuned channel and its Viewer Clock,
+2. real Channel 001 at the Broadcast Clock when no channel is currently tuned,
+3. a presentation-only `001 ChannelOS / UNASSIGNED / NO PROGRAMMING` static slot.
+
+The reserved 001 state is not a fake `ChannelRuntime`: it has no media identity,
+Viewer Clock, or generated schedule. The Guide projects the same unassigned 001
+slot only when no real Channel 001 exists, and Enter on that row explains how
+to assign it instead of attempting a runtime tune. A real Channel 001 always
+replaces the synthetic slot.
+
+The Guide keeps **selection** separate from **tuning**. Opening the Guide anchors
+the cursor on the current tuned channel when possible, while a `WATCHING`
+indicator remains on that row even if the user browses elsewhere. Merely opening
+Home or Guide never retunes television state.
+
+`Continue Watching` is now a real television intent rather than a placeholder.
+Its resolution order is current persisted Viewer Clock, previous channel with
+saved continuity, then real Channel 001 live. If none exists, Home remains on
+the presentation-only unassigned 001 static state and does not manufacture a
+runtime channel. Resuming a paused Viewer Clock starts it from the exact saved
+schedule position; opening Home itself still never advances or retunes state.
+
+On application startup, after the Qt window and native video child have become
+visible, ChannelOS starts that same continuation/default resolution once so the
+Home television picture is already running on boot. This is a startup action,
+not a Home-navigation side effect: returning to Home later still does not
+retune the television.
+
+When a television decoder is already active, Home and Guide reuse the **same**
+native libVLC `QWindow` as a bounded picture-in-guide/picture-in-home surface.
+ChannelOS does not create a second decoder, duplicate the video window, retune
+the channel, or manually reparent the native HWND. The Guide keeps the direct
+root-coordinate geometry already validated on Windows. Home uses the same
+approach but derives its root position from the stable split-layout dimensions
+instead of repeatedly mapping nested item coordinates. Returning to Live expands
+that same surface back to the root. Guide browsing therefore keeps the tuned
+channel running while selection/program metadata can move independently.
 
 ### Guide
 

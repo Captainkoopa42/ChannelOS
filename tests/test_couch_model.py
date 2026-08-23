@@ -64,8 +64,15 @@ def test_couch_snapshot_is_three_hour_half_hour_aligned_numeric_guide(tmp_path: 
     assert snapshot["horizonEndMs"] == int((epoch + timedelta(hours=3)).timestamp() * 1000)
 
     rows = snapshot["rows"]
-    assert [row["channelNumber"] for row in rows] == [7, 12]
-    assert [row["displayNumber"] for row in rows] == ["007", "012"]
+    assert [row["channelNumber"] for row in rows] == [1, 7, 12]
+    assert [row["displayNumber"] for row in rows] == ["001", "007", "012"]
+
+    reserved = rows[0]
+    assert reserved["channelName"] == "ChannelOS"
+    assert reserved["isUnassigned"] is True
+    assert reserved["programs"][0]["title"] == "UNASSIGNED"
+    assert reserved["programs"][0]["isUnassigned"] is True
+    assert reserved["displaySegments"][0]["title"] == "NO PROGRAMMING"
 
 
 def test_couch_snapshot_preserves_authoritative_current_program(tmp_path: Path) -> None:
@@ -73,7 +80,10 @@ def test_couch_snapshot_preserves_authoritative_current_program(tmp_path: Path) 
     reference = epoch + timedelta(minutes=7)
     snapshot = build_couch_snapshot(make_service(tmp_path, epoch), at=reference)
 
-    channel_7 = snapshot["rows"][0]
+    channel_7 = next(
+        row for row in snapshot["rows"]
+        if row["channelNumber"] == 7
+    )
     current = next(program for program in channel_7["programs"] if program["isCurrent"])
 
     assert current["title"] == "00"
@@ -82,6 +92,37 @@ def test_couch_snapshot_preserves_authoritative_current_program(tmp_path: Path) 
     assert current["isPast"] is False
     assert current["isFuture"] is False
 
+
+
+def test_real_channel_001_replaces_reserved_static_slot(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
+    store = RuntimeStore(tmp_path / "channel-001-runtime.db")
+    runtime_1 = ChannelRuntime.open(
+        make_resolved(tmp_path, 1, (1800.0, 1800.0)),
+        store,
+        now=epoch,
+    )
+    runtime_7 = ChannelRuntime.open(
+        make_resolved(tmp_path, 7, (1800.0, 1800.0)),
+        store,
+        now=epoch,
+    )
+
+    snapshot = build_couch_snapshot(
+        GuideService((runtime_1, runtime_7)),
+        at=epoch + timedelta(minutes=5),
+    )
+
+    channel_1_rows = [
+        row for row in snapshot["rows"]
+        if row["channelNumber"] == 1
+    ]
+    assert len(channel_1_rows) == 1
+    assert channel_1_rows[0]["channelName"] == "Channel 1"
+    assert channel_1_rows[0]["isUnassigned"] is False
+    assert channel_1_rows[0]["programs"][0]["isUnassigned"] is False
 
 
 def test_short_form_guide_segments_compress_visual_density_without_losing_programs(
@@ -104,7 +145,10 @@ def test_short_form_guide_segments_compress_visual_density_without_losing_progra
         guide_hours=0.5,
     )
 
-    row = snapshot["rows"][0]
+    row = next(
+        row for row in snapshot["rows"]
+        if row["channelNumber"] == 55
+    )
     programs = row["programs"]
     segments = row["displaySegments"]
 
@@ -140,6 +184,26 @@ def test_couch_qml_asset_is_present() -> None:
     assert qml.is_file()
     text = qml.read_text(encoding="utf-8")
     assert "UNASSIGNED" in text
+    assert "guideStaticCanvas" in text
+    assert 'root.homeTelevision.mode === "static"' in text
+    assert "STATIC / NO PROGRAMMING" in text
+    assert "WATCHING" in text
+    assert "homeVideoSlot" in text
+    assert "guideVideoSlot" in text
+    assert "guidePreviewPanel" in text
+    assert "homeLeft.width + 24" in text
+    assert "guideScreen.x + guideHeader.x" in text
+    assert "homePreview.width - 12" in text
+    assert "id: liveVideoHost" not in text
+    assert "anchors.right: guidePreviewPanel.left" in text
+    assert 'root.screen === "guide" && Boolean(root.playback.active)' in text
+    assert 'root.screen === "home" && Boolean(root.playback.active)' in text
+    assert "readonly property bool showHomePreview" in text
+    assert "readonly property bool showGuidePreview" in text
+    assert "anchors.fill: parent" in text
+    assert "id: liveVideoContainer" in text
+    assert "readonly property bool homePreview:" not in text
+    assert "WATCHING CH " in text
     assert "GUIDE" in text
     assert "WindowContainer" in text
     assert "channelOSVideoWindow" in text
@@ -181,3 +245,26 @@ def test_couch_qml_asset_is_present() -> None:
     ).read_text(encoding="utf-8")
     assert "QTimer.singleShot(10000, hide)" in couch_qt
     assert 'setProperty("liveHudVisible", False)' in couch_qt
+    assert "Channel 001 is unassigned" in couch_qt
+    assert "_select_guide_anchor" in couch_qt
+    assert "_build_home_television_view" in couch_qt
+    assert 'view["mode"] = "current"' in couch_qt
+    assert '"mode": "static"' in couch_qt
+    assert '"mode"] = "previous"' in couch_qt
+    assert "def continueWatching" in couch_qt
+    assert "def startHomePlayback" in couch_qt
+    assert "QTimer.singleShot(0, controller.startHomePlayback)" in couch_qt
+    assert "not self._surface_ready" in couch_qt
+    assert "continue_watching(default_channel=1)" in couch_qt
+    assert "Continue Watching will connect" not in couch_qt
+    assert "continueLabel" in text
+
+    couch_model = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "channelos"
+        / "couch_model.py"
+    ).read_text(encoding="utf-8")
+    assert "RESERVED_DEFAULT_CHANNEL = 1" in couch_model
+    assert "channelos:unassigned:001" in couch_model
+    assert "_unassigned_default_row" in couch_model

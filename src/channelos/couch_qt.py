@@ -15,7 +15,7 @@ from .guide import GuideError, GuideService
 from .library import IndexedMedia, MediaLibrary
 from .on_demand import OnDemandSession, OnDemandState
 from .playback import NativeVideoSurface, PlaybackError
-from .runtime import ChannelRuntimeError, TelevisionRuntime, TuneDecision
+from .runtime import ChannelRuntimeError, TelevisionRuntime, TuneDecision, utc_now
 from .scanner import MediaScanner, ScanProgress, ScanSummary
 from .television import TelevisionSession
 
@@ -25,6 +25,7 @@ class CouchController(QObject):
 
     snapshotChanged = Signal()
     playbackChanged = Signal()
+    homeTelevisionChanged = Signal()
     libraryChanged = Signal()
     onDemandChanged = Signal()
 
@@ -44,6 +45,7 @@ class CouchController(QObject):
         self._on_demand_view: dict[str, object] = {"active": False}
         self._snapshot = build_couch_snapshot(service)
         self._playback: dict[str, object] = {"active": False}
+        self._home_television = self._build_home_television_view()
         self._surface_ready = False
         self._surface_error = "embedded video surface has not been created"
         self._volume = 100
@@ -125,6 +127,10 @@ class CouchController(QObject):
     def playback(self) -> dict[str, object]:
         return self._playback
 
+    @Property("QVariantMap", notify=homeTelevisionChanged)
+    def homeTelevision(self) -> dict[str, object]:
+        return self._home_television
+
     @Property("QVariantMap", notify=libraryChanged)
     def librarySnapshot(self) -> dict[str, object]:
         return self._library_snapshot
@@ -136,7 +142,9 @@ class CouchController(QObject):
     @Slot()
     def refresh(self) -> None:
         self._snapshot = build_couch_snapshot(self._service)
+        self._home_television = self._build_home_television_view()
         self.snapshotChanged.emit()
+        self.homeTelevisionChanged.emit()
 
     @Slot()
     def refreshLibrary(self) -> None:
@@ -155,7 +163,9 @@ class CouchController(QObject):
             return
 
         self._playback = self._decision_view(decision)
+        self._home_television = self._home_view_from_decision(decision)
         self.playbackChanged.emit()
+        self.homeTelevisionChanged.emit()
 
     @Slot()
     def refreshOnDemand(self) -> None:
@@ -185,9 +195,115 @@ class CouchController(QObject):
         self._surface_ready = True
         self._surface_error = ""
 
+    @Slot()
+    def startHomePlayback(self) -> None:
+        """Start the remembered/default television feed after the UI is visible."""
+
+        if (
+            not self._surface_ready
+            or self._on_demand.active
+            or bool(self._playback.get("active"))
+        ):
+            return
+        try:
+            decision = self._actions.continue_watching(default_channel=1)
+        except (ChannelRuntimeError, PlaybackError, ValueError):
+            # No saved television continuity and no real CH001 means Home stays
+            # on its presentation-only static state.
+            return
+        self._publish(decision)
+
     def set_video_surface_error(self, message: str) -> None:
         self._surface_ready = False
         self._surface_error = message
+
+    def _home_view_from_decision(
+        self,
+        decision: TuneDecision,
+    ) -> dict[str, object]:
+        view = self._decision_view(decision)
+        view["mode"] = "current"
+        view["isUnassigned"] = False
+        view["stateLabel"] = "WATCHING"
+        view["continueLabel"] = "Continue Watching"
+        return view
+
+    def _build_home_television_view(self) -> dict[str, object]:
+        runtime = self._actions.runtime
+
+        if runtime.current_channel is not None:
+            try:
+                return self._home_view_from_decision(runtime.status())
+            except ChannelRuntimeError:
+                pass
+
+        if runtime.previous_channel is not None:
+            try:
+                previous = runtime.saved_status(runtime.previous_channel)
+            except ChannelRuntimeError:
+                previous = None
+            if previous is not None:
+                view = self._decision_view(previous)
+                view["active"] = False
+                view["mode"] = "previous"
+                view["isUnassigned"] = False
+                view["stateLabel"] = "CONTINUE WATCHING"
+                view["continueLabel"] = "Continue Watching"
+                view["paused"] = True
+                return view
+
+        if 1 in runtime.channels:
+            at = utc_now()
+            channel = runtime.channels[1]
+            selected = channel.broadcast_at(at)
+            definition = channel.channel.definition
+            next_program = self._service.now_next(1, at=at).next
+            return {
+                "active": False,
+                "mode": "default",
+                "isUnassigned": False,
+                "stateLabel": "DEFAULT CHANNEL",
+                "continueLabel": "Watch Channel 001",
+                "channelNumber": 1,
+                "displayNumber": definition.display_number,
+                "channelName": definition.name,
+                "title": selected.media.location.path.stem,
+                "assetId": selected.media.asset.asset_id,
+                "offsetSeconds": float(selected.offset_seconds),
+                "lagSeconds": 0.0,
+                "isLive": True,
+                "paused": False,
+                "viewerTimeMs": int(at.timestamp() * 1000),
+                "programStartMs": int(
+                    selected.program_started_at.timestamp() * 1000
+                ),
+                "programEndMs": int(
+                    selected.program_ends_at.timestamp() * 1000
+                ),
+                "nextTitle": next_program.display_label,
+                "nextStartMs": int(next_program.start_utc.timestamp() * 1000),
+                "nextEndMs": int(next_program.end_utc.timestamp() * 1000),
+            }
+
+        return {
+            "active": False,
+            "mode": "static",
+            "isUnassigned": True,
+            "stateLabel": "UNASSIGNED",
+            "continueLabel": "Set Up Channel 001",
+            "channelNumber": 1,
+            "displayNumber": "001",
+            "channelName": "ChannelOS",
+            "title": "NO PROGRAMMING",
+            "lagSeconds": 0.0,
+            "isLive": False,
+            "paused": False,
+            "programStartMs": 0,
+            "programEndMs": 0,
+            "nextTitle": "",
+            "nextStartMs": 0,
+            "nextEndMs": 0,
+        }
 
     def _decision_view(self, decision: TuneDecision) -> dict[str, object]:
         selected = decision.viewer_selection
@@ -219,7 +335,9 @@ class CouchController(QObject):
         self._actions.set_volume(self._volume)
         self._actions.set_muted(self._muted)
         self._playback = self._decision_view(decision)
+        self._home_television = self._home_view_from_decision(decision)
         self.playbackChanged.emit()
+        self.homeTelevisionChanged.emit()
         return {
             "ok": True,
             "message": TelevisionSession.describe(decision),
@@ -388,6 +506,17 @@ class CouchController(QObject):
     def previousChannel(self) -> dict[str, object]:
         try:
             return self._publish(self._actions.previous_channel())
+        except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(result="QVariantMap")
+    def continueWatching(self) -> dict[str, object]:
+        if not self._surface_ready:
+            return {"ok": False, "message": self._surface_error}
+        try:
+            return self._publish(
+                self._actions.continue_watching(default_channel=1)
+            )
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
             return self._error(exc)
 
@@ -605,6 +734,20 @@ class CouchKeyFilter(QObject):
         self._window.setProperty("selectedRow", selected)
         self._window.setProperty("selectedProgram", self._current_program_index(selected))
 
+    def _select_guide_anchor(self) -> None:
+        rows = self._rows()
+        if not rows:
+            return
+
+        home = self._controller.homeTelevision
+        target = int(home.get("channelNumber", 1))
+        for index, row in enumerate(rows):
+            if int(row.get("channelNumber", -1)) == target:
+                self._select_row(index)
+                return
+
+        self._select_row(0)
+
     def _select_program_delta(self, delta: int) -> None:
         rows = self._rows()
         row_index = int(self._window.property("selectedRow"))
@@ -706,7 +849,7 @@ class CouchKeyFilter(QObject):
             if key == Qt.Key.Key_G:
                 self._controller.refresh()
                 self._window.setProperty("screen", "guide")
-                self._select_row(int(self._window.property("selectedRow")))
+                self._select_guide_anchor()
                 return True
             if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
                 QGuiApplication.quit()
@@ -724,7 +867,7 @@ class CouchKeyFilter(QObject):
                 if selection == 1:
                     self._controller.refresh()
                     self._window.setProperty("screen", "guide")
-                    self._select_row(int(self._window.property("selectedRow")))
+                    self._select_guide_anchor()
                 elif selection == 2:
                     self._controller.refreshLibrary()
                     self._window.setProperty("screen", "library")
@@ -732,7 +875,25 @@ class CouchKeyFilter(QObject):
                         int(self._window.property("selectedLibrary"))
                     )
                 elif selection == 0:
-                    self._notify({"message": "Continue Watching will connect to the Viewer Clock in a later slice"})
+                    home = self._controller.homeTelevision
+                    if str(home.get("mode", "static")) == "static":
+                        self._notify(
+                            {
+                                "message": (
+                                    "Channel 001 is unassigned - create "
+                                    "Channel 001 in Broadcaster to start watching"
+                                )
+                            }
+                        )
+                    else:
+                        self._window.setProperty("screen", "live")
+                        QApplication.processEvents()
+                        result = self._controller.continueWatching()
+                        self._notify(result)
+                        if bool(result.get("ok")):
+                            self._show_live_hud()
+                        else:
+                            self._window.setProperty("screen", "home")
                 else:
                     self._notify({"message": "This section is reserved for a later couch UI slice"})
                 return True
@@ -814,6 +975,22 @@ class CouchKeyFilter(QObject):
                 self._window.setProperty("selectedProgram", self._current_program_index(row_index))
                 return True
             if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+                rows = self._rows()
+                row_index = int(self._window.property("selectedRow"))
+                if (
+                    0 <= row_index < len(rows)
+                    and bool(rows[row_index].get("isUnassigned"))
+                ):
+                    self._notify(
+                        {
+                            "message": (
+                                "Channel 001 is unassigned - create Channel 001 "
+                                "in Broadcaster to replace the static slot"
+                            )
+                        }
+                    )
+                    return True
+
                 # Make the native video target visible before libVLC creates its
                 # Windows video output. Some D3D11 paths will happily play audio
                 # into a hidden HWND but never present frames after it is shown.
@@ -907,6 +1084,7 @@ class CouchKeyFilter(QObject):
         if key in {Qt.Key.Key_G, Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
             self._controller.refresh()
             self._window.setProperty("screen", "guide")
+            self._select_guide_anchor()
             return True
         if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
             self._notify(self._controller.togglePause())
@@ -1023,6 +1201,12 @@ def run_qt(
         window.showNormal()
     else:
         window.showFullScreen()
+
+    # Do not start libVLC against a hidden native child. Let Qt realize the
+    # Home layout first, then resume the remembered Viewer Clock (or real
+    # default CH001) into the already-visible preview surface.
+    QTimer.singleShot(0, controller.startHomePlayback)
+
     if not owns_application:
         return 0
     return int(app.exec())

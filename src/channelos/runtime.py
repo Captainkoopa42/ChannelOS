@@ -652,5 +652,80 @@ class TelevisionRuntime:
         self._persist_viewer(current_time)
         return self._decision(current_time)
 
+    def saved_status(
+        self,
+        channel_number: int,
+        *,
+        now: datetime | None = None,
+    ) -> TuneDecision | None:
+        """Project saved Viewer Clock continuity without tuning the channel."""
+
+        current_time = self._now(now)
+        runtime = self._channel(int(channel_number))
+        saved = self.store.load_viewer(runtime.channel_number)
+        if saved is None:
+            return None
+
+        viewer_time = saved.current(current_time)
+        if viewer_time > current_time:
+            viewer_time = current_time
+
+        viewer_selection = runtime.selection_for_viewer_time(viewer_time)
+        broadcast_selection = runtime.broadcast_at(current_time)
+        lag = max(0.0, (current_time - viewer_time).total_seconds())
+        return TuneDecision(
+            channel_number=runtime.channel_number,
+            channel_name=runtime.channel.definition.name,
+            viewer_time_utc=viewer_time,
+            viewer_selection=viewer_selection,
+            broadcast_selection=broadcast_selection,
+            lag_seconds=lag,
+        )
+
+    def continue_watching(
+        self,
+        *,
+        now: datetime | None = None,
+        default_channel: int = 1,
+    ) -> TuneDecision:
+        """Resume meaningful television continuity, falling back to the default.
+
+        Priority:
+        1. current persisted channel / Viewer Clock,
+        2. previous channel when it still has saved Viewer Clock continuity,
+        3. the real default channel live.
+
+        A presentation-only unassigned CH001 never enters the runtime.
+        """
+
+        current_time = self._now(now)
+
+        if self.current_channel is not None and self._viewer is not None:
+            self._viewer.play(current_time)
+            self._persist_viewer(current_time)
+            return self._decision(current_time)
+
+        if self.previous_channel is not None:
+            saved = self.store.load_viewer(self.previous_channel)
+            if saved is not None:
+                return self.tune(
+                    self.previous_channel,
+                    now=current_time,
+                    return_behavior="resume",
+                )
+
+        default = int(default_channel)
+        if default in self.channels:
+            return self.tune(
+                default,
+                now=current_time,
+                return_behavior="live",
+            )
+
+        raise ChannelRuntimeError(
+            f"no television continuity is available and default channel "
+            f"{default:03d} is unassigned"
+        )
+
     def status(self, *, now: datetime | None = None) -> TuneDecision:
         return self._decision(self._now(now))

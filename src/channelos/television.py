@@ -131,6 +131,19 @@ class TelevisionSession:
         self._apply_selection(decision, play=True)
         return decision
 
+    def continue_watching(
+        self,
+        *,
+        now: datetime | None = None,
+        default_channel: int = 1,
+    ) -> TuneDecision:
+        decision = self.runtime.continue_watching(
+            now=now,
+            default_channel=default_channel,
+        )
+        self._apply_selection(decision, play=True)
+        return decision
+
     def pause(self, *, now: datetime | None = None) -> TuneDecision:
         decision = self.runtime.pause(now=now)
         self.backend.pause()

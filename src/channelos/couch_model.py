@@ -7,6 +7,8 @@ from .runtime import require_aware_utc, utc_now
 
 
 DEFAULT_GUIDE_HOURS = 3.0
+RESERVED_DEFAULT_CHANNEL = 1
+RESERVED_DEFAULT_DISPLAY = "001"
 
 # Programs this short become unreadable when projected individually across a
 # multi-hour television Guide. They remain authoritative GuideProgram entries;
@@ -37,6 +39,53 @@ def _program_view(program: GuideProgram) -> dict[str, object]:
         "isCurrent": bool(program.is_current),
         "isPast": bool(program.is_past),
         "isFuture": bool(program.is_future),
+        "isUnassigned": False,
+    }
+
+
+def _unassigned_default_row(
+    start: datetime,
+    end: datetime,
+) -> dict[str, object]:
+    """Presentation-only CH001 slot when no real Channel 001 exists."""
+
+    start_ms = _epoch_milliseconds(start)
+    end_ms = _epoch_milliseconds(end)
+    duration = max(0.0, (end - start).total_seconds())
+
+    return {
+        "channelNumber": RESERVED_DEFAULT_CHANNEL,
+        "displayNumber": RESERVED_DEFAULT_DISPLAY,
+        "channelName": "ChannelOS",
+        "isUnassigned": True,
+        "programs": [
+            {
+                "scheduleId": "channelos:unassigned:001",
+                "channelNumber": RESERVED_DEFAULT_CHANNEL,
+                "assetId": "",
+                "title": "UNASSIGNED",
+                "startMs": start_ms,
+                "endMs": end_ms,
+                "durationSeconds": duration,
+                "isCurrent": True,
+                "isPast": False,
+                "isFuture": False,
+                "isUnassigned": True,
+            }
+        ],
+        "displaySegments": [
+            {
+                "title": "NO PROGRAMMING",
+                "startMs": start_ms,
+                "endMs": end_ms,
+                "programCount": 1,
+                "firstProgramIndex": 0,
+                "lastProgramIndex": 0,
+                "isCluster": False,
+                "isCurrent": True,
+                "isUnassigned": True,
+            }
+        ],
     }
 
 
@@ -148,12 +197,20 @@ def build_couch_snapshot(
                 "channelNumber": row.channel_number,
                 "displayNumber": f"{row.channel_number:03d}",
                 "channelName": row.channel_name,
+                "isUnassigned": False,
                 # Exact occurrences remain the interaction/selection model.
                 "programs": [_program_view(program) for program in row.programs],
                 # The Guide strip gets a separate readable projection.
                 "displaySegments": _display_segments(row.programs),
             }
         )
+
+    if not any(
+        int(row.get("channelNumber", 0)) == RESERVED_DEFAULT_CHANNEL
+        for row in rows
+    ):
+        rows.append(_unassigned_default_row(start, end))
+        rows.sort(key=lambda row: int(row["channelNumber"]))
 
     return {
         "generatedAtMs": _epoch_milliseconds(reference),

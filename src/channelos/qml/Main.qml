@@ -49,6 +49,17 @@ ApplicationWindow {
     // Context properties are cleared during engine teardown. Guarding
     // these bindings keeps shutdown quiet without changing runtime behavior.
     property var playback: channelOS ? channelOS.playback : ({ active: false })
+    property var homeTelevision: channelOS
+                                ? channelOS.homeTelevision
+                                : ({
+                                      mode: "static",
+                                      isUnassigned: true,
+                                      channelNumber: 1,
+                                      displayNumber: "001",
+                                      channelName: "ChannelOS",
+                                      title: "NO PROGRAMMING",
+                                      continueLabel: "Set Up Channel 001"
+                                  })
     property var onDemand: channelOS ? channelOS.onDemand : ({ active: false })
     property var librarySnapshot: channelOS ? channelOS.librarySnapshot : ({ items: [] })
     property var libraryItems: librarySnapshot.items || []
@@ -84,14 +95,14 @@ ApplicationWindow {
 
     function selectedRowData() {
         if (!rows || rows.length === 0 || selectedRow < 0 || selectedRow >= rows.length)
-            return ({ channelNumber: 1, displayNumber: "001", channelName: "Unassigned", programs: [] })
+            return ({ channelNumber: 1, displayNumber: "001", channelName: "ChannelOS", isUnassigned: true, programs: [] })
         return rows[selectedRow]
     }
 
     function selectedProgramData() {
         var programs = programsForRow(selectedRow)
         if (selectedProgram < 0 || selectedProgram >= programs.length)
-            return ({ title: "No Programming", startMs: 0, endMs: 0, isCurrent: false })
+            return ({ title: "No Programming", startMs: 0, endMs: 0, isCurrent: false, isUnassigned: false })
         return programs[selectedProgram]
     }
 
@@ -112,6 +123,23 @@ ApplicationWindow {
         }
 
         return libraryItems[selectedLibrary]
+    }
+
+    function paintStatic(canvas) {
+        var ctx = canvas.getContext("2d")
+        ctx.fillStyle = "#111820"
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        for (var i = 0; i < 1800; ++i) {
+            var g = 45 + Math.floor(Math.random() * 160)
+            ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")"
+            var size = 1 + Math.floor(Math.random() * 3)
+            ctx.fillRect(
+                Math.random() * canvas.width,
+                Math.random() * canvas.height,
+                size,
+                size
+            )
+        }
     }
 
     function formatDurationSeconds(seconds) {
@@ -226,8 +254,45 @@ ApplicationWindow {
     // playback only receives the contained QWindow handle.
     WindowContainer {
         id: liveVideoContainer
-        anchors.fill: parent
-        visible: root.screen === "live" || root.screen === "ondemand"
+
+        // Keep the Guide geometry on the path already validated on Windows.
+        // Home uses the same root-coordinate idea, but derives its position
+        // directly from the stable split-layout dimensions so repeated visits
+        // cannot accumulate nested-position drift.
+        readonly property bool fullPresentation:
+            root.screen === "live" || root.screen === "ondemand"
+        readonly property bool showHomePreview:
+            root.screen === "home" && Boolean(root.playback.active)
+        readonly property bool showGuidePreview:
+            root.screen === "guide" && Boolean(root.playback.active)
+
+        x: fullPresentation
+           ? 0
+           : (showHomePreview
+              ? homeLeft.width + 24
+              : guideScreen.x + guideHeader.x
+                + guidePreviewPanel.x + guideVideoSlot.x)
+
+        y: fullPresentation
+           ? 0
+           : (showHomePreview
+              ? 24
+              : guideScreen.y + guideHeader.y
+                + guidePreviewPanel.y + guideVideoSlot.y)
+
+        width: fullPresentation
+               ? root.width
+               : (showHomePreview
+                  ? homePreview.width - 12
+                  : guideVideoSlot.width)
+
+        height: fullPresentation
+                ? root.height
+                : (showHomePreview
+                   ? homeVideoSlot.height
+                   : guideVideoSlot.height)
+
+        visible: fullPresentation || showHomePreview || showGuidePreview
         window: channelOSVideoWindow
         z: 50
     }
@@ -740,7 +805,13 @@ ApplicationWindow {
                 Item { width: 1; height: 12 }
 
                 Repeater {
-                    model: ["Continue Watching", "Open Guide", "Library / On Demand", "Channels", "Settings"]
+                    model: [
+                        root.homeTelevision.continueLabel || "Continue Watching",
+                        "Open Guide",
+                        "Library / On Demand",
+                        "Channels",
+                        "Settings"
+                    ]
                     delegate: Rectangle {
                         width: parent.width
                         height: 54
@@ -773,6 +844,20 @@ ApplicationWindow {
 
         Rectangle {
             id: homePreview
+            readonly property bool unassigned:
+                root.homeTelevision.mode === "static"
+
+            // Geometry-only reservation for the existing native libVLC child.
+            // The video does not overlap the program metadata below it.
+            Item {
+                id: homeVideoSlot
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 6
+                height: Math.max(1, parent.height - 178)
+            }
+
             anchors.left: homeLeft.right
             anchors.right: parent.right
             anchors.top: parent.top
@@ -787,23 +872,24 @@ ApplicationWindow {
             Canvas {
                 id: staticCanvas
                 anchors.fill: parent
-                onPaint: {
-                    var ctx = getContext("2d")
-                    ctx.fillStyle = "#111820"
-                    ctx.fillRect(0, 0, width, height)
-                    for (var i = 0; i < 1800; ++i) {
-                        var g = 45 + Math.floor(Math.random() * 160)
-                        ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")"
-                        var size = 1 + Math.floor(Math.random() * 3)
-                        ctx.fillRect(Math.random() * width, Math.random() * height, size, size)
-                    }
-                }
+                visible: homePreview.unassigned
+                onPaint: root.paintStatic(staticCanvas)
             }
             Timer {
                 interval: 95
                 repeat: true
-                running: root.screen === "home"
+                running: root.screen === "home" && homePreview.unassigned
                 onTriggered: staticCanvas.requestPaint()
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                visible: !homePreview.unassigned
+                gradient: Gradient {
+                    GradientStop { position: 0.0; color: "#153b60" }
+                    GradientStop { position: 0.55; color: "#0b2034" }
+                    GradientStop { position: 1.0; color: "#06101a" }
+                }
             }
 
             Rectangle {
@@ -811,13 +897,70 @@ ApplicationWindow {
                 color: "#020913"
                 opacity: 0.17
             }
+
             Column {
                 anchors.centerIn: parent
                 spacing: 12
+                visible: homePreview.unassigned
                 Text { anchors.horizontalCenter: parent.horizontalCenter; text: "CH 001"; color: root.textPrimary; font.pixelSize: 56; font.letterSpacing: 5 }
                 Rectangle { width: 230; height: 2; color: root.accent; anchors.horizontalCenter: parent.horizontalCenter }
                 Text { anchors.horizontalCenter: parent.horizontalCenter; text: "UNASSIGNED"; color: root.accentBright; font.pixelSize: 28; font.letterSpacing: 8 }
                 Text { anchors.horizontalCenter: parent.horizontalCenter; text: "NO PROGRAMMING"; color: "#c5ccd4"; font.pixelSize: 16; font.letterSpacing: 4 }
+            }
+
+            Column {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: 34
+                anchors.rightMargin: 34
+                anchors.bottomMargin: 34
+                spacing: 8
+                visible: !homePreview.unassigned
+
+                Text {
+                    text: root.homeTelevision.stateLabel || "TELEVISION"
+                    color: root.accentBright
+                    font.pixelSize: 15
+                    font.weight: Font.Bold
+                    font.letterSpacing: 3
+                }
+                Text {
+                    text: "CH " + (root.homeTelevision.displayNumber || "---")
+                          + "  " + (root.homeTelevision.channelName || "")
+                    color: root.textPrimary
+                    font.pixelSize: 22
+                    font.weight: Font.DemiBold
+                }
+                Text {
+                    text: root.homeTelevision.title || "No Programming"
+                    color: root.textPrimary
+                    font.pixelSize: 34
+                    font.weight: Font.DemiBold
+                    width: parent.width
+                    elide: Text.ElideRight
+                }
+                Text {
+                    text: root.homeTelevision.programStartMs
+                          ? root.formatClock(root.homeTelevision.programStartMs)
+                            + " - "
+                            + root.formatClock(root.homeTelevision.programEndMs)
+                          : "No scheduled programming"
+                    color: root.textSecondary
+                    font.pixelSize: 17
+                }
+                Text {
+                    visible: root.homeTelevision.mode === "current"
+                    text: root.homeTelevision.isLive
+                          ? "LIVE • Broadcast Clock"
+                          : Math.round(root.homeTelevision.lagSeconds || 0)
+                            + "s behind live • Viewer Clock"
+                    color: root.homeTelevision.isLive
+                           ? root.liveRed
+                           : root.accentBright
+                    font.pixelSize: 15
+                    font.weight: Font.DemiBold
+                }
             }
 
             Row {
@@ -825,8 +968,18 @@ ApplicationWindow {
                 anchors.top: parent.top
                 anchors.margins: 18
                 spacing: 12
-                Rectangle { width: 10; height: 10; radius: 5; color: root.accent; anchors.verticalCenter: parent.verticalCenter }
-                Text { text: "CH 001"; color: root.textPrimary; font.pixelSize: 19 }
+                Rectangle {
+                    width: 10
+                    height: 10
+                    radius: 5
+                    color: homePreview.unassigned ? root.accent : root.liveRed
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                    text: "CH " + (root.homeTelevision.displayNumber || "001")
+                    color: root.textPrimary
+                    font.pixelSize: 19
+                }
             }
         }
 
@@ -1362,6 +1515,7 @@ ApplicationWindow {
             }
 
             Rectangle {
+                id: guidePreviewPanel
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
@@ -1372,9 +1526,22 @@ ApplicationWindow {
                 border.color: root.accent
                 border.width: guideScreen.programData.isCurrent ? 1 : 0
 
+                // Keep the bottom status strip in QML while the single native
+                // video surface occupies the picture area above it.
+                Item {
+                    id: guideVideoSlot
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 6
+                    height: Math.max(1, parent.height - 52)
+                }
+
                 Rectangle {
                     anchors.fill: parent
                     anchors.margins: 1
+                    visible: !guideScreen.rowData.isUnassigned
+                             && !root.playback.active
                     gradient: Gradient {
                         GradientStop { position: 0.0; color: "#12304a" }
                         GradientStop { position: 0.55; color: "#0a1a29" }
@@ -1382,28 +1549,100 @@ ApplicationWindow {
                     }
                     radius: 7
                 }
+
+                Canvas {
+                    id: guideStaticCanvas
+                    anchors.fill: parent
+                    anchors.margins: 1
+                    visible: Boolean(guideScreen.rowData.isUnassigned)
+                             && !root.playback.active
+                    onPaint: root.paintStatic(guideStaticCanvas)
+                }
+
+                Timer {
+                    interval: 95
+                    repeat: true
+                    running: root.screen === "guide"
+                             && Boolean(guideScreen.rowData.isUnassigned)
+                             && !root.playback.active
+                    onTriggered: guideStaticCanvas.requestPaint()
+                }
+
                 Text {
                     anchors.centerIn: parent
+                    visible: !guideScreen.rowData.isUnassigned
+                             && !root.playback.active
                     text: guideScreen.rowData.displayNumber + "\n" + guideScreen.rowData.channelName
                     horizontalAlignment: Text.AlignHCenter
                     color: root.textPrimary
                     font.pixelSize: 28
                     lineHeight: 1.25
                 }
+
+                Column {
+                    anchors.centerIn: parent
+                    visible: Boolean(guideScreen.rowData.isUnassigned)
+                             && !root.playback.active
+                    spacing: 7
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "CH 001"
+                        color: root.textPrimary
+                        font.pixelSize: 30
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: 3
+                    }
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "UNASSIGNED"
+                        color: root.accentBright
+                        font.pixelSize: 18
+                        font.weight: Font.Bold
+                        font.letterSpacing: 5
+                    }
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "STATIC / NO PROGRAMMING"
+                        color: root.textSecondary
+                        font.pixelSize: 12
+                        font.letterSpacing: 2
+                    }
+                }
                 Row {
                     anchors.left: parent.left
                     anchors.bottom: parent.bottom
                     anchors.margins: 18
                     spacing: 8
-                    Rectangle { width: 9; height: 9; radius: 5; color: root.liveRed; anchors.verticalCenter: parent.verticalCenter; visible: guideScreen.programData.isCurrent }
-                    Text { text: guideScreen.programData.isCurrent ? "LIVE" : "PROGRAM PREVIEW"; color: root.textPrimary; font.pixelSize: 15 }
+                    Rectangle {
+                        width: 9
+                        height: 9
+                        radius: 5
+                        color: root.liveRed
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.playback.active
+                                 || (guideScreen.programData.isCurrent
+                                     && !guideScreen.rowData.isUnassigned)
+                    }
+                    Text {
+                        text: root.playback.active
+                              ? "WATCHING CH "
+                                + (root.playback.displayNumber || "---")
+                              : (guideScreen.rowData.isUnassigned
+                                 ? "NO PROGRAMMING"
+                                 : (guideScreen.programData.isCurrent
+                                    ? "LIVE"
+                                    : "PROGRAM PREVIEW"))
+                        color: root.textPrimary
+                        font.pixelSize: 15
+                    }
                 }
             }
 
             Text {
-                anchors.right: parent.right
+                // Keep the Guide clock outside the live television viewport.
+                anchors.right: guidePreviewPanel.left
                 anchors.top: parent.top
-                anchors.rightMargin: 36
+                anchors.rightMargin: 18
                 anchors.topMargin: 16
                 text: root.formatClock(root.generatedAtMs)
                 color: root.textPrimary
@@ -1491,13 +1730,28 @@ ApplicationWindow {
                     Text {
                         anchors.left: parent.left
                         anchors.leftMargin: 92
-                        anchors.right: parent.right
-                        anchors.rightMargin: 18
+                        anchors.right: watchingBadge.left
+                        anchors.rightMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
                         text: channelRow.rowData.channelName
                         color: index === root.selectedRow ? root.accentBright : root.textSecondary
                         font.pixelSize: 18
                         elide: Text.ElideRight
+                    }
+
+                    Text {
+                        id: watchingBadge
+                        anchors.right: parent.right
+                        anchors.rightMargin: 14
+                        anchors.verticalCenter: parent.verticalCenter
+                        visible: root.homeTelevision.mode === "current"
+                                 && Number(root.homeTelevision.channelNumber)
+                                    === Number(channelRow.rowData.channelNumber)
+                        text: "WATCHING"
+                        color: root.liveRed
+                        font.pixelSize: 11
+                        font.weight: Font.Bold
+                        font.letterSpacing: 1
                     }
                 }
 
@@ -1554,12 +1808,16 @@ ApplicationWindow {
                             color: selectedSegment
                                    ? "#146ad1"
                                    : (
-                                       modelData.isCurrent
-                                       ? "#123558"
+                                       modelData.isUnassigned
+                                       ? "#17202a"
                                        : (
-                                           modelData.isCluster
-                                           ? "#102a43"
-                                           : "#0d2134"
+                                           modelData.isCurrent
+                                           ? "#123558"
+                                           : (
+                                               modelData.isCluster
+                                               ? "#102a43"
+                                               : "#0d2134"
+                                           )
                                        )
                                    )
 

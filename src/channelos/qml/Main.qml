@@ -29,7 +29,7 @@ ApplicationWindow {
     property int selectedProgram: 0
     property int selectedLibrary: 0
     property string statusMessage: ""
-    property bool liveHudVisible: true
+    property bool liveHudVisible: false
     property string channelEntry: ""
     property int volumePercent: 100
     property bool muted: false
@@ -336,6 +336,8 @@ ApplicationWindow {
         visible: root.visible
                  && root.visibility !== Window.Minimized
                  && root.bottomHudMode !== "hidden"
+                 && (root.bottomHudMode !== "live"
+                     || root.liveHudVisible)
 
         readonly property string hudMode: root.bottomHudMode
 
@@ -648,7 +650,8 @@ ApplicationWindow {
         anchors.rightMargin: 34
         width: 154
         height: 46
-        visible: root.screen === "live" || root.screen === "ondemand"
+        visible: root.screen === "ondemand"
+                 || (root.screen === "live" && root.liveHudVisible)
         z: 60
 
         window: Window {

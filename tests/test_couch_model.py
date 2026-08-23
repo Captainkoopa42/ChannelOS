@@ -154,6 +154,9 @@ def test_couch_qml_asset_is_present() -> None:
     assert "bottomHudMode" in text
     assert 'hudMode === "live"' in text
     assert 'hudMode === "ondemand"' in text
+    assert 'property bool liveHudVisible: false' in text
+    assert 'root.bottomHudMode !== "live"' in text
+    assert 'root.screen === "live" && root.liveHudVisible' in text
     assert "channelEntryContainer" in text
     assert "audioHudContainer" in text
     assert "liveHudContainer" not in text
@@ -169,3 +172,12 @@ def test_couch_qml_asset_is_present() -> None:
     assert "PLAY ON DEMAND" in text
     assert "ADD MEDIA FOLDER" in text
     assert "libraryItems" in text
+
+    couch_qt = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "channelos"
+        / "couch_qt.py"
+    ).read_text(encoding="utf-8")
+    assert "QTimer.singleShot(10000, hide)" in couch_qt
+    assert 'setProperty("liveHudVisible", False)' in couch_qt

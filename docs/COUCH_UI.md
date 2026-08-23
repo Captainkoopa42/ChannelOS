@@ -92,7 +92,18 @@ The television HUD presents:
 - clock,
 - transient volume/mute and numeric-channel entry.
 
+The main Live information layer is transient: tuning or transport/channel input
+shows the lower-third and clock, and ten seconds without another qualifying Live
+interaction hides them again. Repeated Live interaction restarts the timer.
+Compact volume/mute and numeric-channel-entry overlays keep their own shorter
+timers.
+
 The libVLC target remains a native child window. The Windows-safe HUD presentation deliberately avoids a second full-screen transparent native child above it. Small bounded overlays use native child windows where appropriate, while the translucent lower-third is a bounded transient top-level window so Windows can alpha-compose it without obscuring the video during maximize/restore.
+
+The couch launcher is fullscreen by default via Qt `showFullScreen()`; `--windowed`
+is the explicit development override. On Windows this is the borderless
+fullscreen presentation path rather than an exclusive decoder-owned fullscreen
+mode.
 
 ### Library / On Demand
 

@@ -453,10 +453,21 @@ class CouchKeyFilter(QObject):
         self._channel_digits = ""
 
     def _show_live_hud(self) -> None:
-        # The primary Live lower-third remains persistent; compact volume and
-        # numeric channel-entry overlays keep their independent transient timers.
+        # Show the Live information layer after tuning or transport/channel
+        # interaction, then clear it after a television-like grace period.
+        # Generation IDs make repeated input restart the timeout cleanly.
         self._hud_generation += 1
+        generation = self._hud_generation
         self._window.setProperty("liveHudVisible", True)
+
+        def hide() -> None:
+            if (
+                generation == self._hud_generation
+                and str(self._window.property("screen")) == "live"
+            ):
+                self._window.setProperty("liveHudVisible", False)
+
+        QTimer.singleShot(10000, hide)
 
     def _show_audio_hud(self, result: dict[str, object]) -> None:
         if not bool(result.get("ok")):

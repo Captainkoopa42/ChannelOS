@@ -58,7 +58,13 @@ Required mapping.
 Draft 0.1 fields:
 
 - `mode`: required; `sequential` or `shuffle`
-- `preserve_episode_order`: optional boolean, default `false`
+- `preserve_episode_order`: optional boolean, default `false`. For `sequential`
+  channels, `true` makes source declaration order authoritative and applies a
+  deterministic media-aware order inside each source: explicit season/episode
+  markers first, then episode/leading ordinals, then release-year-like tokens,
+  then natural path order. This requires no cloud metadata and never renames
+  user files. `Preview` remains the authoritative way to inspect the resolved
+  program order before saving.
 - `avoid_repeat_days`: optional non-negative integer, default `0`
 
 Example:

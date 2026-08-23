@@ -197,7 +197,8 @@ def test_couch_qml_asset_is_present() -> None:
     assert "id: liveVideoHost" not in text
     assert "anchors.right: guidePreviewPanel.left" in text
     assert 'root.screen === "guide" && Boolean(root.playback.active)' in text
-    assert 'root.screen === "home" && Boolean(root.playback.active)' in text
+    assert 'root.homeTelevision.mode !== "static"' in text
+    assert 'root.screen === "home"' in text
     assert "readonly property bool showHomePreview" in text
     assert "readonly property bool showGuidePreview" in text
     assert "anchors.fill: parent" in text
@@ -253,7 +254,7 @@ def test_couch_qml_asset_is_present() -> None:
     assert '"mode"] = "previous"' in couch_qt
     assert "def continueWatching" in couch_qt
     assert "def startHomePlayback" in couch_qt
-    assert "QTimer.singleShot(0, controller.startHomePlayback)" in couch_qt
+    assert "QTimer.singleShot(500, controller.startHomePlayback)" in couch_qt
     assert "not self._surface_ready" in couch_qt
     assert "continue_watching(default_channel=1)" in couch_qt
     assert "Continue Watching will connect" not in couch_qt

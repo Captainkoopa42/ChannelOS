@@ -1202,10 +1202,12 @@ def run_qt(
     else:
         window.showFullScreen()
 
-    # Do not start libVLC against a hidden native child. Let Qt realize the
-    # Home layout first, then resume the remembered Viewer Clock (or real
-    # default CH001) into the already-visible preview surface.
-    QTimer.singleShot(0, controller.startHomePlayback)
+    # The Home WindowContainer is already visible from remembered/default
+    # television state. Give Windows/Qt a brief moment to finish realizing the
+    # embedded native child before libVLC creates its D3D11 video output.
+    # A zero-delay callback can still race native-child realization and leave
+    # the first Home frame showing stale desktop/backbuffer contents.
+    QTimer.singleShot(500, controller.startHomePlayback)
 
     if not owns_application:
         return 0

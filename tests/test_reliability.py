@@ -176,6 +176,42 @@ def test_resolution_and_source_options_do_not_load_the_whole_library(
     }
 
 
+def test_source_scoped_resolution_supports_a_channel_subfolder(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    indexed_root = tmp_path / "recordings"
+    fortnite = indexed_root / "NVIDIAFortnite"
+    unrelated = indexed_root / "Other Game"
+    fortnite.mkdir(parents=True)
+    unrelated.mkdir()
+    (fortnite / "match.mp4").write_bytes(b"match")
+    (unrelated / "other.mp4").write_bytes(b"other")
+
+    library = MediaLibrary(tmp_path / "nested-library.db")
+    MediaScanner(library, NullMediaProbe()).scan(indexed_root)
+    monkeypatch.setattr(
+        library,
+        "list_online_media",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("the full Library must not be loaded")
+        ),
+    )
+
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.1",
+            "channel": 7,
+            "name": "Fortnite Alpha",
+            "sources": [{"path": str(fortnite)}],
+            "programming": {"mode": "sequential"},
+        }
+    )
+
+    resolved = resolve_channel(definition, library)
+    assert [item.location.path.name for item in resolved.media] == ["match.mp4"]
+
+
 def test_home_add_media_uses_the_shared_background_scan_entrypoint() -> None:
     source = (
         Path(__file__).resolve().parents[1]

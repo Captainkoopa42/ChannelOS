@@ -29,6 +29,19 @@ def normalize_path(path: str | Path) -> tuple[str, str]:
     return text, os.path.normcase(os.path.normpath(text))
 
 
+def path_key_is_within(candidate_key: str, parent_key: str) -> bool:
+    """Compare normalized path keys without assuming the host path separator."""
+
+    if candidate_key == parent_key:
+        return True
+    boundary = parent_key.rstrip("/\\")
+    return (
+        candidate_key.startswith(boundary)
+        and len(candidate_key) > len(boundary)
+        and candidate_key[len(boundary)] in "/\\"
+    )
+
+
 def sha256_file(
     path: Path,
     chunk_size: int = HASH_CHUNK_SIZE,
@@ -509,22 +522,67 @@ class MediaLibrary:
         self,
         source_root: str | Path,
     ) -> list[IndexedMedia]:
-        """Load online rows for one indexed source without scanning all media."""
+        """Load online rows beneath one channel source without scanning all media.
 
-        _, source_key = normalize_path(source_root)
+        A channel may name the exact folder that was indexed, a subfolder inside
+        an indexed root, or a parent containing multiple indexed roots. Resolve
+        the small root list first, then query only matching location rows.
+        """
+
+        _, requested_key = normalize_path(source_root)
         with self.connect() as connection:
-            rows = connection.execute(
+            root_rows = connection.execute(
                 """
+                SELECT DISTINCT source_root_key
+                FROM media_locations
+                WHERE online = 1
+                """
+            ).fetchall()
+            candidate_keys = [
+                str(row["source_root_key"])
+                for row in root_rows
+                if (
+                    path_key_is_within(
+                        requested_key,
+                        str(row["source_root_key"]),
+                    )
+                    or path_key_is_within(
+                        str(row["source_root_key"]),
+                        requested_key,
+                    )
+                )
+            ]
+            if not candidate_keys:
+                return []
+
+            placeholders = ", ".join("?" for _ in candidate_keys)
+            rows = connection.execute(
+                f"""
                 SELECT
                     a.asset_id, a.content_sha256, a.size_bytes AS asset_size_bytes,
                     a.duration_seconds, a.container_format,
                     l.path, l.path_key, l.source_root, l.online
                 FROM media_locations l
                 JOIN media_assets a ON a.asset_id = l.asset_id
-                WHERE l.online = 1 AND l.source_root_key = ?
+                WHERE
+                    l.online = 1
+                    AND l.source_root_key IN ({placeholders})
+                    AND (
+                        l.path_key = ?
+                        OR (
+                            substr(l.path_key, 1, ?) = ?
+                            AND substr(l.path_key, ?, 1) IN ('/', '\\')
+                        )
+                    )
                 ORDER BY l.path_key
                 """,
-                (source_key,),
+                (
+                    *candidate_keys,
+                    requested_key,
+                    len(requested_key),
+                    requested_key,
+                    len(requested_key) + 1,
+                ),
             ).fetchall()
         return [self._indexed_from_row(row) for row in rows]
 

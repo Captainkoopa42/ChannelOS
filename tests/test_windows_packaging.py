@@ -1,11 +1,16 @@
 import hashlib
+import importlib.util
 import json
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from tools.windows import package_windows
+PACKAGE_TOOL = Path(__file__).resolve().parents[1] / "tools" / "windows" / "package_windows.py"
+PACKAGE_SPEC = importlib.util.spec_from_file_location("channelos_package_windows", PACKAGE_TOOL)
+assert PACKAGE_SPEC is not None and PACKAGE_SPEC.loader is not None
+package_windows = importlib.util.module_from_spec(PACKAGE_SPEC)
+PACKAGE_SPEC.loader.exec_module(package_windows)
 
 
 def _fake_runtime_package(path: Path) -> dict[str, object]:

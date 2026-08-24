@@ -296,7 +296,9 @@ The user is not merely the audience. **The user is the broadcaster.**
 
 ## Open-source release requirement
 
-ChannelOS is intended to be open source, but the repository does not yet contain a selected open-source license. License selection and third-party dependency/license review are explicit release gates before public distribution.
+ChannelOS source is licensed under the Mozilla Public License 2.0. Packaged
+public releases remain gated on an exact third-party dependency bill of
+materials and verification against `docs/DISTRIBUTION.md`.
 
 ## Project North Star
 

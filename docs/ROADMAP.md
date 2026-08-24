@@ -273,8 +273,9 @@ Steam may provide installation, updates, discovery, controller-friendly launchin
 
 Before public distribution, including Steam:
 
-- [ ] Select and add the intended open-source license
-- [ ] Audit third-party runtime licenses/notices
+- [x] Select and add the intended MPL-2.0 open-source license
+- [x] Establish the development dependency inventory and distribution policy
+- [ ] Freeze and audit the exact packaged third-party runtime bill of materials
 - [ ] Verify packaged libVLC distribution compliance
 - [ ] Produce repeatable Windows/Linux packages
 - [ ] Validate SteamOS couch/controller behavior

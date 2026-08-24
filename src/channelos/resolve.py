@@ -163,8 +163,15 @@ def _resolve_preserved_sequence(
 
 
 def resolve_channel(channel: ChannelDefinition, library: MediaLibrary) -> ResolvedChannel:
-    indexed = library.list_online_media()
     source_keys = [normalize_path(source.path)[1] for source in channel.sources]
+    indexed: list[IndexedMedia] = []
+    seen_locations: set[str] = set()
+    for source in channel.sources:
+        for item in library.list_online_media_for_source(source.path):
+            if item.location.path_key in seen_locations:
+                continue
+            seen_locations.add(item.location.path_key)
+            indexed.append(item)
 
     if (
         channel.programming.mode == "sequential"

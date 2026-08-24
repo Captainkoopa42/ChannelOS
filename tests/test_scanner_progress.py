@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from channelos.library import MediaLibrary
 from channelos.probe import NullMediaProbe
-from channelos.scanner import MediaScanner, ScanProgress
+from channelos.scanner import MediaScanner, ScanCancelled, ScanProgress
 
 
 def test_scan_reports_stable_progress_and_cache_hits(tmp_path) -> None:
@@ -33,3 +35,29 @@ def test_scan_reports_stable_progress_and_cache_hits(tmp_path) -> None:
     assert cached.hashed == 0
     assert cached.cache_hits == 2
     assert cached_progress[-1].current == cached_progress[-1].total == 2
+
+
+def test_cancelled_rescan_preserves_the_last_successful_source_membership(
+    tmp_path,
+) -> None:
+    media_root = tmp_path / "captures"
+    media_root.mkdir()
+    alpha = media_root / "alpha.mp4"
+    beta = media_root / "beta.mkv"
+    alpha.write_bytes(b"alpha")
+    beta.write_bytes(b"beta")
+
+    library = MediaLibrary(tmp_path / "library.db")
+    scanner = MediaScanner(library, NullMediaProbe())
+    scanner.scan(media_root)
+    beta.unlink()
+
+    with pytest.raises(ScanCancelled):
+        scanner.scan(media_root, should_cancel=lambda: True)
+
+    assert [
+        item.location.path.name
+        for item in library.list_online_media()
+    ] == ["alpha.mp4", "beta.mkv"]
+    source = library.list_sources()[0]
+    assert source.status == "cancelled"

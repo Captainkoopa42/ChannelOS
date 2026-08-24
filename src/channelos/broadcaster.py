@@ -230,8 +230,8 @@ class BroadcasterService:
 
     def source_options(self) -> tuple[str, ...]:
         roots = {
-            str(media.location.source_root)
-            for media in self.library.list_online_media()
+            str(source_root)
+            for source_root in self.library.list_online_source_roots()
         }
         return tuple(sorted(roots, key=os.path.normcase))
 

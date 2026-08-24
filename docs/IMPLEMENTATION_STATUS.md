@@ -44,10 +44,14 @@ A real Windows machine can now:
 
 Home now wires every visible destination, makes the lower quick-action row
 controller/mouse accessible, and provides persistent volume, mute, and
-seek-distance preferences. The follow-up Settings branch adds Standard,
-Lightweight, and Custom machine-performance profiles, generated-art cache
-controls, and reduced motion. That follow-up is automated-test covered but
-remains explicitly pending Windows real-machine validation before merge.
+seek-distance preferences. Settings includes Standard, Lightweight, and Custom
+machine-performance profiles, generated-art cache controls, and reduced motion;
+these controls have passed Windows real-machine validation and are merged.
+
+The active hardening slice is the [Reliability Gate](RELIABILITY_GATE.md): shared
+background/cancellable media scanning, SQLite concurrency and version guards,
+source-scoped resolution, atomic tuning persistence, and batched artwork updates.
+It remains pending its final Windows gate before merge.
 
 The largest remaining first-release work is now product experience and release hardening rather than proving the television model.
 
@@ -114,7 +118,7 @@ This is a design-audit estimate, not a mathematical quality score. Implementatio
 | On Demand does not contaminate channel scheduling | Implemented with separate playback session | Very high |
 | Couch-first presentation | Working keyboard/D-pad implementation | High |
 | Functional Home destinations | Implemented and real-machine tested | High |
-| Persistent Settings | Basic controls merged; performance profiles/cache controls pending feature-branch Windows validation | High |
+| Persistent Settings | Basic controls and performance/cache profiles merged and Windows validated | High |
 | User is broadcaster | Safe Channel Builder MVP implemented | High |
 | Rich metadata/artwork | Not yet | Low |
 | Advanced scheduling/programming tools | Foundation only | Partial |
@@ -144,7 +148,7 @@ Implemented:
 - functional Home menu and lower quick-action navigation,
 - persistent volume, mute, and skip-distance Settings,
 - Standard/Lightweight/Custom performance settings with safe generated-art
-  cache controls (feature-branch Windows validation pending),
+  cache controls,
 - transport-neutral couch control intents with keyboard, multimedia-key, and
   consumer-remote-key translation,
 - pause / resume,

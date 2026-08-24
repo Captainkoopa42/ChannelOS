@@ -166,9 +166,12 @@ not an installer and not a one-file executable. Its inputs and controls are:
 - CI validation that rejects unexpected files, import libraries, hash changes,
   incomplete notices, or a GPL companion package.
 
-`tools/windows/build-package.ps1` is the supported local build entry point.
-The `windows-package` GitHub Actions workflow performs the same build on
-Windows and uploads the audited ZIP for testing.
+`tools/windows/build-package.cmd` is the ordinary local build entry point. It
+starts the checked-in PowerShell build with a process-only execution-policy
+override, so it does not change the user's system policy. The underlying
+`build-package.ps1` stops immediately if environment setup, tests, packaging,
+or auditing fails. The `windows-package` GitHub Actions workflow performs the
+same build on Windows and uploads the audited ZIP for testing.
 
 The portable build is a packaging preview. First-run setup, installer creation,
 upgrade, and uninstall remain separate gates. Until first-run setup exists, the

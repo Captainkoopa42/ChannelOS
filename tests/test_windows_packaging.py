@@ -136,3 +136,23 @@ def test_qml_hook_excludes_unrelated_heavy_modules() -> None:
     assert 'qml_source / "QtQuick" / "Layouts"' in hook
     assert 'qml_source / "QtQuick3D"' not in hook
     assert 'qml_source / "QtWebEngine"' not in hook
+
+
+def test_windows_cmd_wrapper_uses_process_only_policy_override() -> None:
+    wrapper = (
+        package_windows.PROJECT_ROOT
+        / "tools"
+        / "windows"
+        / "build-package.cmd"
+    ).read_text(encoding="utf-8")
+    script = (
+        package_windows.PROJECT_ROOT
+        / "tools"
+        / "windows"
+        / "build-package.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "-ExecutionPolicy Bypass" in wrapper
+    assert '"%~dp0build-package.ps1"' in wrapper
+    assert wrapper.count("exit /b") == 1
+    assert script.count("$LASTEXITCODE -ne 0") >= 5

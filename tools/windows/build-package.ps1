@@ -26,14 +26,31 @@ Write-Host "Packaging Python:"
 & $PackagingPython --version
 
 & $PackagingPython -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not update pip in the packaging environment."
+}
+
 & $PackagingPython -m pip install -r .\packaging\windows\requirements-build.txt
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not install the locked Windows packaging requirements."
+}
+
 & $PackagingPython -m pip install -e . --no-deps
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not install ChannelOS into the packaging environment."
+}
 
 Write-Host "Running the complete automated test suite..."
 & $PackagingPython -m pytest -q
+if ($LASTEXITCODE -ne 0) {
+    throw "The automated tests failed. The package was not built."
+}
 
 Write-Host "Building and auditing ChannelOS for Windows x64..."
 & $PackagingPython .\tools\windows\package_windows.py
+if ($LASTEXITCODE -ne 0) {
+    throw "The Windows package build or audit failed."
+}
 
 Write-Host ""
 Write-Host "Package created in:"

@@ -19,6 +19,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQuick import QQuickWindow
 
 import channelos
 
@@ -143,6 +144,9 @@ def test_settings_qml_instantiates_headlessly() -> None:
     app = QGuiApplication.instance() or QGuiApplication([])
     controller = FakeSettingsController()
     host = FakeSettingsHost()
+    surface = QQuickWindow()
+    surface.resize(1280, 720)
+    surface.show()
 
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("channelOS", controller)
@@ -167,6 +171,8 @@ def test_settings_qml_instantiates_headlessly() -> None:
         item = component.create(engine.rootContext())
         assert item is not None, errors
         item.setProperty("hostWindow", host)
+        item.setParent(surface)
+        item.setParentItem(surface.contentItem())
         app.processEvents()
         assert item.property("visible") is True
 
@@ -175,6 +181,7 @@ def test_settings_qml_instantiates_headlessly() -> None:
         assert item.property("visible") is False
 
         item.deleteLater()
+        surface.close()
         app.processEvents()
     finally:
         qInstallMessageHandler(previous_handler)

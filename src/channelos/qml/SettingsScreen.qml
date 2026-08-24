@@ -208,7 +208,13 @@ Item {
                     readonly property bool selected:
                         settingsRoot.hostWindow !== null
                         && index === settingsRoot.hostWindow.settingsSelection
-                    width: parent.width
+                    // Repeater delegates briefly have no parent while Qt is
+                    // constructing them. Use stable root geometry so startup
+                    // never evaluates parent.width through a null parent.
+                    width: Math.max(
+                        1,
+                        settingsRoot.width - settingsSidebar.width - 88
+                    )
                     height: 94
                     radius: 9
                     color: selected ? "#102b50" : "#0b1b2e"

@@ -9,7 +9,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
+from PySide6.QtCore import (
+    QObject,
+    Property,
+    QUrl,
+    Signal,
+    Slot,
+    qInstallMessageHandler,
+)
 from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 
@@ -68,27 +75,41 @@ def test_settings_qml_instantiates_headlessly() -> None:
         / "qml"
         / "SettingsScreen.qml"
     )
-    component = QQmlComponent(engine)
-    component.loadUrl(QUrl.fromLocalFile(str(qml_path)))
-    if component.isLoading():
+    messages: list[str] = []
+    previous_handler = qInstallMessageHandler(
+        lambda _mode, _context, message: messages.append(message)
+    )
+    try:
+        component = QQmlComponent(engine)
+        component.loadUrl(QUrl.fromLocalFile(str(qml_path)))
+        if component.isLoading():
+            app.processEvents()
+
+        errors = "\n".join(error.toString() for error in component.errors())
+        assert component.isReady(), errors
+
+        item = component.create(engine.rootContext())
+        assert item is not None, errors
+        item.setProperty("hostWindow", host)
         app.processEvents()
+        assert item.property("visible") is True
 
-    errors = "\n".join(error.toString() for error in component.errors())
-    assert component.isReady(), errors
+        host.setProperty("screen", "home")
+        app.processEvents()
+        assert item.property("visible") is False
 
-    item = component.create(engine.rootContext())
-    assert item is not None, errors
-    item.setProperty("hostWindow", host)
-    app.processEvents()
-    assert item.property("visible") is True
+        item.deleteLater()
+        host.close()
+        app.processEvents()
+    finally:
+        qInstallMessageHandler(previous_handler)
 
-    host.setProperty("screen", "home")
-    app.processEvents()
-    assert item.property("visible") is False
-
-    item.deleteLater()
-    host.close()
-    app.processEvents()
+    settings_warnings = [
+        message
+        for message in messages
+        if "SettingsScreen.qml" in message
+    ]
+    assert settings_warnings == []
 
 
 def test_settings_qml_exposes_all_persistent_controls() -> None:

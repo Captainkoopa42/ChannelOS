@@ -148,7 +148,7 @@ Rich Library work still remaining:
 - [x] Persistent local Continue Watching and resume state for the default viewer
 - [ ] Recently Added
 - [ ] Favorites
-- [ ] Add to Channel
+- [ ] Add to Channel — future workflow is defined in the [Channel Studio concept](design/CHANNEL_STUDIO_CONCEPT.md)
 - [ ] Friendly normalized format/media labels
 - [ ] Rich title and metadata presentation
 
@@ -159,6 +159,8 @@ Rich Library work still remaining:
 ## Phase 5 — Metadata and Broadcaster Tools
 
 **Goal:** Make the library understandable and the channels programmable without making metadata providers authoritative.
+
+The future visual programming workspace is recorded in the [Channel Studio concept](design/CHANNEL_STUDIO_CONCEPT.md). It complements rather than replaces the existing Channel Builder.
 
 - [ ] Metadata provider abstraction
 - [ ] File/title matching workflow

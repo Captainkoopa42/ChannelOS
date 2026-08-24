@@ -137,8 +137,9 @@ Core Library / On Demand path:
 Rich Library work still remaining:
 
 - [ ] Movie / television / season / episode model
-- [ ] Poster/backdrop library UI
-- [ ] Search
+- [ ] Poster/backdrop library UI — real content shelves and selected-title
+  presentation are implemented; local artwork extraction/caching remains
+- [x] Search
 - [ ] Sorting and filtering
 - [ ] Genres
 - [ ] User tags

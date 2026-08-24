@@ -1,6 +1,7 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 
 Item {
     id: libraryRoot
@@ -11,281 +12,337 @@ Item {
     visible: hostWindow !== null && hostWindow.screen === "library"
 
     readonly property color appBackground: "#050c15"
+    readonly property color railBackground: "#06111e"
     readonly property color panel: "#081625"
     readonly property color panelRaised: "#0d2035"
-    readonly property color panelSoft: "#10283f"
     readonly property color line: "#1a3550"
     readonly property color textPrimary: "#f4f7fb"
     readonly property color textSecondary: "#9fb0c2"
     readonly property color accent: "#1a91ff"
     readonly property color accentBright: "#42adff"
-    readonly property color liveGreen: "#2bcf75"
-    readonly property color warning: "#ffb84a"
-    readonly property color danger: "#ff6666"
 
     property var snapshot: channelOS
                            ? (channelOS.librarySnapshot || ({}))
                            : ({})
-    property var scan: channelOS
-                       ? (channelOS.libraryScan || ({ active: false }))
-                       : ({ active: false })
     property var allItems: snapshot.items || []
     property var sources: snapshot.sources || []
-    property var filteredItems: []
-    property int selectedMedia: 0
-    property int selectedSource: 0
+    property var shelves: []
+    readonly property int shelfCount: shelves.length
+    property int selectedShelf: 0
+    property int selectedColumn: 0
     property string query: ""
-    property int sortMode: 0
-
-    property bool scanConfirmVisible: false
-    property string pendingScanPath: ""
-    property string pendingScanName: ""
-    property int pendingScanCount: 0
-    property bool pendingScanExisting: false
-
-    property bool removeConfirmVisible: false
-    property string pendingRemovePath: ""
-    property string pendingRemoveName: ""
-
-    property string feedbackMessage: ""
-    property bool feedbackIsError: false
-
-    function rebuildMedia() {
-        var needle = String(query || "").trim().toLowerCase()
-        var next = []
-        for (var i = 0; i < allItems.length; ++i) {
-            var item = allItems[i]
-            var haystack = (String(item.title || "") + " "
-                            + String(item.fileName || "") + " "
-                            + String(item.sourceName || "") + " "
-                            + String(item.containerFormat || "")).toLowerCase()
-            if (!needle.length || haystack.indexOf(needle) >= 0)
-                next.push(item)
-        }
-
-        next.sort(function(a, b) {
-            if (sortMode === 1) {
-                var sourceA = String(a.sourceName || "").toLowerCase()
-                var sourceB = String(b.sourceName || "").toLowerCase()
-                if (sourceA < sourceB) return -1
-                if (sourceA > sourceB) return 1
-            } else if (sortMode === 2) {
-                return Number(b.durationSeconds || 0) - Number(a.durationSeconds || 0)
-            }
-
-            var titleA = String(a.title || "").toLowerCase()
-            var titleB = String(b.title || "").toLowerCase()
-            if (titleA < titleB) return -1
-            if (titleA > titleB) return 1
-            return 0
-        })
-
-        filteredItems = next
-        if (filteredItems.length === 0)
-            selectedMedia = 0
-        else
-            selectedMedia = Math.max(0, Math.min(selectedMedia, filteredItems.length - 1))
-    }
-
-    function selectedItem() {
-        if (!filteredItems || filteredItems.length === 0
-                || selectedMedia < 0 || selectedMedia >= filteredItems.length) {
-            return ({
-                assetId: "",
-                title: "No media selected",
-                fileName: "",
-                path: "",
-                sourceRoot: "",
-                sourceName: "",
-                durationSeconds: 0,
-                sizeBytes: 0,
-                containerFormat: ""
-            })
-        }
-        return filteredItems[selectedMedia]
-    }
+    property bool managerVisible: false
+    property string clockText: ""
 
     function formatDuration(seconds) {
         var total = Math.max(0, Math.floor(Number(seconds) || 0))
         if (total <= 0)
-            return "Unknown duration"
+            return "Unknown length"
         var hours = Math.floor(total / 3600)
         var minutes = Math.floor((total % 3600) / 60)
-        var secs = total % 60
         if (hours > 0)
-            return hours + ":" + (minutes < 10 ? "0" : "") + minutes
-                   + ":" + (secs < 10 ? "0" : "") + secs
-        return minutes + ":" + (secs < 10 ? "0" : "") + secs
+            return hours + "h " + (minutes > 0 ? minutes + "m" : "")
+        return Math.max(1, minutes) + "m"
     }
 
     function formatBytes(bytes) {
         var value = Number(bytes) || 0
         if (value >= 1073741824)
-            return (value / 1073741824).toFixed(2) + " GB"
+            return (value / 1073741824).toFixed(1) + " GB"
         if (value >= 1048576)
-            return (value / 1048576).toFixed(1) + " MB"
+            return (value / 1048576).toFixed(0) + " MB"
         if (value >= 1024)
-            return (value / 1024).toFixed(1) + " KB"
+            return (value / 1024).toFixed(0) + " KB"
         return value + " B"
     }
 
-    function setFeedback(result) {
-        feedbackMessage = result && result.message ? String(result.message) : ""
-        feedbackIsError = !(result && result.ok)
-        feedbackTimer.restart()
+    function libraryBytes() {
+        var total = 0
+        for (var i = 0; i < allItems.length; ++i)
+            total += Number(allItems[i].sizeBytes || 0)
+        return total
     }
 
-    function beginPreflight(result) {
-        if (!result || result.cancelled)
-            return
-        if (!result.ok) {
-            setFeedback(result)
-            return
+    function normalizedTitle(item) {
+        return String(item.title || item.fileName || "Untitled Media")
+    }
+
+    function sortedCopy(items) {
+        var result = items.slice(0)
+        result.sort(function(a, b) {
+            var first = libraryRoot.normalizedTitle(a).toLowerCase()
+            var second = libraryRoot.normalizedTitle(b).toLowerCase()
+            if (first < second) return -1
+            if (first > second) return 1
+            return 0
+        })
+        return result
+    }
+
+    function matchesQuery(item, needle) {
+        var haystack = (normalizedTitle(item) + " "
+                        + String(item.fileName || "") + " "
+                        + String(item.sourceName || "") + " "
+                        + String(item.containerFormat || "")).toLowerCase()
+        return haystack.indexOf(needle) >= 0
+    }
+
+    function rebuildShelves() {
+        var needle = String(query || "").trim().toLowerCase()
+        var next = []
+        var owned = sortedCopy(allItems)
+
+        if (needle.length) {
+            var matches = []
+            for (var matchIndex = 0; matchIndex < owned.length; ++matchIndex) {
+                if (matchesQuery(owned[matchIndex], needle))
+                    matches.push(owned[matchIndex])
+            }
+            next.push({
+                title: "SEARCH RESULTS",
+                subtitle: matches.length + " matching owned media item"
+                          + (matches.length === 1 ? "" : "s"),
+                items: matches,
+                featured: true
+            })
+        } else if (owned.length) {
+            next.push({
+                title: "ALL MEDIA",
+                subtitle: "Your complete indexed collection",
+                items: owned,
+                featured: true
+            })
+
+            for (var sourceIndex = 0; sourceIndex < sources.length; ++sourceIndex) {
+                var source = sources[sourceIndex]
+                var sourceItems = []
+                var sourcePath = String(source.path || "")
+                for (var itemIndex = 0; itemIndex < owned.length; ++itemIndex) {
+                    if (String(owned[itemIndex].sourceRoot || "") === sourcePath)
+                        sourceItems.push(owned[itemIndex])
+                }
+                if (sourceItems.length) {
+                    next.push({
+                        title: String(source.name || "MEDIA SOURCE").toUpperCase(),
+                        subtitle: sourceItems.length + " indexed item"
+                                  + (sourceItems.length === 1 ? "" : "s"),
+                        items: sourceItems,
+                        featured: false
+                    })
+                }
+            }
+
+            var featureLength = []
+            var shortForm = []
+            for (var durationIndex = 0; durationIndex < owned.length; ++durationIndex) {
+                var duration = Number(owned[durationIndex].durationSeconds || 0)
+                if (duration >= 3600)
+                    featureLength.push(owned[durationIndex])
+                else if (duration > 0 && duration < 3600)
+                    shortForm.push(owned[durationIndex])
+            }
+            if (featureLength.length) {
+                next.push({
+                    title: "FEATURE LENGTH",
+                    subtitle: "Long-form movies, recordings, and specials",
+                    items: featureLength,
+                    featured: false
+                })
+            }
+            if (shortForm.length) {
+                next.push({
+                    title: "SHORT FORM",
+                    subtitle: "Episodes, clips, and shorter programs",
+                    items: shortForm,
+                    featured: false
+                })
+            }
         }
-        pendingScanPath = String(result.path || "")
-        pendingScanName = String(result.name || result.path || "Media source")
-        pendingScanCount = Number(result.supportedCount || 0)
-        pendingScanExisting = Boolean(result.alreadyIndexed)
-        scanConfirmVisible = true
+
+        shelves = next
+        selectedShelf = Math.max(0, Math.min(selectedShelf, shelves.length - 1))
+        var selectedItems = shelves.length ? (shelves[selectedShelf].items || []) : []
+        selectedColumn = Math.max(0, Math.min(selectedColumn, selectedItems.length - 1))
+        Qt.callLater(ensureSelectionVisible)
     }
 
-    function chooseSource() {
-        beginPreflight(channelOS.chooseMediaFolder())
+    function selectedItem() {
+        if (!shelves.length || selectedShelf < 0 || selectedShelf >= shelves.length)
+            return ({})
+        var items = shelves[selectedShelf].items || []
+        if (!items.length || selectedColumn < 0 || selectedColumn >= items.length)
+            return ({})
+        return items[selectedColumn]
     }
 
-    function preflightSource(path) {
-        beginPreflight(channelOS.preflightMediaSource(String(path || "")))
+    function selectCard(shelfIndex, columnIndex) {
+        selectedShelf = Math.max(0, Math.min(shelves.length - 1, shelfIndex))
+        var items = shelves.length ? (shelves[selectedShelf].items || []) : []
+        selectedColumn = Math.max(0, Math.min(items.length - 1, columnIndex))
+        ensureSelectionVisible()
     }
 
-    function startPendingScan() {
-        var result = channelOS.startMediaScan(pendingScanPath)
-        if (!result.ok) {
-            setFeedback(result)
+    function moveShelf(delta) {
+        if (!shelves.length)
             return
-        }
-        scanConfirmVisible = false
-        setFeedback(result)
+        selectCard(selectedShelf + delta, selectedColumn)
+    }
+
+    function moveColumn(delta) {
+        if (!shelves.length)
+            return
+        var items = shelves[selectedShelf].items || []
+        if (!items.length)
+            return
+        selectedColumn = Math.max(0, Math.min(items.length - 1, selectedColumn + delta))
+        ensureSelectionVisible()
+    }
+
+    function ensureSelectionVisible() {
+        if (!shelves.length)
+            return
+        shelvesList.positionViewAtIndex(selectedShelf, ListView.Contain)
+        Qt.callLater(function() {
+            var shelfItem = shelvesList.itemAtIndex(selectedShelf)
+            if (shelfItem && shelfItem.cardListView)
+                shelfItem.cardListView.positionViewAtIndex(selectedColumn, ListView.Contain)
+        })
     }
 
     function playSelected() {
         var item = selectedItem()
         if (!item.assetId)
             return
-
         hostWindow.screen = "ondemand"
         Qt.callLater(function() {
             var result = channelOS.playLibraryAsset(String(item.assetId))
-            if (!result.ok) {
+            if (!result || !result.ok)
                 hostWindow.screen = "library"
-                setFeedback(result)
-            }
         })
     }
 
-    function requestRemove(source) {
-        if (!source)
-            return
-        if (source.usedByChannels && source.usedByChannels.length > 0) {
-            var names = []
-            for (var i = 0; i < source.usedByChannels.length; ++i)
-                names.push(source.usedByChannels[i].displayNumber + " " + source.usedByChannels[i].name)
-            setFeedback({
-                ok: false,
-                message: "This source is used by " + names.join(", ") + ". Edit those channels before removing it."
-            })
-            return
-        }
-        pendingRemovePath = String(source.path || "")
-        pendingRemoveName = String(source.name || source.path || "Media source")
-        removeConfirmVisible = true
+    function openManager() {
+        managerVisible = true
+        sourceManager.forceActiveFocus()
     }
 
-    function removePendingSource() {
-        var result = channelOS.removeLibrarySource(pendingRemovePath)
-        removeConfirmVisible = false
-        setFeedback(result)
+    function returnFromManager() {
+        managerVisible = false
+        channelOS.refreshLibrary()
+        forceActiveFocus()
     }
 
-    onQueryChanged: rebuildMedia()
-    onSortModeChanged: rebuildMedia()
-    onAllItemsChanged: rebuildMedia()
+    function updateClock() {
+        clockText = Qt.formatTime(new Date(), "h:mm AP")
+    }
+
+    function cardColor(item, shift) {
+        var palette = [
+            ["#163b5d", "#07131f"],
+            ["#27445e", "#0a1522"],
+            ["#244238", "#081712"],
+            ["#4a314d", "#160b19"],
+            ["#4b3d25", "#171108"],
+            ["#293a63", "#0a1022"]
+        ]
+        var key = String(item.assetId || item.title || "media")
+        var total = shift || 0
+        for (var i = 0; i < key.length; ++i)
+            total += key.charCodeAt(i)
+        return palette[Math.abs(total) % palette.length]
+    }
+
+    onQueryChanged: {
+        selectedShelf = 0
+        selectedColumn = 0
+        rebuildShelves()
+    }
+    onAllItemsChanged: rebuildShelves()
+    onSourcesChanged: rebuildShelves()
 
     onVisibleChanged: {
         if (visible) {
             channelOS.refreshLibrary()
-            rebuildMedia()
+            updateClock()
+            rebuildShelves()
             forceActiveFocus()
         }
     }
 
-    Component.onCompleted: rebuildMedia()
+    Component.onCompleted: {
+        updateClock()
+        rebuildShelves()
+    }
 
     Connections {
         target: channelOS
         function onLibraryChanged() {
             libraryRoot.snapshot = channelOS.librarySnapshot || ({})
-            libraryRoot.rebuildMedia()
-        }
-        function onLibraryScanChanged() {
-            libraryRoot.scan = channelOS.libraryScan || ({ active: false })
+            libraryRoot.rebuildShelves()
         }
     }
 
-    Shortcut {
-        sequence: "Ctrl+F"
-        enabled: libraryRoot.visible && !libraryRoot.scanConfirmVisible && !libraryRoot.removeConfirmVisible
-        onActivated: searchField.forceActiveFocus()
+    Timer {
+        interval: 1000
+        repeat: true
+        running: libraryRoot.visible
+        onTriggered: libraryRoot.updateClock()
     }
 
     Shortcut {
-        sequence: "A"
-        enabled: libraryRoot.visible && !searchField.activeFocus
-                 && !libraryRoot.scanConfirmVisible && !libraryRoot.removeConfirmVisible
-                 && !libraryRoot.scan.active
-        onActivated: libraryRoot.chooseSource()
+        sequence: "Left"
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        onActivated: libraryRoot.moveColumn(-1)
     }
-
+    Shortcut {
+        sequence: "Right"
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        onActivated: libraryRoot.moveColumn(1)
+    }
     Shortcut {
         sequence: "Up"
-        enabled: libraryRoot.visible && !searchField.activeFocus
-                 && !libraryRoot.scanConfirmVisible && !libraryRoot.removeConfirmVisible
-        onActivated: {
-            libraryRoot.selectedMedia = Math.max(0, libraryRoot.selectedMedia - 1)
-            mediaList.positionViewAtIndex(libraryRoot.selectedMedia, ListView.Contain)
-        }
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        onActivated: libraryRoot.moveShelf(-1)
     }
-
     Shortcut {
         sequence: "Down"
-        enabled: libraryRoot.visible && !searchField.activeFocus
-                 && !libraryRoot.scanConfirmVisible && !libraryRoot.removeConfirmVisible
-        onActivated: {
-            libraryRoot.selectedMedia = Math.min(
-                        Math.max(0, libraryRoot.filteredItems.length - 1),
-                        libraryRoot.selectedMedia + 1)
-            mediaList.positionViewAtIndex(libraryRoot.selectedMedia, ListView.Contain)
-        }
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        onActivated: libraryRoot.moveShelf(1)
     }
-
     Shortcut {
         sequence: "Return"
-        enabled: libraryRoot.visible && !searchField.activeFocus
-                 && !libraryRoot.scanConfirmVisible && !libraryRoot.removeConfirmVisible
-                 && !libraryRoot.scan.active
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
         onActivated: libraryRoot.playSelected()
     }
-
+    Shortcut {
+        sequence: "Space"
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        onActivated: libraryRoot.playSelected()
+    }
+    Shortcut {
+        sequence: "Ctrl+F"
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+        onActivated: searchField.forceActiveFocus()
+    }
+    Shortcut {
+        sequence: "M"
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        onActivated: libraryRoot.openManager()
+    }
+    Shortcut {
+        sequence: "A"
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        onActivated: libraryRoot.openManager()
+    }
     Shortcut {
         sequence: "Escape"
-        enabled: libraryRoot.visible
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
         onActivated: {
-            if (libraryRoot.scanConfirmVisible) {
-                libraryRoot.scanConfirmVisible = false
-            } else if (libraryRoot.removeConfirmVisible) {
-                libraryRoot.removeConfirmVisible = false
-            } else if (searchField.activeFocus) {
+            if (searchField.activeFocus) {
                 searchField.focus = false
                 libraryRoot.forceActiveFocus()
+            } else if (query.length) {
+                query = ""
             } else if (hostWindow) {
                 hostWindow.screen = "home"
             }
@@ -298,733 +355,515 @@ Item {
     }
 
     Rectangle {
-        id: header
+        id: navigationRail
         anchors.left: parent.left
-        anchors.right: parent.right
         anchors.top: parent.top
-        height: 104
-        color: "#071322"
+        anchors.bottom: parent.bottom
+        width: Math.max(292, Math.min(360, parent.width * 0.22))
+        color: railBackground
         border.color: line
         border.width: 1
 
         Row {
             anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 34
-            spacing: 7
-
+            anchors.top: parent.top
+            anchors.leftMargin: 30
+            anchors.topMargin: 28
+            spacing: 2
             Text {
                 text: "Channel"
                 color: textPrimary
-                font.pixelSize: 30
+                font.pixelSize: 31
                 font.weight: Font.DemiBold
             }
             Text {
                 text: "OS"
                 color: accentBright
-                font.pixelSize: 30
+                font.pixelSize: 31
                 font.weight: Font.DemiBold
             }
-            Text {
-                text: "  |  LIBRARY"
-                color: accentBright
-                font.pixelSize: 20
-                anchors.verticalCenter: parent.verticalCenter
-            }
         }
 
-        TextField {
-            id: searchField
-            anchors.right: sortBox.left
-            anchors.rightMargin: 12
-            anchors.verticalCenter: parent.verticalCenter
-            width: 330
-            height: 46
-            placeholderText: "Search owned media…  Ctrl+F"
-            placeholderTextColor: "#70869c"
+        Text {
+            id: railClock
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.leftMargin: 30
+            anchors.topMargin: 94
+            text: clockText
             color: textPrimary
-            selectionColor: accent
-            selectedTextColor: "white"
-            text: libraryRoot.query
-            onTextChanged: libraryRoot.query = text
-            background: Rectangle {
-                radius: 7
-                color: "#0d2035"
-                border.color: searchField.activeFocus ? accentBright : line
-                border.width: searchField.activeFocus ? 2 : 1
-            }
+            font.pixelSize: 22
         }
 
-        ComboBox {
-            id: sortBox
-            anchors.right: addButton.left
-            anchors.rightMargin: 12
-            anchors.verticalCenter: parent.verticalCenter
-            width: 150
-            height: 46
-            model: ["Title", "Source", "Duration"]
-            currentIndex: libraryRoot.sortMode
-            onCurrentIndexChanged: libraryRoot.sortMode = currentIndex
-        }
-
-        Button {
-            id: addButton
-            anchors.right: parent.right
-            anchors.rightMargin: 28
-            anchors.verticalCenter: parent.verticalCenter
-            width: 170
-            height: 46
-            enabled: !libraryRoot.scan.active
-            text: "+  Add Source"
-            onClicked: libraryRoot.chooseSource()
-        }
-    }
-
-    Rectangle {
-        id: sourceRail
-        anchors.left: parent.left
-        anchors.top: header.bottom
-        anchors.bottom: footer.top
-        width: Math.max(280, parent.width * 0.22)
-        color: "#06111e"
-        border.color: line
-        border.width: 1
-
-        Text {
-            id: sourceTitle
-            anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.leftMargin: 22
-            anchors.topMargin: 20
-            text: "MEDIA SOURCES"
-            color: accentBright
-            font.pixelSize: 13
-            font.weight: Font.Bold
-            font.letterSpacing: 2
-        }
-
-        Text {
-            anchors.right: parent.right
-            anchors.verticalCenter: sourceTitle.verticalCenter
-            anchors.rightMargin: 22
-            text: String(sources.length)
-            color: textSecondary
-            font.pixelSize: 13
-        }
-
-        ListView {
-            id: sourceList
+        Column {
+            id: navigationItems
             anchors.left: parent.left
             anchors.right: parent.right
-            anchors.top: sourceTitle.bottom
-            anchors.bottom: sourceSafety.top
-            anchors.topMargin: 16
-            anchors.leftMargin: 12
-            anchors.rightMargin: 12
-            anchors.bottomMargin: 12
-            spacing: 8
-            clip: true
-            model: libraryRoot.sources
-
-            delegate: Rectangle {
-                width: sourceList.width
-                height: 116
-                radius: 8
-                color: index === libraryRoot.selectedSource ? "#102b50" : "#0a1a2b"
-                border.color: index === libraryRoot.selectedSource ? accentBright : "#17324a"
-                border.width: index === libraryRoot.selectedSource ? 2 : 1
-
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: libraryRoot.selectedSource = index
-                }
-
-                Column {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.margins: 12
-                    spacing: 5
-
-                    Row {
-                        width: parent.width
-                        spacing: 8
-                        Rectangle {
-                            width: 9
-                            height: 9
-                            radius: 5
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: modelData.available ? liveGreen : danger
-                        }
-                        Text {
-                            width: parent.width - 70
-                            text: modelData.name
-                            color: textPrimary
-                            font.pixelSize: 15
-                            font.weight: Font.DemiBold
-                            elide: Text.ElideRight
-                        }
-                        Text {
-                            text: modelData.available ? "ONLINE" : "OFFLINE"
-                            color: modelData.available ? liveGreen : danger
-                            font.pixelSize: 10
-                            font.weight: Font.Bold
-                        }
-                    }
-
-                    Text {
-                        text: modelData.onlineLocationCount + " indexed item"
-                              + (modelData.onlineLocationCount === 1 ? "" : "s")
-                              + "  •  " + String(modelData.status).toUpperCase()
-                        color: textSecondary
-                        font.pixelSize: 12
-                        width: parent.width
-                        elide: Text.ElideRight
-                    }
-
-                    Text {
-                        visible: modelData.usedByChannels && modelData.usedByChannels.length > 0
-                        text: "USED BY " + modelData.usedByChannels.length + " CHANNEL"
-                              + (modelData.usedByChannels.length === 1 ? "" : "S")
-                        color: warning
-                        font.pixelSize: 10
-                        font.weight: Font.Bold
-                    }
-                }
-
-                Row {
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.rightMargin: 10
-                    anchors.bottomMargin: 9
-                    spacing: 8
-
-                    Button {
-                        width: 76
-                        height: 28
-                        text: "Rescan"
-                        enabled: !libraryRoot.scan.active && modelData.available
-                        onClicked: {
-                            libraryRoot.selectedSource = index
-                            libraryRoot.preflightSource(modelData.path)
-                        }
-                    }
-                    Button {
-                        width: 76
-                        height: 28
-                        text: "Remove"
-                        enabled: !libraryRoot.scan.active
-                        onClicked: {
-                            libraryRoot.selectedSource = index
-                            libraryRoot.requestRemove(modelData)
-                        }
-                    }
-                }
-            }
-        }
-
-        Rectangle {
-            id: sourceSafety
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.margins: 14
-            height: 74
-            radius: 7
-            color: "#091827"
-            border.color: line
-            border.width: 1
-
-            Text {
-                anchors.fill: parent
-                anchors.margins: 11
-                text: "ChannelOS references your files in place.\nRemoving a source never deletes the originals."
-                color: textSecondary
-                font.pixelSize: 11
-                wrapMode: Text.WordWrap
-            }
-        }
-    }
-
-    Rectangle {
-        id: mediaPanel
-        anchors.left: sourceRail.right
-        anchors.right: detailsPanel.left
-        anchors.top: header.bottom
-        anchors.bottom: footer.top
-        color: "#071421"
-        border.color: line
-        border.width: 1
-
-        Row {
-            id: mediaHeading
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
+            anchors.top: railClock.bottom
             anchors.leftMargin: 20
             anchors.rightMargin: 20
-            anchors.topMargin: 18
-            height: 30
+            anchors.topMargin: 26
+            spacing: 7
 
-            Text {
-                text: query.length ? "SEARCH RESULTS" : "OWNED MEDIA"
-                color: accentBright
-                font.pixelSize: 13
-                font.weight: Font.Bold
-                font.letterSpacing: 2
-            }
-            Item { width: 18; height: 1 }
-            Text {
-                text: filteredItems.length + " / " + allItems.length
-                color: textSecondary
-                font.pixelSize: 13
-            }
-        }
+            Repeater {
+                model: [
+                    { label: "Home", action: "home" },
+                    { label: "Guide", action: "guide" },
+                    { label: "Library / On Demand", action: "library" },
+                    { label: "Search", action: "search" },
+                    { label: "Channels", action: "channels" },
+                    { label: "Manage Sources", action: "sources" }
+                ]
 
-        ListView {
-            id: mediaList
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: mediaHeading.bottom
-            anchors.bottom: parent.bottom
-            anchors.margins: 14
-            spacing: 6
-            clip: true
-            model: libraryRoot.filteredItems
-            currentIndex: libraryRoot.selectedMedia
-            boundsBehavior: Flickable.StopAtBounds
-
-            delegate: Rectangle {
-                width: mediaList.width
-                height: 76
-                radius: 7
-                color: index === libraryRoot.selectedMedia ? "#12396a" : "#0a1a2b"
-                border.color: index === libraryRoot.selectedMedia ? accentBright : "#17324a"
-                border.width: index === libraryRoot.selectedMedia ? 2 : 1
-
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: {
-                        libraryRoot.selectedMedia = index
-                        libraryRoot.forceActiveFocus()
-                    }
-                    onDoubleClicked: {
-                        libraryRoot.selectedMedia = index
-                        libraryRoot.playSelected()
-                    }
-                }
-
-                Column {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: 16
-                    anchors.rightMargin: 16
-                    spacing: 5
+                delegate: Rectangle {
+                    id: navDelegate
+                    required property var modelData
+                    width: navigationItems.width
+                    height: 48
+                    radius: 6
+                    color: modelData.action === "library" ? "#103568"
+                           : navMouse.containsMouse ? "#0d2744" : "transparent"
+                    border.color: modelData.action === "library"
+                                  ? libraryRoot.accentBright : "transparent"
+                    border.width: modelData.action === "library" ? 1 : 0
 
                     Text {
-                        text: modelData.title
-                        color: textPrimary
-                        font.pixelSize: 17
-                        font.weight: index === libraryRoot.selectedMedia ? Font.DemiBold : Font.Normal
-                        width: parent.width
-                        elide: Text.ElideRight
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 17
+                        text: navDelegate.modelData.label
+                        color: navDelegate.modelData.action === "library"
+                               ? libraryRoot.textPrimary : libraryRoot.textSecondary
+                        font.pixelSize: 16
+                        font.weight: navDelegate.modelData.action === "library"
+                                     ? Font.DemiBold : Font.Normal
                     }
-                    Row {
-                        spacing: 14
-                        Text { text: libraryRoot.formatDuration(modelData.durationSeconds); color: textSecondary; font.pixelSize: 12 }
-                        Text { text: modelData.containerFormat; color: accentBright; font.pixelSize: 12 }
-                        Text { text: modelData.sourceName; color: textSecondary; font.pixelSize: 12 }
+
+                    MouseArea {
+                        id: navMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: {
+                            if (navDelegate.modelData.action === "home")
+                                libraryRoot.hostWindow.screen = "home"
+                            else if (navDelegate.modelData.action === "guide") {
+                                channelOS.refresh()
+                                libraryRoot.hostWindow.screen = "guide"
+                            } else if (navDelegate.modelData.action === "search")
+                                searchField.forceActiveFocus()
+                            else if (navDelegate.modelData.action === "channels") {
+                                channelOS.refreshBroadcaster()
+                                libraryRoot.hostWindow.screen = "broadcaster"
+                            } else if (navDelegate.modelData.action === "sources")
+                                libraryRoot.openManager()
+                        }
                     }
                 }
             }
         }
-
-        Column {
-            anchors.centerIn: parent
-            spacing: 10
-            visible: libraryRoot.filteredItems.length === 0
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: allItems.length === 0 ? "YOUR LIBRARY IS EMPTY" : "NO MATCHES"
-                color: textPrimary
-                font.pixelSize: 22
-                font.weight: Font.DemiBold
-            }
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: allItems.length === 0 ? "Add a media source to begin." : "Try a different search."
-                color: textSecondary
-                font.pixelSize: 14
-            }
-        }
-    }
-
-    Rectangle {
-        id: detailsPanel
-        anchors.right: parent.right
-        anchors.top: header.bottom
-        anchors.bottom: footer.top
-        width: Math.max(360, parent.width * 0.28)
-        color: "#091827"
-        border.color: line
-        border.width: 1
-
-        readonly property var item: libraryRoot.selectedItem()
 
         Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: 24
-            height: 190
-            radius: 10
-            gradient: Gradient {
-                GradientStop { position: 0.0; color: "#12304a" }
-                GradientStop { position: 1.0; color: "#08131f" }
-            }
-            border.color: accent
-            border.width: 1
-
-            Column {
-                anchors.centerIn: parent
-                spacing: 10
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: "OWNED MEDIA"
-                    color: accentBright
-                    font.pixelSize: 14
-                    font.letterSpacing: 3
-                }
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: detailsPanel.item.containerFormat || "MEDIA"
-                    color: textPrimary
-                    font.pixelSize: 34
-                    font.weight: Font.DemiBold
-                }
-            }
-        }
-
-        Column {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.topMargin: 238
-            anchors.leftMargin: 26
-            anchors.rightMargin: 26
-            spacing: 10
-
-            Text {
-                text: detailsPanel.item.title
-                color: textPrimary
-                font.pixelSize: 24
-                font.weight: Font.DemiBold
-                width: parent.width
-                elide: Text.ElideRight
-            }
-            Text {
-                text: libraryRoot.formatDuration(detailsPanel.item.durationSeconds)
-                      + "  •  " + libraryRoot.formatBytes(detailsPanel.item.sizeBytes)
-                      + "  •  " + detailsPanel.item.containerFormat
-                color: textSecondary
-                font.pixelSize: 13
-                width: parent.width
-            }
-            Rectangle { width: parent.width; height: 1; color: line }
-            Text { text: "SOURCE"; color: accentBright; font.pixelSize: 11; font.weight: Font.Bold; font.letterSpacing: 2 }
-            Text {
-                text: detailsPanel.item.sourceRoot
-                color: textSecondary
-                font.pixelSize: 13
-                width: parent.width
-                wrapMode: Text.WrapAnywhere
-                maximumLineCount: 3
-            }
-            Text { text: "FILE"; color: accentBright; font.pixelSize: 11; font.weight: Font.Bold; font.letterSpacing: 2 }
-            Text {
-                text: detailsPanel.item.fileName
-                color: textSecondary
-                font.pixelSize: 13
-                width: parent.width
-                elide: Text.ElideMiddle
-            }
-        }
-
-        Button {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
-            anchors.margins: 26
-            height: 52
-            enabled: Boolean(detailsPanel.item.assetId) && !libraryRoot.scan.active
-            text: "Play On Demand"
-            onClicked: libraryRoot.playSelected()
-        }
-    }
-
-    Rectangle {
-        id: footer
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        height: 58
-        color: "#06111e"
-        border.color: line
-        border.width: 1
-
-        Row {
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: 24
-            spacing: 28
-            Text { text: "UP/DOWN  Browse"; color: textSecondary; font.pixelSize: 13 }
-            Text { text: "ENTER  Play"; color: textSecondary; font.pixelSize: 13 }
-            Text { text: "A  Add Source"; color: textSecondary; font.pixelSize: 13 }
-            Text { text: "CTRL+F  Search"; color: textSecondary; font.pixelSize: 13 }
-            Text { text: "ESC  Home"; color: textSecondary; font.pixelSize: 13 }
-        }
-
-        Text {
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.rightMargin: 24
-            text: feedbackMessage
-            color: feedbackIsError ? danger : accentBright
-            font.pixelSize: 12
-            width: Math.min(520, parent.width * 0.38)
-            horizontalAlignment: Text.AlignRight
-            elide: Text.ElideRight
-        }
-    }
-
-    Rectangle {
-        anchors.fill: parent
-        visible: Boolean(scan.active)
-        color: "#b0050c15"
-        z: 200
-
-        Rectangle {
-            anchors.centerIn: parent
-            width: Math.min(680, parent.width * 0.62)
-            height: 300
-            radius: 12
-            color: panelRaised
-            border.color: accentBright
-            border.width: 2
+            anchors.margins: 22
+            height: 112
+            radius: 8
+            color: "#091827"
+            border.color: line
 
             Column {
                 anchors.fill: parent
-                anchors.margins: 30
-                spacing: 16
-
+                anchors.margins: 15
+                spacing: 7
                 Text {
-                    text: scan.phase === "cancelling" ? "CANCELLING LIBRARY SCAN" : "INDEXING MEDIA"
-                    color: accentBright
-                    font.pixelSize: 15
-                    font.weight: Font.Bold
-                    font.letterSpacing: 2
-                }
-                Text {
-                    text: scan.sourcePath || ""
+                    text: "OWNED LIBRARY"
                     color: textPrimary
-                    font.pixelSize: 17
-                    width: parent.width
-                    elide: Text.ElideMiddle
-                }
-                Text {
-                    text: scan.message || "Working…"
-                    color: textSecondary
-                    font.pixelSize: 14
-                }
-                Text {
-                    text: scan.fileName || ""
-                    color: textSecondary
                     font.pixelSize: 13
-                    width: parent.width
-                    elide: Text.ElideMiddle
+                    font.weight: Font.Bold
+                    font.letterSpacing: 1.5
+                }
+                Text {
+                    text: allItems.length + " media item" + (allItems.length === 1 ? "" : "s")
+                          + "  •  " + sources.length + " source" + (sources.length === 1 ? "" : "s")
+                    color: textSecondary
+                    font.pixelSize: 12
+                }
+                Text {
+                    text: libraryRoot.formatBytes(libraryRoot.libraryBytes()) + " indexed"
+                    color: accentBright
+                    font.pixelSize: 13
                 }
                 Rectangle {
                     width: parent.width
-                    height: 10
-                    radius: 5
-                    color: "#1c3348"
+                    height: 5
+                    radius: 3
+                    color: "#142b40"
                     Rectangle {
-                        width: parent.width * (Number(scan.total || 0) > 0
-                                              ? Math.max(0, Math.min(1, Number(scan.current || 0) / Number(scan.total)))
-                                              : 0)
+                        width: parent.width
                         height: parent.height
-                        radius: 5
-                        color: accentBright
+                        radius: 3
+                        color: accent
+                        opacity: allItems.length ? 0.75 : 0.18
                     }
-                }
-                Text {
-                    text: Number(scan.total || 0) > 0
-                          ? scan.current + " / " + scan.total
-                          : "Discovering…"
-                    color: textPrimary
-                    font.pixelSize: 13
-                }
-                Button {
-                    anchors.right: parent.right
-                    width: 150
-                    height: 42
-                    enabled: scan.phase !== "cancelling"
-                    text: scan.phase === "cancelling" ? "Cancelling…" : "Cancel Scan"
-                    onClicked: libraryRoot.setFeedback(channelOS.cancelMediaScan())
                 }
             }
         }
     }
 
-    Rectangle {
-        anchors.fill: parent
-        visible: libraryRoot.scanConfirmVisible
-        color: "#b8050c15"
-        z: 210
+    Item {
+        id: browseArea
+        anchors.left: navigationRail.right
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        visible: !libraryRoot.managerVisible
 
         Rectangle {
-            anchors.centerIn: parent
-            width: Math.min(700, parent.width * 0.64)
-            height: 330
-            radius: 12
-            color: panelRaised
-            border.color: accentBright
-            border.width: 2
+            anchors.fill: parent
+            gradient: Gradient {
+                GradientStop { position: 0.0; color: "#071728" }
+                GradientStop { position: 0.55; color: "#050d18" }
+                GradientStop { position: 1.0; color: "#050c15" }
+            }
+        }
+
+        Item {
+            id: browseHeader
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 118
 
             Column {
-                anchors.fill: parent
-                anchors.margins: 30
-                spacing: 14
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.leftMargin: 34
+                anchors.topMargin: 25
+                spacing: 5
                 Text {
-                    text: pendingScanExisting ? "RESCAN MEDIA SOURCE" : "ADD MEDIA SOURCE"
-                    color: accentBright
-                    font.pixelSize: 15
-                    font.weight: Font.Bold
-                    font.letterSpacing: 2
-                }
-                Text {
-                    text: pendingScanName
+                    text: "Library / On Demand"
                     color: textPrimary
-                    font.pixelSize: 23
+                    font.pixelSize: 29
                     font.weight: Font.DemiBold
-                    width: parent.width
-                    elide: Text.ElideRight
                 }
                 Text {
-                    text: pendingScanPath
-                    color: textSecondary
-                    font.pixelSize: 13
-                    width: parent.width
-                    elide: Text.ElideMiddle
-                }
-                Rectangle { width: parent.width; height: 1; color: line }
-                Text {
-                    text: "Found " + pendingScanCount + " supported media file"
-                          + (pendingScanCount === 1 ? "" : "s") + "."
-                    color: textPrimary
-                    font.pixelSize: 17
-                }
-                Text {
-                    text: "ChannelOS will hash and inspect these files in the background. The originals stay exactly where they are and are never modified."
+                    text: "Browse and play the media you own."
                     color: textSecondary
                     font.pixelSize: 14
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                }
-                Row {
-                    anchors.right: parent.right
-                    spacing: 12
-                    Button {
-                        width: 120
-                        height: 42
-                        text: "Cancel"
-                        onClicked: libraryRoot.scanConfirmVisible = false
-                    }
-                    Button {
-                        width: 170
-                        height: 42
-                        text: pendingScanExisting ? "Start Rescan" : "Index Source"
-                        onClicked: libraryRoot.startPendingScan()
-                    }
                 }
             }
-        }
-    }
 
-    Rectangle {
-        anchors.fill: parent
-        visible: libraryRoot.removeConfirmVisible
-        color: "#b8050c15"
-        z: 220
+            TextField {
+                id: searchField
+                anchors.right: manageButton.left
+                anchors.rightMargin: 12
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(310, parent.width * 0.28)
+                height: 44
+                placeholderText: "Search your library…"
+                placeholderTextColor: "#71869c"
+                color: textPrimary
+                text: libraryRoot.query
+                onTextChanged: libraryRoot.query = text
+                background: Rectangle {
+                    radius: 7
+                    color: panelRaised
+                    border.color: searchField.activeFocus ? accentBright : line
+                    border.width: searchField.activeFocus ? 2 : 1
+                }
+            }
+
+            Button {
+                id: manageButton
+                anchors.right: parent.right
+                anchors.rightMargin: 28
+                anchors.verticalCenter: parent.verticalCenter
+                width: 154
+                height: 44
+                text: "Manage Sources"
+                onClicked: libraryRoot.openManager()
+            }
+        }
 
         Rectangle {
-            anchors.centerIn: parent
-            width: Math.min(680, parent.width * 0.62)
-            height: 320
-            radius: 12
-            color: panelRaised
-            border.color: warning
-            border.width: 2
+            id: selectedBanner
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: browseHeader.bottom
+            anchors.leftMargin: 34
+            anchors.rightMargin: 28
+            height: 92
+            radius: 9
+            color: "#0a1b2d"
+            border.color: line
+            visible: Boolean(libraryRoot.selectedItem().assetId)
+
+            readonly property var item: libraryRoot.selectedItem()
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 7
+                radius: 4
+                color: accentBright
+            }
 
             Column {
-                anchors.fill: parent
-                anchors.margins: 30
-                spacing: 14
+                anchors.left: parent.left
+                anchors.right: playButton.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 24
+                anchors.rightMargin: 20
+                spacing: 5
                 Text {
-                    text: "REMOVE SOURCE FROM CHANNEL OS?"
-                    color: warning
-                    font.pixelSize: 15
-                    font.weight: Font.Bold
-                    font.letterSpacing: 2
-                }
-                Text {
-                    text: pendingRemoveName
+                    text: libraryRoot.normalizedTitle(selectedBanner.item)
                     color: textPrimary
-                    font.pixelSize: 23
+                    font.pixelSize: 21
                     font.weight: Font.DemiBold
                     width: parent.width
                     elide: Text.ElideRight
                 }
                 Text {
-                    text: pendingRemovePath
+                    text: libraryRoot.formatDuration(selectedBanner.item.durationSeconds)
+                          + "  •  " + String(selectedBanner.item.containerFormat || "MEDIA")
+                          + "  •  " + String(selectedBanner.item.sourceName || "Owned Media")
                     color: textSecondary
                     font.pixelSize: 13
                     width: parent.width
-                    elide: Text.ElideMiddle
+                    elide: Text.ElideRight
                 }
-                Rectangle { width: parent.width; height: 1; color: line }
-                Text {
-                    text: "This removes ChannelOS index entries only. Your original files and folders will not be deleted, moved, renamed, or modified."
-                    color: textPrimary
-                    font.pixelSize: 15
-                    width: parent.width
-                    wrapMode: Text.WordWrap
-                }
+            }
+
+            Button {
+                id: playButton
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 18
+                width: 172
+                height: 44
+                text: "Play On Demand"
+                onClicked: libraryRoot.playSelected()
+            }
+        }
+
+        ListView {
+            id: shelvesList
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: selectedBanner.visible ? selectedBanner.bottom : browseHeader.bottom
+            anchors.bottom: browseFooter.top
+            anchors.leftMargin: 34
+            anchors.rightMargin: 0
+            anchors.topMargin: 14
+            anchors.bottomMargin: 8
+            clip: true
+            spacing: 13
+            model: libraryRoot.shelves
+            currentIndex: libraryRoot.selectedShelf
+            boundsBehavior: Flickable.StopAtBounds
+
+            delegate: Item {
+                id: shelfDelegate
+                required property int index
+                required property var modelData
+                property int shelfIndex: index
+                property var shelfData: modelData
+                width: shelvesList.width
+                height: shelfData.featured ? 222 : 179
+                property alias cardListView: cardList
+
                 Row {
+                    id: shelfHeading
+                    anchors.left: parent.left
                     anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: 33
                     spacing: 12
-                    Button {
-                        width: 120
-                        height: 42
-                        text: "Keep Source"
-                        onClicked: libraryRoot.removeConfirmVisible = false
+                    Text {
+                        text: shelfDelegate.shelfData.title
+                        color: textPrimary
+                        font.pixelSize: 16
+                        font.weight: Font.DemiBold
                     }
-                    Button {
-                        width: 190
-                        height: 42
-                        text: "Remove From Library"
-                        onClicked: libraryRoot.removePendingSource()
+                    Text {
+                        text: shelfDelegate.shelfData.subtitle
+                        color: textSecondary
+                        font.pixelSize: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+
+                ListView {
+                    id: cardList
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: shelfHeading.bottom
+                    anchors.bottom: parent.bottom
+                    orientation: ListView.Horizontal
+                    spacing: 11
+                    clip: true
+                    model: shelfDelegate.shelfData.items || []
+                    currentIndex: shelfDelegate.shelfIndex === libraryRoot.selectedShelf
+                                  ? libraryRoot.selectedColumn : -1
+                    boundsBehavior: Flickable.StopAtBounds
+
+                    delegate: Rectangle {
+                        id: mediaCard
+                        required property int index
+                        required property var modelData
+                        width: shelfDelegate.shelfData.featured ? 304 : 232
+                        height: cardList.height - 3
+                        radius: 8
+                        property bool selected: shelfDelegate.shelfIndex === libraryRoot.selectedShelf
+                                                && index === libraryRoot.selectedColumn
+                        property var colors: libraryRoot.cardColor(modelData, index)
+                        color: colors[0]
+                        border.color: selected ? accentBright : "#243d55"
+                        border.width: selected ? 3 : 1
+
+                        gradient: Gradient {
+                            GradientStop { position: 0.0; color: mediaCard.colors[0] }
+                            GradientStop { position: 0.68; color: mediaCard.colors[1] }
+                            GradientStop { position: 1.0; color: "#050a11" }
+                        }
+
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            height: parent.height * 0.56
+                            color: "transparent"
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.margins: 13
+                                text: String(mediaCard.modelData.containerFormat || "MEDIA").toUpperCase()
+                                color: "#d9ecff"
+                                opacity: 0.78
+                                font.pixelSize: mediaCard.width > 260 ? 22 : 17
+                                font.weight: Font.Bold
+                                font.letterSpacing: 2.5
+                            }
+
+                            Text {
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                anchors.margins: 12
+                                text: "▶"
+                                color: accentBright
+                                opacity: mediaCard.selected ? 1.0 : 0.58
+                                font.pixelSize: 22
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: parent.height * 0.48
+                            color: "#c9060c14"
+
+                            Column {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                anchors.margins: 11
+                                spacing: 4
+                                Text {
+                                    text: libraryRoot.normalizedTitle(mediaCard.modelData)
+                                    color: textPrimary
+                                    font.pixelSize: mediaCard.width > 260 ? 15 : 13
+                                    font.weight: Font.DemiBold
+                                    width: parent.width
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    text: libraryRoot.formatDuration(mediaCard.modelData.durationSeconds)
+                                          + "  •  " + String(mediaCard.modelData.sourceName || "Owned Media")
+                                    color: textSecondary
+                                    font.pixelSize: 11
+                                    width: parent.width
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: {
+                                libraryRoot.selectCard(shelfDelegate.shelfIndex, mediaCard.index)
+                                libraryRoot.forceActiveFocus()
+                            }
+                            onDoubleClicked: {
+                                libraryRoot.selectCard(shelfDelegate.shelfIndex, mediaCard.index)
+                                libraryRoot.playSelected()
+                            }
+                        }
                     }
                 }
             }
         }
+
+        Column {
+            anchors.centerIn: shelvesList
+            spacing: 12
+            visible: shelves.length === 0
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: allItems.length === 0 ? "YOUR LIBRARY IS READY" : "NO MATCHES"
+                color: textPrimary
+                font.pixelSize: 24
+                font.weight: Font.DemiBold
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: allItems.length === 0
+                      ? "Add a media source and ChannelOS will build these shelves from your files."
+                      : "Try a different title, filename, source, or format."
+                color: textSecondary
+                font.pixelSize: 14
+            }
+            Button {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: allItems.length === 0
+                text: "Manage Media Sources"
+                onClicked: libraryRoot.openManager()
+            }
+        }
+
+        Rectangle {
+            id: browseFooter
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 50
+            color: "#06111e"
+            border.color: line
+
+            Row {
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 30
+                spacing: 24
+                Text { text: "ARROWS  Browse"; color: textSecondary; font.pixelSize: 12 }
+                Text { text: "ENTER  Play"; color: textSecondary; font.pixelSize: 12 }
+                Text { text: "CTRL+F  Search"; color: textSecondary; font.pixelSize: 12 }
+                Text { text: "M  Manage Sources"; color: textSecondary; font.pixelSize: 12 }
+                Text { text: "ESC  Home"; color: textSecondary; font.pixelSize: 12 }
+            }
+        }
     }
 
-    Timer {
-        id: feedbackTimer
-        interval: 5500
-        repeat: false
-        onTriggered: libraryRoot.feedbackMessage = ""
+    LibraryManagerScreen {
+        id: sourceManager
+        anchors.fill: parent
+        hostWindow: libraryRoot.hostWindow
+        browseHost: libraryRoot
+        active: libraryRoot.managerVisible
+        z: 100
     }
 }

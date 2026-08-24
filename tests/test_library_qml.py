@@ -156,13 +156,50 @@ def test_library_qml_instantiates_headlessly() -> None:
     item.setProperty("hostWindow", host)
     app.processEvents()
 
-    assert item.property("selectedMedia") == 0
-    assert item.property("selectedSource") == 0
-    assert item.property("feedbackMessage") == ""
+    assert item.property("selectedShelf") == 0
+    assert item.property("selectedColumn") == 0
+    assert item.property("managerVisible") is False
+    assert item.property("shelfCount") >= 2
 
     host.screen = "home"
     app.processEvents()
     assert host.screen == "home"
+
+    item.deleteLater()
+    app.processEvents()
+
+
+def test_library_manager_qml_instantiates_headlessly() -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    host = FakeHost()
+
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("channelOS", controller)
+
+    qml_path = (
+        Path(channelos.__file__).resolve().parent
+        / "qml"
+        / "LibraryManagerScreen.qml"
+    )
+    component = QQmlComponent(engine)
+    component.loadUrl(QUrl.fromLocalFile(str(qml_path)))
+
+    if component.isLoading():
+        app.processEvents()
+
+    errors = "\n".join(error.toString() for error in component.errors())
+    assert component.isReady(), errors
+
+    item = component.create(engine.rootContext())
+    assert item is not None, errors
+    item.setProperty("hostWindow", host)
+    item.setProperty("active", True)
+    app.processEvents()
+
+    assert item.property("selectedMedia") == 0
+    assert item.property("selectedSource") == 0
+    assert item.property("feedbackMessage") == ""
 
     item.deleteLater()
     app.processEvents()

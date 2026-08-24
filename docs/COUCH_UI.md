@@ -152,7 +152,19 @@ Library reads the canonical ChannelOS media index and now has an explicit source
 
 It can add, rescan, cancel scans, remove a source from the index without touching the files, search/sort indexed media, and launch On Demand playback by stable asset identity.
 
-The present three-pane management-oriented Library is an infrastructure step, not the final product-facing visual target. The intended consumer surface remains content-first: navigation rail, artwork/thumbnail shelves, Continue Watching, categories, and prominent media presentation with source/storage management moved into a secondary surface.
+The product-facing Library is now content-first. It presents a persistent
+navigation rail, a prominent selected-title banner, horizontal shelves over the
+real indexed collection, search, source-derived groupings, and duration-based
+long/short-form groupings. Until local artwork exists, deterministic branded
+media cards keep every indexed file browsable without pretending that external
+metadata has already been matched.
+
+The former three-pane Library remains available as the secondary **Manage
+Sources** surface. Adding, rescanning, and removing indexed roots therefore
+stays powerful without making storage administration the first thing a viewer
+sees. Continue Watching, Recently Added, and semantic movie/television shelves
+remain intentionally absent until ChannelOS stores the facts required to label
+them truthfully.
 
 On Demand uses a playback session separate from television scheduling.
 
@@ -203,7 +215,8 @@ Major remaining couch/release work includes:
 - richer Info behavior,
 - controller/remote abstraction,
 - Settings,
-- content-first Library visual pass,
+- complete artwork-backed content-first Library visual pass — the real shelf
+  layout and secondary source manager are in place; artwork remains,
 - artwork/video-thumbnail pipeline,
 - Continue Watching integration,
 - Library -> Add to Channel authoring flow,

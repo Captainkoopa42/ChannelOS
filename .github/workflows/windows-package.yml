@@ -1,0 +1,43 @@
+name: windows-package
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-x64:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: packaging/windows/requirements-build.txt
+
+      - name: Install locked packaging environment
+        run: |
+          python -m pip install -r packaging/windows/requirements-build.txt
+          python -m pip install -e . --no-deps
+
+      - name: Run automated tests
+        run: python -m pytest -q
+
+      - name: Build and audit portable package
+        run: python tools/windows/package_windows.py
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChannelOS-Windows-x64
+          path: dist/windows/ChannelOS-0.0.2-windows-x64.zip
+          if-no-files-found: error
+          compression-level: 0

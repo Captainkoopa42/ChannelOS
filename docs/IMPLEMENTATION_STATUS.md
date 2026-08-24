@@ -2,7 +2,7 @@
 
 **Snapshot:** August 24, 2026
 **Status:** Working local alpha  
-**Active implementation:** First-release couch and controller experience
+**Active implementation:** First-release Windows packaging and release experience
 **Canonical product definition:** [MASTER_DESIGN.md](MASTER_DESIGN.md)
 
 This document records implementation progress against the original ChannelOS design.
@@ -63,7 +63,7 @@ The largest remaining first-release work is now product experience and release h
 
 Estimated completion:
 
-**approximately 84-86%**
+**approximately 86-88%**
 
 This is the focused first-release experience: local ownership/indexing, persistent channels, Guide, live playback, television controls, Library / On Demand, minimum broadcaster/channel management, normal-user packaging, controller/remote polish, settings, and release hardening.
 
@@ -116,7 +116,7 @@ This is a design-audit estimate, not a mathematical quality score. Implementatio
 | Library is separate active-selection mode | Content-first shelves, local artwork, management surface, and durable Continue Watching implemented | High |
 | Library and channels share one media index | Implemented | Very high |
 | On Demand does not contaminate channel scheduling | Implemented with separate playback session | Very high |
-| Couch-first presentation | Keyboard/D-pad plus native Windows XInput implementation; hardware gate pending | High |
+| Couch-first presentation | Keyboard/D-pad plus native Windows XInput implementation; 8BitDo/XInput hardware validated | High |
 | Functional Home destinations | Implemented and real-machine tested | High |
 | Persistent Settings | Basic controls and performance/cache profiles merged and Windows validated | High |
 | User is broadcaster | Safe Channel Builder MVP implemented | High |
@@ -153,6 +153,8 @@ Implemented:
   consumer-remote-key translation,
 - optional native Windows XInput discovery, hot-plug handling, analog
   navigation/volume, and standard gamepad transport bindings,
+- settings-synchronized keyboard/controller hints, validated with an 8BitDo
+  Ultimate controller in Xbox/XInput mode,
 - pause / resume,
 - rewind and skip forward,
 - LIVE return,
@@ -166,9 +168,9 @@ Implemented:
 
 Still needed:
 
-- native controller/Steam Input real-machine validation,
-- startup/resume polish,
-- release hardening.
+- SteamOS/Steam Input platform validation beyond Windows XInput emulation,
+- packaged Windows real-machine validation,
+- startup/resume polish and release hardening.
 
 Estimated mode completion:
 

@@ -89,7 +89,8 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 - [x] Full-screen live view
 - [x] Remote/controller input abstraction — transport-neutral commands,
   keyboard/media keys, and a dependency-free Windows XInput hot-plug adapter
-  are implemented; Windows hardware and SteamOS validation remain
+  are implemented and validated with an 8BitDo Ultimate in XInput mode;
+  SteamOS validation remains
 - [ ] Open ChannelOS control-intent protocol / IPC boundary
 - [x] Numeric direct tuning in the couch UI
 - [x] Channel up/down
@@ -111,6 +112,8 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 - [ ] SteamOS/controller compatibility validation
 - [ ] Autostart and crash recovery
 - [ ] Packaged playback runtime so ordinary users do not configure libVLC manually
+  — audited one-folder builder, pinned LGPL runtime, frozen BOM, and Windows CI
+  are implemented; real-machine package validation remains
 
 Additional Phase 3 work already validated:
 
@@ -122,7 +125,7 @@ Additional Phase 3 work already validated:
 - [x] Broadcast vs. Viewer Clock presentation
 - [x] Readable short-form Guide aggregation without modifying schedule truth
 
-**Current state:** ordinary viewing already behaves like television on the Windows development machine. Native Xbox-compatible controller input is implemented behind the same control-intent boundary and awaits the Windows hardware gate. The remaining Phase 3 work is increasingly controller/platform validation, packaging, and release hardening rather than proof that the core experience functions.
+**Current state:** ordinary viewing already behaves like television on the Windows development machine. Native Xbox-compatible controller input is implemented behind the same control-intent boundary and has passed its Windows hardware gate. The remaining Phase 3 work is increasingly SteamOS/platform validation, packaging, and release hardening rather than proof that the core experience functions.
 
 **Exit target:** A keyboard and mouse are optional for ordinary viewing, while pause/seek/volume controls remain under the viewer's command. The same couch UI works as a normal desktop application and as a Steam/SteamOS-launched application.
 

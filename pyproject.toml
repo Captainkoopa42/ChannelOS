@@ -24,6 +24,11 @@ ui = [
 dev = [
     "pytest>=8,<9",
 ]
+package = [
+    "PyInstaller>=6.22,<7",
+    "PySide6>=6.8,<7",
+    "python-vlc>=3.0.0",
+]
 
 [project.scripts]
 channelos = "channelos.cli:main"

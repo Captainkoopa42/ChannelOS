@@ -25,6 +25,7 @@ and release gate.
 | python-vlc | `>=3.0.0` | Optional Python binding for playback | LGPL-2.1-or-later for the generated module | <https://pypi.org/project/python-vlc/> |
 | PySide6 / Qt for Python | `>=6.8,<7` | Optional Qt Quick couch interface | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or a commercial Qt license | <https://pypi.org/project/PySide6/> |
 | pytest | `>=8,<9` | Development and test dependency; not required at runtime | MIT | <https://pypi.org/project/pytest/> |
+| PyInstaller | `>=6.22,<7` | Windows one-folder packaging tool | GPL-2.0-only with the PyInstaller bootloader exception; some files Apache-2.0 | <https://pyinstaller.org/en/stable/license.html> |
 
 ChannelOS intends to use PySide6 under its LGPLv3 option and limits itself to
 Qt modules available under compatible LGPL terms. Adding a GPL-only Qt module
@@ -33,6 +34,12 @@ requires a new distribution and compatibility review.
 Python package installers may resolve additional transitive dependencies. Each
 transitive dependency remains subject to its own license. Exact packaged
 versions and files will be recorded in the release bill of materials.
+
+PyInstaller's documented bootloader exception permits generated application
+bundles to be shipped under the application's license subject to the licenses
+of the bundled dependencies. ChannelOS still records the exact build-tool
+version and copies license material found in the build environment into the
+portable package for transparency.
 
 ## External native tools and runtimes
 

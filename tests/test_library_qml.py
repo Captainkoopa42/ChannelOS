@@ -56,6 +56,7 @@ class FakeChannelOS(QObject):
                     "durationSeconds": 30.0,
                     "sizeBytes": 1234,
                     "containerFormat": "MP4",
+                    "artworkUrl": "",
                 }
             ],
             "sources": [
@@ -127,6 +128,10 @@ class FakeChannelOS(QObject):
     @Slot(str, result="QVariantMap")
     def playLibraryAsset(self, asset_id):
         return {"ok": True, "message": "playing"}
+
+    @Slot(str, result=str)
+    def requestLibraryArtwork(self, asset_id):
+        return ""
 
 
 def test_library_qml_instantiates_headlessly() -> None:

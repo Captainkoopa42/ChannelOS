@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import queue
 import sys
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -9,6 +11,7 @@ from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
 
+from .artwork import MediaArtworkCache
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
 from .guide import GuideError, GuideService
@@ -28,6 +31,7 @@ class CouchController(QObject):
     playbackChanged = Signal()
     homeTelevisionChanged = Signal()
     libraryChanged = Signal()
+    libraryArtworkResolved = Signal(str, str)
     onDemandChanged = Signal()
 
     def __init__(
@@ -39,6 +43,23 @@ class CouchController(QObject):
         super().__init__()
         self._service = service
         self._library = library
+        self._artwork_cache = MediaArtworkCache(
+            self._library.database_path.parent / "artwork"
+        )
+        self._artwork_urls: dict[str, str] = {}
+        self._artwork_pending: set[str] = set()
+        self._artwork_unavailable: set[str] = set()
+        self._artwork_queue: queue.Queue[
+            tuple[str, Path, float]
+        ] = queue.Queue()
+        self._artwork_worker: threading.Thread | None = None
+        self._artwork_publish_timer = QTimer(self)
+        self._artwork_publish_timer.setSingleShot(True)
+        self._artwork_publish_timer.setInterval(80)
+        self._artwork_publish_timer.timeout.connect(
+            self._publish_library_artwork
+        )
+        self.libraryArtworkResolved.connect(self._accept_library_artwork)
         self._actions = CouchActions(service, television)
         self._on_demand = OnDemandSession()
         self._library_media: list[IndexedMedia] = []
@@ -95,6 +116,10 @@ class CouchController(QObject):
                     ),
                     "sizeBytes": int(media.asset.size_bytes),
                     "containerFormat": str(container).upper(),
+                    "artworkUrl": self._artwork_urls.get(
+                        media.asset.asset_id,
+                        "",
+                    ),
                 }
             )
 
@@ -149,6 +174,84 @@ class CouchController(QObject):
 
     @Slot()
     def refreshLibrary(self) -> None:
+        # A user may have added a sidecar image since the previous visit. Retry
+        # unresolved visible cards on an explicit Library refresh.
+        self._artwork_cache.clear_discovery_cache()
+        self._artwork_unavailable.clear()
+        self._library_snapshot = self._build_library_snapshot()
+        self.libraryChanged.emit()
+
+    @Slot(str, result=str)
+    def requestLibraryArtwork(self, asset_id: str) -> str:
+        target = str(asset_id)
+        known = self._artwork_urls.get(target, "")
+        if known:
+            return known
+        if target in self._artwork_pending or target in self._artwork_unavailable:
+            return ""
+
+        media = next(
+            (
+                item
+                for item in self._library_media
+                if item.asset.asset_id == target
+            ),
+            None,
+        )
+        if media is None:
+            self._artwork_unavailable.add(target)
+            return ""
+
+        self._artwork_pending.add(target)
+        self._artwork_queue.put(
+            (
+                target,
+                media.location.path,
+                float(media.asset.duration_seconds or 0.0),
+            )
+        )
+        if self._artwork_worker is None:
+            self._artwork_worker = threading.Thread(
+                target=self._resolve_library_artwork,
+                name="channelos-artwork",
+                daemon=True,
+            )
+            self._artwork_worker.start()
+        return ""
+
+    def _resolve_library_artwork(self) -> None:
+        while True:
+            asset_id, media_path, duration = self._artwork_queue.get()
+            try:
+                resolved = self._artwork_cache.resolve(
+                    media_path,
+                    asset_id,
+                    duration,
+                )
+                self.libraryArtworkResolved.emit(
+                    asset_id,
+                    "" if resolved is None else str(resolved),
+                )
+            except Exception:
+                # Artwork is optional presentation. A failure must never take
+                # down Library browsing or replace the established fallback.
+                self.libraryArtworkResolved.emit(asset_id, "")
+            finally:
+                self._artwork_queue.task_done()
+
+    @Slot(str, str)
+    def _accept_library_artwork(self, asset_id: str, resolved_path: str) -> None:
+        self._artwork_pending.discard(asset_id)
+        if resolved_path:
+            self._artwork_urls[asset_id] = QUrl.fromLocalFile(
+                resolved_path
+            ).toString()
+            self._artwork_publish_timer.start()
+        else:
+            self._artwork_unavailable.add(asset_id)
+
+    @Slot()
+    def _publish_library_artwork(self) -> None:
         self._library_snapshot = self._build_library_snapshot()
         self.libraryChanged.emit()
 

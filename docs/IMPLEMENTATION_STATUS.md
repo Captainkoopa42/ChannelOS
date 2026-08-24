@@ -190,6 +190,8 @@ Implemented:
 - shared-asset preservation,
 - source/channel dependency protection,
 - search and sort,
+- content-first navigation with expandable horizontal shelves,
+- local sidecar artwork and lazy video-thumbnail caching with a no-image fallback,
 - stable-asset On Demand launch,
 - On Demand play/pause/seek,
 - natural-EOF recovery,
@@ -197,9 +199,7 @@ Implemented:
 
 Still needed for the intended consumer Library:
 
-- content-first navigation and presentation,
-- artwork/video thumbnails,
-- horizontal shelves/cards,
+- richer selected-title artwork/backdrop presentation,
 - Continue Watching,
 - Recently Added/categories,
 - richer title/media-type model,
@@ -212,7 +212,7 @@ Still needed for the intended consumer Library:
 Estimated completion:
 
 - **Library backend/source lifecycle: 80-85%**
-- **consumer Library experience: 35-40%**
+- **consumer Library experience: 50-55%**
 
 ### 4. Broadcaster / Management
 
@@ -284,16 +284,14 @@ When On Demand temporarily owns the presentation surface, ChannelOS may stop the
 
 ## Important remaining first-release work
 
-1. Content-first Library visual pass.
-2. Artwork/video-thumbnail cache and card/shelf browsing.
-3. Continue Watching / persistent resume state.
-4. Library -> Add to Channel authoring flow.
-5. Controller/remote abstraction and Settings.
-6. Normal-user libVLC/runtime packaging.
-7. Windows installer / repeatable package.
-8. Linux and SteamOS validation.
-9. License and third-party notice review.
-10. Crash recovery, clean-machine testing, and ordinary-user hardening.
+1. Continue Watching / persistent resume state.
+2. Library -> Add to Channel authoring flow.
+3. Controller/remote abstraction and Settings.
+4. Normal-user libVLC/runtime packaging.
+5. Windows installer / repeatable package.
+6. Linux and SteamOS validation.
+7. License and third-party notice review.
+8. Crash recovery, clean-machine testing, and ordinary-user hardening.
 
 ---
 

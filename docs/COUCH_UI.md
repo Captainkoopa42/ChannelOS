@@ -155,9 +155,17 @@ It can add, rescan, cancel scans, remove a source from the index without touchin
 The product-facing Library is now content-first. It presents a persistent
 navigation rail, a prominent selected-title banner, horizontal shelves over the
 real indexed collection, search, source-derived groupings, and duration-based
-long/short-form groupings. Until local artwork exists, deterministic branded
-media cards keep every indexed file browsable without pretending that external
-metadata has already been matched.
+long/short-form groupings. Cards prefer nearby user-owned sidecar images and
+lazily cached video-frame thumbnails. When no valid image is available, the
+deterministic branded format card remains in place, so every indexed file stays
+browsable without pretending that external metadata has already been matched.
+
+Artwork work is local and demand-driven. ChannelOS checks only cards that become
+visible, processes them one at a time, leaves original media and sidecar files
+unchanged, and stores generated JPEG thumbnails beside the Library database in
+the `artwork` cache directory. Exact filename artwork wins over shared names
+such as `poster`, `cover`, `folder`, or `fanart`; generated frames are used only
+when no sidecar exists and FFmpeg is available.
 
 The shelves use an accordion presentation so only one collection needs to be
 open at a time. A viewer can select compact shelf headers with Up/Down, expand
@@ -222,9 +230,7 @@ Major remaining couch/release work includes:
 - richer Info behavior,
 - controller/remote abstraction,
 - Settings,
-- complete artwork-backed content-first Library visual pass — the real shelf
-  layout and secondary source manager are in place; artwork remains,
-- artwork/video-thumbnail pipeline,
+- selected-title backdrop and richer artwork presentation polish,
 - Continue Watching integration,
 - Library -> Add to Channel authoring flow,
 - normal-user playback-runtime packaging,

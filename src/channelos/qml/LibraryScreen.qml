@@ -839,6 +839,9 @@ Item {
                         property bool selected: shelfDelegate.shelfIndex === libraryRoot.selectedShelf
                                                 && index === libraryRoot.selectedColumn
                         property var colors: libraryRoot.cardColor(modelData, index)
+                        property string artworkUrl: String(modelData.artworkUrl || "")
+                        property bool artworkReady: artworkImage.status === Image.Ready
+                        property bool shelfOpen: shelfDelegate.expanded
                         color: colors[0]
                         border.color: selected ? accentBright : "#243d55"
                         border.width: selected ? 3 : 1
@@ -849,12 +852,51 @@ Item {
                             GradientStop { position: 1.0; color: "#050a11" }
                         }
 
+                        function requestArtwork() {
+                            if (!shelfDelegate.expanded || artworkUrl.length)
+                                return
+                            if (channelOS && typeof channelOS.requestLibraryArtwork === "function") {
+                                var resolved = channelOS.requestLibraryArtwork(
+                                            String(mediaCard.modelData.assetId || ""))
+                                if (resolved)
+                                    artworkUrl = String(resolved)
+                            }
+                        }
+
+                        Component.onCompleted: requestArtwork()
+                        onShelfOpenChanged: requestArtwork()
+
                         Rectangle {
                             anchors.left: parent.left
                             anchors.right: parent.right
                             anchors.top: parent.top
                             height: parent.height * 0.56
                             color: "transparent"
+
+                            Image {
+                                id: artworkImage
+                                anchors.fill: parent
+                                source: mediaCard.artworkUrl
+                                sourceSize.width: 640
+                                fillMode: Image.PreserveAspectCrop
+                                asynchronous: true
+                                autoTransform: true
+                                opacity: status === Image.Ready ? 1.0 : 0.0
+
+                                Behavior on opacity {
+                                    NumberAnimation { duration: 180 }
+                                }
+                            }
+
+                            Rectangle {
+                                anchors.fill: parent
+                                visible: mediaCard.artworkReady
+                                gradient: Gradient {
+                                    GradientStop { position: 0.0; color: "#05000000" }
+                                    GradientStop { position: 0.72; color: "#18000000" }
+                                    GradientStop { position: 1.0; color: "#9a050a11" }
+                                }
+                            }
 
                             Text {
                                 anchors.left: parent.left
@@ -863,6 +905,7 @@ Item {
                                 width: parent.width - 26
                                 elide: Text.ElideRight
                                 text: libraryRoot.friendlyFormat(mediaCard.modelData)
+                                visible: !mediaCard.artworkReady
                                 color: "#d9ecff"
                                 opacity: 0.78
                                 font.pixelSize: mediaCard.width > 260 ? 22 : 17

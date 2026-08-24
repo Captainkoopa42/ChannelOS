@@ -75,7 +75,10 @@ Visual styling is themeable presentation, not a platform dependency.
 
 ### Open-source release gate
 
-The project intends to be open source, but the repository currently has no selected software license. Selecting and adding an appropriate open-source license, plus completing third-party dependency/license review, is a release gate before public distribution.
+ChannelOS source is licensed under the Mozilla Public License 2.0. Public
+packaging remains gated on the frozen dependency bill of materials,
+third-party notice/source obligations, and the verification rules in
+`docs/DISTRIBUTION.md`.
 
 ## Consequences
 

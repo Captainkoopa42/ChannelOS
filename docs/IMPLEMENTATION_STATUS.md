@@ -314,7 +314,9 @@ When On Demand temporarily owns the presentation surface, ChannelOS may stop the
 4. Normal-user libVLC/runtime packaging.
 5. Windows installer / repeatable package.
 6. Linux and SteamOS validation.
-7. License and third-party notice review.
+7. Frozen packaged-dependency bill of materials and compliance verification
+   under `docs/DISTRIBUTION.md` (the MPL-2.0 source license and development
+   notices are complete).
 8. Crash recovery, clean-machine testing, and ordinary-user hardening.
 
 Library -> Add to Channel remains defined by the Channel Studio concept and is

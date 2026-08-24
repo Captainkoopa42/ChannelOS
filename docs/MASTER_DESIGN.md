@@ -52,7 +52,10 @@ Traditional cable gives the broadcaster control over the schedule. Streaming giv
 
 > **The user is not merely the audience. The user is the broadcaster.**
 
-ChannelOS is intended to become open-source software. The repository currently has not yet selected an open-source license, so that legal release step remains explicit rather than assumed.
+ChannelOS is open-source software under the Mozilla Public License 2.0.
+Third-party components retain their own licenses, and packaged releases remain
+gated on the exact dependency and distribution review defined in
+`docs/DISTRIBUTION.md`.
 
 ---
 
@@ -1026,8 +1029,8 @@ A public living-room launch test adds:
 
 Before a public release, especially a Steam launch, ChannelOS must deliberately complete:
 
-- selection and addition of an appropriate open-source software license,
-- third-party dependency/license review,
+- preservation of the selected Mozilla Public License 2.0 notices,
+- a frozen third-party dependency bill of materials and license review,
 - bundled libVLC license/notice compliance,
 - repeatable Windows and Linux packaging,
 - SteamOS/controller validation,
@@ -1035,7 +1038,9 @@ Before a public release, especially a Steam launch, ChannelOS must deliberately 
 - privacy/network behavior review,
 - clear user-facing handling of media sources and permissions.
 
-The project should not call itself legally open source merely because the source is visible. The intended license must actually be selected and published.
+The project is open source because MPL-2.0 is selected and published with the
+source. That does not by itself certify a packaged release: the exact bundled
+third-party files must still pass the distribution review.
 
 ---
 

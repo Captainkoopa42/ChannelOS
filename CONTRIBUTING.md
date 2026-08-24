@@ -40,6 +40,11 @@ Changes to the channel-definition format should update the corresponding specifi
 
 ## Release and licensing
 
-ChannelOS is intended to become open source, but the repository does not yet contain a selected open-source license. Do not describe a build as an open-source release until the project owner has deliberately selected and added the license.
+ChannelOS source is licensed under the Mozilla Public License 2.0. Contributions
+submitted to this repository must be provided under MPL-2.0 unless a separate
+written arrangement is made with the project owner. Preserve existing license
+and copyright notices.
 
-Public packaging work must also account for third-party runtime licenses and notices, including any bundled playback components.
+Public packaging work must also follow `docs/DISTRIBUTION.md` and account for
+third-party runtime licenses and notices, including every bundled playback
+component.

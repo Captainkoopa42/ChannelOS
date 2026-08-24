@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 from .probe import MediaProbeResult
+from .storage import (
+    SQLITE_BUSY_TIMEOUT_MS,
+    configure_sqlite_connection,
+    prepare_database,
+)
 
 SCHEMA_VERSION = 2
 HASH_CHUNK_SIZE = 4 * 1024 * 1024
@@ -22,6 +27,19 @@ def normalize_path(path: str | Path) -> tuple[str, str]:
     resolved = Path(path).expanduser().resolve(strict=False)
     text = str(resolved)
     return text, os.path.normcase(os.path.normpath(text))
+
+
+def path_key_is_within(candidate_key: str, parent_key: str) -> bool:
+    """Compare normalized path keys without assuming the host path separator."""
+
+    if candidate_key == parent_key:
+        return True
+    boundary = parent_key.rstrip("/\\")
+    return (
+        candidate_key.startswith(boundary)
+        and len(candidate_key) > len(boundary)
+        and candidate_key[len(boundary)] in "/\\"
+    )
 
 
 def sha256_file(
@@ -106,15 +124,25 @@ class MediaLibrary:
     def __init__(self, database_path: str | Path) -> None:
         self.database_path = Path(database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        prepare_database(
+            self.database_path,
+            meta_table="library_meta",
+            supported_version=SCHEMA_VERSION,
+        )
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             self.database_path,
+            timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000,
             factory=_ClosingSQLiteConnection,
         )
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
+        configure_sqlite_connection(
+            connection,
+            self.database_path,
+            foreign_keys=True,
+        )
         return connection
 
     def _initialize(self) -> None:
@@ -193,7 +221,11 @@ class MediaLibrary:
                 """
             )
             connection.execute(
-                "INSERT OR REPLACE INTO library_meta(key, value) VALUES('schema_version', ?)",
+                """
+                INSERT INTO library_meta(key, value)
+                VALUES('schema_version', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
                 (str(SCHEMA_VERSION),),
             )
 
@@ -485,6 +517,89 @@ class MediaLibrary:
                 """
             ).fetchall()
         return [self._indexed_from_row(row) for row in rows]
+
+    def list_online_media_for_source(
+        self,
+        source_root: str | Path,
+    ) -> list[IndexedMedia]:
+        """Load online rows beneath one channel source without scanning all media.
+
+        A channel may name the exact folder that was indexed, a subfolder inside
+        an indexed root, or a parent containing multiple indexed roots. Resolve
+        the small root list first, then query only matching location rows.
+        """
+
+        _, requested_key = normalize_path(source_root)
+        with self.connect() as connection:
+            root_rows = connection.execute(
+                """
+                SELECT DISTINCT source_root_key
+                FROM media_locations
+                WHERE online = 1
+                """
+            ).fetchall()
+            candidate_keys = [
+                str(row["source_root_key"])
+                for row in root_rows
+                if (
+                    path_key_is_within(
+                        requested_key,
+                        str(row["source_root_key"]),
+                    )
+                    or path_key_is_within(
+                        str(row["source_root_key"]),
+                        requested_key,
+                    )
+                )
+            ]
+            if not candidate_keys:
+                return []
+
+            placeholders = ", ".join("?" for _ in candidate_keys)
+            rows = connection.execute(
+                f"""
+                SELECT
+                    a.asset_id, a.content_sha256, a.size_bytes AS asset_size_bytes,
+                    a.duration_seconds, a.container_format,
+                    l.path, l.path_key, l.source_root, l.online
+                FROM media_locations l
+                JOIN media_assets a ON a.asset_id = l.asset_id
+                WHERE
+                    l.online = 1
+                    AND l.source_root_key IN ({placeholders})
+                    AND (
+                        l.path_key = ?
+                        OR (
+                            substr(l.path_key, 1, ?) = ?
+                            AND substr(l.path_key, ?, 1) IN ('/', '\\')
+                        )
+                    )
+                ORDER BY l.path_key
+                """,
+                (
+                    *candidate_keys,
+                    requested_key,
+                    len(requested_key),
+                    requested_key,
+                    len(requested_key) + 1,
+                ),
+            ).fetchall()
+        return [self._indexed_from_row(row) for row in rows]
+
+    def list_online_source_roots(self) -> tuple[Path, ...]:
+        """Return distinct online source roots using the location index only."""
+
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT source_root
+                FROM media_locations
+                WHERE online = 1
+                GROUP BY source_root_key
+                ORDER BY source_root_key
+                """
+            ).fetchall()
+        return tuple(Path(row["source_root"]) for row in rows)
 
     def list_sources(self) -> list[MediaSource]:
         with self.connect() as connection:

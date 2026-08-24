@@ -9,6 +9,11 @@ from pathlib import Path
 
 from .library import IndexedMedia
 from .resolve import ResolvedChannel
+from .storage import (
+    SQLITE_BUSY_TIMEOUT_MS,
+    configure_sqlite_connection,
+    prepare_database,
+)
 
 RUNTIME_SCHEMA_VERSION = 2
 SECONDS_PER_DAY = 86400.0
@@ -346,14 +351,21 @@ class RuntimeStore:
     def __init__(self, database_path: str | Path) -> None:
         self.database_path = Path(database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        prepare_database(
+            self.database_path,
+            meta_table="runtime_meta",
+            supported_version=RUNTIME_SCHEMA_VERSION,
+        )
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(
             self.database_path,
+            timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000,
             factory=_ClosingSQLiteConnection,
         )
         connection.row_factory = sqlite3.Row
+        configure_sqlite_connection(connection, self.database_path)
         return connection
 
     def _initialize(self) -> None:
@@ -395,7 +407,11 @@ class RuntimeStore:
                 """
             )
             connection.execute(
-                "INSERT OR REPLACE INTO runtime_meta(key, value) VALUES('schema_version', ?)",
+                """
+                INSERT INTO runtime_meta(key, value)
+                VALUES('schema_version', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                """,
                 (str(RUNTIME_SCHEMA_VERSION),),
             )
 
@@ -588,13 +604,21 @@ class RuntimeStore:
 
     def _set_meta(self, key: str, value: str | None) -> None:
         with self.connect() as connection:
-            if value is None:
-                connection.execute("DELETE FROM runtime_meta WHERE key = ?", (key,))
-            else:
-                connection.execute(
-                    "INSERT OR REPLACE INTO runtime_meta(key, value) VALUES(?, ?)",
-                    (key, value),
-                )
+            self._write_meta(connection, key, value)
+
+    @staticmethod
+    def _write_meta(
+        connection: sqlite3.Connection,
+        key: str,
+        value: str | None,
+    ) -> None:
+        if value is None:
+            connection.execute("DELETE FROM runtime_meta WHERE key = ?", (key,))
+        else:
+            connection.execute(
+                "INSERT OR REPLACE INTO runtime_meta(key, value) VALUES(?, ?)",
+                (key, value),
+            )
 
     def _get_meta_int(self, key: str) -> int | None:
         with self.connect() as connection:
@@ -609,9 +633,22 @@ class RuntimeStore:
         except (TypeError, ValueError):
             return None
 
-    def set_tuning(self, current_channel: int | None, previous_channel: int | None) -> None:
-        self._set_meta("current_channel", None if current_channel is None else str(current_channel))
-        self._set_meta("previous_channel", None if previous_channel is None else str(previous_channel))
+    def set_tuning(
+        self,
+        current_channel: int | None,
+        previous_channel: int | None,
+    ) -> None:
+        with self.connect() as connection:
+            self._write_meta(
+                connection,
+                "current_channel",
+                None if current_channel is None else str(current_channel),
+            )
+            self._write_meta(
+                connection,
+                "previous_channel",
+                None if previous_channel is None else str(previous_channel),
+            )
 
     def get_tuning(self) -> tuple[int | None, int | None]:
         return self._get_meta_int("current_channel"), self._get_meta_int("previous_channel")

@@ -6,7 +6,6 @@ import threading
 import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QGuiApplication, QWindow
@@ -29,7 +28,6 @@ from .runtime import (
     TuneDecision,
     utc_now,
 )
-from .scanner import MediaScanner, ScanProgress, ScanSummary
 from .settings import (
     ARTWORK_CACHE_LIMIT_CHOICES_MB,
     PERFORMANCE_PROFILES,
@@ -70,13 +68,14 @@ class CouchController(QObject):
         self._artwork_paths: dict[str, Path] = {}
         self._artwork_pending: set[str] = set()
         self._artwork_unavailable: set[str] = set()
+        self._artwork_dirty_assets: set[str] = set()
         self._artwork_queue: queue.Queue[
             tuple[str, Path, float]
         ] = queue.Queue()
         self._artwork_worker: threading.Thread | None = None
         self._artwork_publish_timer = QTimer(self)
         self._artwork_publish_timer.setSingleShot(True)
-        self._artwork_publish_timer.setInterval(80)
+        self._artwork_publish_timer.setInterval(120)
         self._artwork_publish_timer.timeout.connect(
             self._publish_library_artwork
         )
@@ -351,13 +350,16 @@ class CouchController(QObject):
         retryable: bool,
     ) -> None:
         self._artwork_pending.discard(asset_id)
-        artwork_changed = bool(self._forget_missing_generated_artwork())
+        missing = self._forget_missing_generated_artwork()
+        self._artwork_dirty_assets.update(missing)
+        artwork_changed = bool(missing)
         resolved = Path(resolved_path) if resolved_path else None
         if resolved is not None and resolved.exists():
             self._artwork_paths[asset_id] = resolved
             self._artwork_urls[asset_id] = QUrl.fromLocalFile(
                 resolved_path
             ).toString()
+            self._artwork_dirty_assets.add(asset_id)
             artwork_changed = True
         elif not retryable:
             self._artwork_unavailable.add(asset_id)
@@ -365,7 +367,7 @@ class CouchController(QObject):
             self._artwork_publish_timer.start()
         self.settingsChanged.emit()
 
-    def _forget_missing_generated_artwork(self) -> int:
+    def _forget_missing_generated_artwork(self) -> tuple[str, ...]:
         missing = [
             asset_id
             for asset_id, path in self._artwork_paths.items()
@@ -378,11 +380,30 @@ class CouchController(QObject):
         for asset_id in missing:
             self._artwork_paths.pop(asset_id, None)
             self._artwork_urls.pop(asset_id, None)
-        return len(missing)
+        return tuple(missing)
 
     @Slot()
     def _publish_library_artwork(self) -> None:
-        self._library_snapshot = self._build_library_snapshot()
+        # Wait for the current visible-card request burst to settle, then patch
+        # only artwork URLs. Rebuilding the complete Library snapshot for every
+        # generated thumbnail repeatedly queried both databases on large shelves.
+        if self._artwork_pending:
+            self._artwork_publish_timer.start()
+            return
+
+        dirty = set(self._artwork_dirty_assets)
+        self._artwork_dirty_assets.clear()
+        if not dirty:
+            return
+
+        items = self._library_snapshot.get("items", [])
+        if isinstance(items, list):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                asset_id = str(item.get("assetId", ""))
+                if asset_id in dirty:
+                    item["artworkUrl"] = self._artwork_urls.get(asset_id, "")
         self.libraryChanged.emit()
 
     @Slot()
@@ -444,19 +465,6 @@ class CouchController(QObject):
         self._last_on_demand_saved_at = now_monotonic
         self._last_on_demand_saved_signature = signature
         return saved
-
-    def scan_media_folder(
-        self,
-        path: str | Path,
-        *,
-        on_progress: Callable[[ScanProgress], None] | None = None,
-    ) -> ScanSummary:
-        """Index one user-selected media source into the existing local library."""
-
-        scanner = MediaScanner(self._library)
-        summary = scanner.scan(path, on_progress=on_progress)
-        self.refreshLibrary()
-        return summary
 
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         self._actions.attach_video_surface(surface)
@@ -1090,6 +1098,10 @@ class CouchKeyFilter(QObject):
         self._audio_generation = 0
         self._channel_generation = 0
         self._channel_digits = ""
+        self._home_scan_dialog: QProgressDialog | None = None
+        scan_changed = getattr(controller, "libraryScanChanged", None)
+        if scan_changed is not None:
+            scan_changed.connect(self._update_home_scan_dialog)
 
     def _show_live_hud(self) -> None:
         # Show the Live information layer after tuning or transport/channel
@@ -1355,52 +1367,79 @@ class CouchKeyFilter(QObject):
         if not folder:
             return
 
+        start_scan = getattr(self._controller, "startMediaScan", None)
+        cancel_scan = getattr(self._controller, "cancelMediaScan", None)
+        if not callable(start_scan) or not callable(cancel_scan):
+            self._notify(
+                {
+                    "message": (
+                        "Background Library scanning is unavailable in this launcher"
+                    )
+                }
+            )
+            return
+
         progress_dialog = QProgressDialog()
         progress_dialog.setWindowTitle("ChannelOS — Index Media")
         progress_dialog.setLabelText("Discovering supported media files…")
-        progress_dialog.setCancelButton(None)
+        progress_dialog.setCancelButtonText("Cancel")
         progress_dialog.setMinimumDuration(0)
         progress_dialog.setAutoClose(False)
         progress_dialog.setAutoReset(False)
-        progress_dialog.setRange(0, 1)
-        progress_dialog.setValue(0)
-        progress_dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dialog.setRange(0, 0)
+        progress_dialog.setWindowModality(Qt.WindowModality.NonModal)
+        progress_dialog.canceled.connect(self._cancel_home_media_scan)
+        self._home_scan_dialog = progress_dialog
         progress_dialog.show()
-        QApplication.processEvents()
-
-        def on_progress(progress: ScanProgress) -> None:
-            maximum = max(1, progress.total)
-            progress_dialog.setRange(0, maximum)
-            progress_dialog.setValue(min(progress.current, maximum))
-            if progress.path is None:
-                progress_dialog.setLabelText(
-                    f"Found {progress.total} supported media file(s). Preparing index…"
-                )
-            else:
-                progress_dialog.setLabelText(
-                    f"Indexing {progress.current} of {progress.total}\n{progress.path.name}"
-                )
-            QApplication.processEvents()
-
-        try:
-            summary = self._controller.scan_media_folder(folder, on_progress=on_progress)
-        except (FileNotFoundError, OSError, ValueError) as exc:
+        result = start_scan(folder)
+        if not bool(result.get("ok")):
             progress_dialog.close()
-            self._notify({"message": f"Media scan failed — {exc}"})
+            self._home_scan_dialog = None
+            self._notify(result)
+
+    def _cancel_home_media_scan(self) -> None:
+        dialog = self._home_scan_dialog
+        cancel_scan = getattr(self._controller, "cancelMediaScan", None)
+        if dialog is None or not callable(cancel_scan):
+            return
+        result = cancel_scan()
+        if bool(result.get("ok")):
+            dialog.setLabelText("Cancelling after the current file operation…")
+            dialog.setCancelButton(None)
+            dialog.show()
+        else:
+            self._notify(result)
+
+    def _update_home_scan_dialog(self) -> None:
+        dialog = self._home_scan_dialog
+        if dialog is None:
             return
 
-        progress_dialog.setValue(max(1, summary.discovered))
-        progress_dialog.close()
-        total_assets = self._controller._library.count_assets()
-        self._notify(
-            {
-                "message": (
-                    f"Library scan complete — {summary.discovered} files • "
-                    f"{summary.new_assets} new • {summary.cache_hits} unchanged • "
-                    f"{total_assets} total assets"
-                )
-            }
+        state = getattr(self._controller, "libraryScan", {})
+        if not isinstance(state, dict):
+            return
+
+        current = max(0, int(state.get("current", 0)))
+        total = max(0, int(state.get("total", 0)))
+        if total <= 0:
+            dialog.setRange(0, 0)
+        else:
+            dialog.setRange(0, total)
+            dialog.setValue(min(current, total))
+
+        message = str(state.get("message", "Indexing media…"))
+        filename = str(state.get("fileName", ""))
+        dialog.setLabelText(
+            message if not filename else f"{message}\n{filename}"
         )
+
+        if bool(state.get("active")):
+            return
+
+        dialog.close()
+        self._home_scan_dialog = None
+        if message:
+            self._notify({"message": message})
 
     def _open_guide(self) -> bool:
         if str(self._window.property("screen")) == "ondemand":

@@ -9,11 +9,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine
 
 import channelos
+from channelos.control import ControlCommand, ControlIntent
+from channelos.couch_qt import CouchKeyFilter
 
 
 class FakeChannelOS(QObject):
@@ -88,3 +90,80 @@ def test_main_qml_instantiates_headlessly() -> None:
     assert roots[0].property("muted") is False
     roots[0].close()
     app.processEvents()
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [
+        (Qt.Key.Key_7, ControlCommand.digit(7)),
+        (Qt.Key.Key_Up, ControlCommand(ControlIntent.UP)),
+        (Qt.Key.Key_Return, ControlCommand(ControlIntent.SELECT)),
+        (Qt.Key.Key_G, ControlCommand(ControlIntent.GUIDE)),
+        (Qt.Key.Key_H, ControlCommand(ControlIntent.HOME)),
+        (Qt.Key.Key_VolumeUp, ControlCommand(ControlIntent.VOLUME_UP)),
+        (
+            Qt.Key.Key_MediaTogglePlayPause,
+            ControlCommand(ControlIntent.PLAY_PAUSE),
+        ),
+    ],
+)
+def test_keyboard_adapter_emits_control_commands(key, expected) -> None:
+    assert CouchKeyFilter.command_for_key(key) == expected
+
+
+def test_keyboard_adapter_leaves_unbound_text_keys_alone() -> None:
+    assert CouchKeyFilter.command_for_key(Qt.Key.Key_X) is None
+
+
+def test_consumer_remote_channel_key_uses_the_same_intent_boundary() -> None:
+    channel_up = getattr(Qt.Key, "Key_ChannelUp", None)
+    if channel_up is None:
+        pytest.skip("this Qt build does not expose the consumer ChannelUp key")
+    assert CouchKeyFilter.command_for_key(channel_up) == ControlCommand(
+        ControlIntent.CHANNEL_UP
+    )
+
+
+def test_normalized_navigation_intent_moves_home_selection() -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    window = QWindow()
+    window.setProperty("screen", "home")
+    window.setProperty("homeSelection", 0)
+
+    router = CouchKeyFilter(controller, window)  # type: ignore[arg-type]
+
+    assert router.dispatch_command(ControlCommand(ControlIntent.DOWN))
+    assert window.property("homeSelection") == 1
+    assert router.dispatch_command(ControlCommand(ControlIntent.UP))
+    assert window.property("homeSelection") == 0
+
+    window.close()
+    app.processEvents()
+
+
+def test_transport_intents_keep_toggle_and_idempotent_semantics() -> None:
+    assert CouchKeyFilter._transport_should_toggle(
+        ControlIntent.SELECT,
+        paused=False,
+    )
+    assert CouchKeyFilter._transport_should_toggle(
+        ControlIntent.PLAY_PAUSE,
+        paused=True,
+    )
+    assert not CouchKeyFilter._transport_should_toggle(
+        ControlIntent.PLAY,
+        paused=False,
+    )
+    assert CouchKeyFilter._transport_should_toggle(
+        ControlIntent.PLAY,
+        paused=True,
+    )
+    assert CouchKeyFilter._transport_should_toggle(
+        ControlIntent.PAUSE,
+        paused=False,
+    )
+    assert not CouchKeyFilter._transport_should_toggle(
+        ControlIntent.PAUSE,
+        paused=True,
+    )

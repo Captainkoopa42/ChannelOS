@@ -132,6 +132,8 @@ Implemented:
 - numeric direct tuning,
 - Previous Channel,
 - volume/mute,
+- transport-neutral couch control intents with keyboard, multimedia-key, and
+  consumer-remote-key translation,
 - pause / resume,
 - rewind and skip forward,
 - LIVE return,
@@ -145,7 +147,7 @@ Implemented:
 Still needed:
 
 - fuller Info behavior,
-- controller/remote abstraction,
+- native controller/Steam Input adapter and real-machine validation,
 - startup/resume polish,
 - release hardening.
 

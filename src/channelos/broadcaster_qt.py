@@ -23,6 +23,7 @@ from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QFileDialog
 
 from .broadcaster import BroadcasterError, BroadcasterService
+from .control import ControlCommand, ControlIntent
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
 from .couch_qt import (
@@ -596,31 +597,22 @@ class BroadcasterCouchController(CouchController):
 class BroadcasterKeyFilter(CouchKeyFilter):
     """Add management navigation without stealing editor/search text input."""
 
+    def dispatch_command(self, command: ControlCommand) -> bool:
+        if command.intent is ControlIntent.CHANNELS:
+            self._controller.refreshBroadcaster()
+            self._window.setProperty("screen", "broadcaster")
+            return True
+        return super().dispatch_command(command)
+
     def eventFilter(self, watched, event) -> bool:
-        if event.type() == QEvent.Type.KeyPress:
-            screen = str(self._window.property("screen"))
-            key = event.key()
-
-            if screen == "home":
-                if (
-                    int(self._window.property("homeSelection")) == 3
-                    and key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}
-                ):
-                    self._controller.refreshBroadcaster()
-                    self._window.setProperty("screen", "broadcaster")
-                    return True
-
-                if key == Qt.Key.Key_B:
-                    self._controller.refreshBroadcaster()
-                    self._window.setProperty("screen", "broadcaster")
-                    return True
-
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and str(self._window.property("screen")) in {"broadcaster", "library"}
+        ):
             # These management overlays own their keyboard/focus model. In
             # particular, Library search must be allowed to receive ordinary A-Z
-            # keypresses instead of the legacy global A=Add Folder shortcut.
-            if screen in {"broadcaster", "library"}:
-                return False
-
+            # keypresses instead of global couch shortcuts.
+            return False
         return super().eventFilter(watched, event)
 
 

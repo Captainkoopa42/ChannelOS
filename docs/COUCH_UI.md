@@ -236,7 +236,7 @@ The Windows development machine has validated:
 Major remaining couch/release work includes:
 
 - richer Info behavior,
-- controller/remote abstraction,
+- native controller/Steam Input adapter and real-machine validation,
 - Settings,
 - selected-title backdrop and richer artwork presentation polish,
 - Library -> Add to Channel authoring flow,

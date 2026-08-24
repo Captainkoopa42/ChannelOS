@@ -33,6 +33,8 @@ ApplicationWindow {
     property int selectedLibrary: 0
     property string statusMessage: ""
     property bool liveHudVisible: false
+    property bool infoVisible: false
+    property var libraryInfoItem: ({})
     property string channelEntry: ""
     property int volumePercent: 100
     property bool muted: false
@@ -129,6 +131,164 @@ ApplicationWindow {
         }
 
         return libraryItems[selectedLibrary]
+    }
+
+    function libraryItemForAsset(assetId) {
+        var target = String(assetId || "")
+        if (!target.length || !libraryItems)
+            return ({})
+        for (var i = 0; i < libraryItems.length; ++i) {
+            if (String(libraryItems[i].assetId || "") === target)
+                return libraryItems[i]
+        }
+        return ({})
+    }
+
+    function infoItem() {
+        if (screen === "live")
+            return playback || ({})
+        if (screen === "ondemand") {
+            var media = libraryItemForAsset(onDemand.assetId)
+            return media.assetId ? media : (onDemand || ({}))
+        }
+        if (screen === "guide")
+            return selectedProgramData()
+        if (screen === "library")
+            return libraryInfoItem || ({})
+        return homeTelevision || ({})
+    }
+
+    function infoEyebrow() {
+        if (screen === "live")
+            return "LIVE TELEVISION"
+        if (screen === "ondemand")
+            return "ON DEMAND"
+        if (screen === "guide")
+            return "GUIDE PROGRAM"
+        if (screen === "library")
+            return "OWNED LIBRARY"
+        return "HOME TELEVISION"
+    }
+
+    function infoTitle() {
+        var item = infoItem()
+        return String(item.title || item.fileName || "No Programming")
+    }
+
+    function infoSubtitle() {
+        if (screen === "live")
+            return "CH " + (playback.displayNumber || "---")
+                   + "  " + (playback.channelName || "")
+        if (screen === "ondemand")
+            return String(infoItem().sourceName || "Your owned media")
+        if (screen === "guide") {
+            var row = selectedRowData()
+            return "CH " + (row.displayNumber || "---")
+                   + "  " + (row.channelName || "")
+        }
+        if (screen === "library")
+            return String(infoItem().sourceName || "Your owned media")
+        return "CH " + (homeTelevision.displayNumber || "001")
+               + "  " + (homeTelevision.channelName || "ChannelOS")
+    }
+
+    function infoRows() {
+        var item = infoItem()
+        var result = []
+        if (screen === "live" || screen === "home") {
+            var tv = screen === "live" ? playback : homeTelevision
+            var state = tv.paused
+                      ? "Paused"
+                      : (tv.isLive
+                         ? "Live · Broadcast Clock"
+                         : Math.round(Number(tv.lagSeconds || 0))
+                           + "s behind live · Viewer Clock")
+            result.push({ label: "STATUS", value: state })
+            result.push({
+                label: "AIRTIME",
+                value: tv.programStartMs
+                       ? formatClock(tv.programStartMs) + " – "
+                         + formatClock(tv.programEndMs)
+                       : "No scheduled airtime"
+            })
+            if (Number(tv.programEndMs || 0) > Number(tv.programStartMs || 0)) {
+                result.push({
+                    label: "PROGRAM LENGTH",
+                    value: formatDurationSeconds(
+                               (Number(tv.programEndMs)
+                                - Number(tv.programStartMs)) / 1000)
+                })
+            }
+            if (String(tv.nextTitle || "").length) {
+                result.push({
+                    label: "NEXT",
+                    value: String(tv.nextTitle)
+                           + (tv.nextStartMs
+                              ? " · " + formatClock(tv.nextStartMs)
+                              : "")
+                })
+            }
+            result.push({
+                label: "WHY THIS IS HERE",
+                value: screen === "live"
+                       ? "This item is the current scheduled program on this channel."
+                       : "Home is showing the channel ChannelOS will continue or tune."
+            })
+            return result
+        }
+
+        if (screen === "guide") {
+            var when = item.isCurrent ? "On now"
+                     : (item.isPast ? "Earlier" : "Upcoming")
+            result.push({ label: "STATUS", value: when })
+            result.push({
+                label: "AIRTIME",
+                value: formatClock(item.startMs) + " – " + formatClock(item.endMs)
+            })
+            result.push({
+                label: "PROGRAM LENGTH",
+                value: formatDurationSeconds(item.durationSeconds)
+            })
+            result.push({
+                label: "WHY THIS IS HERE",
+                value: "This exact occurrence comes from the channel's authoritative generated schedule."
+            })
+            return result
+        }
+
+        if (screen === "ondemand") {
+            result.push({
+                label: "PLAYBACK",
+                value: (onDemand.paused ? "Paused · " : "Playing · ")
+                       + formatDurationSeconds(onDemand.positionSeconds)
+                       + " of " + formatDurationSeconds(onDemand.durationSeconds)
+            })
+        } else if (Boolean(item.continueWatching)) {
+            result.push({
+                label: "CONTINUE WATCHING",
+                value: formatDurationSeconds(item.watchPositionSeconds)
+                       + " of " + formatDurationSeconds(item.durationSeconds)
+            })
+        }
+
+        result.push({
+            label: "LENGTH",
+            value: formatDurationSeconds(item.durationSeconds
+                                         || onDemand.durationSeconds)
+        })
+        if (String(item.containerFormat || "").length)
+            result.push({ label: "FORMAT", value: String(item.containerFormat) })
+        if (Number(item.sizeBytes || 0) > 0)
+            result.push({ label: "FILE SIZE", value: formatBytes(item.sizeBytes) })
+        if (String(item.fileName || "").length)
+            result.push({ label: "FILE", value: String(item.fileName) })
+        if (String(item.path || "").length)
+            result.push({ label: "LOCATION", value: String(item.path) })
+        result.push({
+            label: "OWNERSHIP",
+            value: "Indexed in place. ChannelOS does not move or take ownership of this file."
+        })
+        return result
     }
 
     function paintStatic(canvas) {
@@ -246,6 +406,166 @@ ApplicationWindow {
         interval: 2600
         repeat: false
         onTriggered: root.statusMessage = ""
+    }
+
+    Component {
+        id: infoPanelComponent
+
+        Rectangle {
+            color: "#f4071422"
+            border.color: root.line
+            border.width: 1
+
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 5
+                color: root.accentBright
+            }
+
+            Flickable {
+                anchors.fill: parent
+                anchors.leftMargin: 5
+                contentWidth: width
+                contentHeight: infoColumn.implicitHeight + 76
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+
+                Column {
+                    id: infoColumn
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 34
+                    spacing: 14
+
+                    Text {
+                        text: root.infoEyebrow()
+                        color: root.accentBright
+                        font.pixelSize: 14
+                        font.weight: Font.Bold
+                        font.letterSpacing: 2.4
+                    }
+
+                    Text {
+                        text: root.infoTitle()
+                        color: root.textPrimary
+                        width: parent.width
+                        wrapMode: Text.Wrap
+                        font.pixelSize: 30
+                        font.weight: Font.DemiBold
+                    }
+
+                    Text {
+                        text: root.infoSubtitle()
+                        color: root.textSecondary
+                        width: parent.width
+                        wrapMode: Text.Wrap
+                        font.pixelSize: 17
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 1
+                        color: root.line
+                    }
+
+                    Repeater {
+                        model: root.infoRows()
+
+                        delegate: Column {
+                            required property var modelData
+                            width: infoColumn.width
+                            spacing: 5
+
+                            Text {
+                                text: modelData.label
+                                color: root.accentBright
+                                font.pixelSize: 12
+                                font.weight: Font.Bold
+                                font.letterSpacing: 1.4
+                            }
+
+                            Text {
+                                text: modelData.value
+                                color: root.textPrimary
+                                width: parent.width
+                                wrapMode: Text.WrapAnywhere
+                                font.pixelSize: 16
+                                lineHeight: 1.18
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        width: parent.width
+                        height: 1
+                        color: root.line
+                    }
+
+                    Text {
+                        text: "I / ESC  Close Info"
+                        color: root.textSecondary
+                        font.pixelSize: 13
+                    }
+                }
+            }
+        }
+    }
+
+    // QML-only screens can use a normal dimmed drawer above their content.
+    Item {
+        id: infoSceneOverlay
+        anchors.fill: parent
+        z: 120
+        visible: root.infoVisible
+                 && root.screen !== "live"
+                 && root.screen !== "ondemand"
+
+        Rectangle {
+            anchors.fill: parent
+            color: "#8a02070d"
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: root.infoVisible = false
+            }
+        }
+
+        Loader {
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            width: Math.min(620, Math.max(470, parent.width * 0.40))
+            sourceComponent: infoPanelComponent
+        }
+    }
+
+    // The native libVLC child can sit above ordinary QML items on Windows.
+    // Keep video Info in a bounded top-level drawer, following the proven HUD
+    // composition rule without recreating a full-screen transparent sibling.
+    Window {
+        id: infoOverlay
+        transientParent: root
+        flags: Qt.Tool
+               | Qt.FramelessWindowHint
+               | Qt.WindowDoesNotAcceptFocus
+               | Qt.WindowTransparentForInput
+        color: "transparent"
+        x: root.x + root.width - width
+        y: root.y
+        width: Math.min(620, Math.max(470, root.width * 0.40))
+        height: root.height
+        visible: root.visible
+                 && root.visibility !== Window.Minimized
+                 && root.infoVisible
+                 && (root.screen === "live" || root.screen === "ondemand")
+
+        Loader {
+            anchors.fill: parent
+            sourceComponent: infoPanelComponent
+        }
     }
 
     Rectangle {
@@ -600,7 +920,7 @@ ApplicationWindow {
                     Text { text: "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
                     Text { text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
                     Text { text: "L  Live"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "I  Info  ·  G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
                 }
             }
         }
@@ -707,7 +1027,7 @@ ApplicationWindow {
                     Text { text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
                     Text { text: "0-9  Tune Channel"; color: root.textSecondary; font.pixelSize: 13 }
                     Text { text: "P  Previous Channel"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "ESC  Library"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: "I  Info  ·  ESC  Library"; color: root.textSecondary; font.pixelSize: 13 }
                 }
             }
         }
@@ -1941,6 +2261,7 @@ ApplicationWindow {
                 Text { text: "← →  Time"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "↑ ↓  Channels"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "ENTER  Select"; color: root.textSecondary; font.pixelSize: 15 }
+                Text { text: "I  Info"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "ESC  Back"; color: root.textSecondary; font.pixelSize: 15 }
             }
         }

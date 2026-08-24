@@ -2,7 +2,7 @@
 
 **Snapshot:** August 24, 2026
 **Status:** Working local alpha  
-**Active implementation:** Library 2.0 / first-release couch experience  
+**Active implementation:** First-release couch and controller experience
 **Canonical product definition:** [MASTER_DESIGN.md](MASTER_DESIGN.md)
 
 This document records implementation progress against the original ChannelOS design.
@@ -48,10 +48,10 @@ seek-distance preferences. Settings includes Standard, Lightweight, and Custom
 machine-performance profiles, generated-art cache controls, and reduced motion;
 these controls have passed Windows real-machine validation and are merged.
 
-The active hardening slice is the [Reliability Gate](RELIABILITY_GATE.md): shared
-background/cancellable media scanning, SQLite concurrency and version guards,
-source-scoped resolution, atomic tuning persistence, and batched artwork updates.
-It remains pending its final Windows gate before merge.
+The [Reliability Gate](RELIABILITY_GATE.md) is implemented, Windows validated,
+and merged: shared background/cancellable media scanning, SQLite concurrency and
+version guards, source-scoped resolution, atomic tuning persistence, and batched
+artwork updates now form the normal foundation.
 
 The largest remaining first-release work is now product experience and release hardening rather than proving the television model.
 
@@ -63,7 +63,7 @@ The largest remaining first-release work is now product experience and release h
 
 Estimated completion:
 
-**approximately 82-84%**
+**approximately 84-86%**
 
 This is the focused first-release experience: local ownership/indexing, persistent channels, Guide, live playback, television controls, Library / On Demand, minimum broadcaster/channel management, normal-user packaging, controller/remote polish, settings, and release hardening.
 
@@ -160,10 +160,10 @@ Implemented:
 - schedule progress,
 - D3D11VA hardware-decoded real-media validation,
 - stable maximize/restore using a bounded translucent HUD architecture.
+- contextual Info drawers for Home, Guide, Library, Live, and On Demand.
 
 Still needed:
 
-- fuller Info behavior,
 - native controller/Steam Input adapter and real-machine validation,
 - startup/resume polish,
 - release hardening.
@@ -312,19 +312,17 @@ When On Demand temporarily owns the presentation surface, ChannelOS may stop the
 
 ## Important remaining first-release work
 
-1. Windows validation and merge of expanded Settings / Lightweight mode.
-2. Fuller Info behavior.
-3. Native controller/Steam Input adapter and real-machine validation.
-4. Normal-user libVLC/runtime packaging.
-5. Windows installer / repeatable package.
-6. Linux and SteamOS validation.
-7. Frozen packaged-dependency bill of materials and compliance verification
+1. Native controller/Steam Input adapter and real-machine validation.
+2. Normal-user libVLC/runtime packaging.
+3. Windows installer / repeatable package.
+4. Linux and SteamOS validation.
+5. Frozen packaged-dependency bill of materials and compliance verification
    under `docs/DISTRIBUTION.md` (the MPL-2.0 source license and development
    notices are complete).
-8. Crash recovery, clean-machine testing, and ordinary-user hardening.
+6. Crash recovery, clean-machine testing, and ordinary-user hardening.
 
 Library -> Add to Channel remains defined by the Channel Studio concept and is
-intentionally queued behind the current Settings, Info, and input work so its
+intentionally queued behind the current input and packaging work so its
 authoring behavior can be designed deliberately.
 
 ---
@@ -370,5 +368,5 @@ And the second statement is now literal in the running product:
 > **The user is not merely the audience. The user is the broadcaster.**
 
 The largest visible feature gap before a focused beta remains
-Library-to-channel authoring. Packaging, input polish, Info behavior, and
-release hardening remain the larger delivery risks.
+Library-to-channel authoring. Packaging, input polish, and release hardening
+remain the larger delivery risks.

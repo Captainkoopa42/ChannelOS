@@ -100,7 +100,8 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 - [x] LIVE button behavior
 - [x] Minimal Now/Next overlay
 - [x] Guide UI
-- [ ] Home / Back / Info navigation — Home and Back work; dedicated Info behavior remains incomplete
+- [x] Home / Back / Info navigation — contextual Info works across Home,
+  Guide, Library, Live, and On Demand
 - [x] Functional Home destinations and controller/mouse-accessible quick-action cards
 - [x] Persistent couch Settings for volume, mute, and Live/On Demand skip distances
 - [x] Standard/Lightweight/Custom machine-performance profiles, generated-art

@@ -203,3 +203,24 @@ def test_home_letter_remains_text_while_an_editor_has_focus(monkeypatch) -> None
 
     window.close()
     app.processEvents()
+
+
+def test_info_letter_opens_library_info_outside_text_entry() -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    window = QWindow()
+    window.setProperty("screen", "library")
+    window.setProperty("infoVisible", False)
+    router = BroadcasterKeyFilter(controller, window)  # type: ignore[arg-type]
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_I,
+        Qt.KeyboardModifier.NoModifier,
+        "i",
+    )
+
+    assert router.eventFilter(window, event)
+    assert window.property("infoVisible") is True
+
+    window.close()
+    app.processEvents()

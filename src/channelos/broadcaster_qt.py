@@ -599,6 +599,7 @@ class BroadcasterKeyFilter(CouchKeyFilter):
 
     def dispatch_command(self, command: ControlCommand) -> bool:
         if command.intent is ControlIntent.CHANNELS:
+            self._window.setProperty("infoVisible", False)
             self._controller.refreshBroadcaster()
             self._window.setProperty("screen", "broadcaster")
             return True
@@ -632,7 +633,19 @@ class BroadcasterKeyFilter(CouchKeyFilter):
             if (
                 command is not None
                 and command.intent
-                in {ControlIntent.HOME, ControlIntent.SETTINGS}
+                in (
+                    {ControlIntent.HOME, ControlIntent.SETTINGS}
+                    | (
+                        {ControlIntent.INFO}
+                        if str(self._window.property("screen")) == "library"
+                        else set()
+                    )
+                    | (
+                        {ControlIntent.BACK}
+                        if bool(self._window.property("infoVisible"))
+                        else set()
+                    )
+                )
                 and (
                     not event.text()
                     or not self._text_entry_has_focus()

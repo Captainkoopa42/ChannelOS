@@ -242,6 +242,7 @@ Item {
         selectedShelf = Math.max(0, Math.min(selectedShelf, shelves.length - 1))
         var selectedItems = shelves.length ? (shelves[selectedShelf].items || []) : []
         selectedColumn = Math.max(0, Math.min(selectedColumn, selectedItems.length - 1))
+        publishInfoSelection()
         Qt.callLater(ensureSelectionVisible)
     }
 
@@ -254,10 +255,16 @@ Item {
         return items[selectedColumn]
     }
 
+    function publishInfoSelection() {
+        if (hostWindow)
+            hostWindow.libraryInfoItem = selectedItem()
+    }
+
     function selectCard(shelfIndex, columnIndex) {
         selectedShelf = Math.max(0, Math.min(shelves.length - 1, shelfIndex))
         var items = shelves.length ? (shelves[selectedShelf].items || []) : []
         selectedColumn = Math.max(0, Math.min(items.length - 1, columnIndex))
+        publishInfoSelection()
         ensureSelectionVisible()
     }
 
@@ -303,6 +310,7 @@ Item {
             return
         }
         selectedColumn = Math.max(0, Math.min(items.length - 1, selectedColumn + delta))
+        publishInfoSelection()
         ensureSelectionVisible()
     }
 
@@ -377,6 +385,9 @@ Item {
     }
     onAllItemsChanged: rebuildShelves()
     onSourcesChanged: rebuildShelves()
+    onHostWindowChanged: publishInfoSelection()
+    onSelectedShelfChanged: publishInfoSelection()
+    onSelectedColumnChanged: publishInfoSelection()
 
     onVisibleChanged: {
         if (visible) {
@@ -390,6 +401,7 @@ Item {
     Component.onCompleted: {
         updateClock()
         rebuildShelves()
+        publishInfoSelection()
     }
 
     Connections {
@@ -1105,6 +1117,7 @@ Item {
                 spacing: 24
                 Text { text: "ARROWS  Browse"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "ENTER  Open / Play"; color: textSecondary; font.pixelSize: 12 }
+                Text { text: "I  Info"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "CTRL+F  Search"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "M  Manage Sources"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "ESC  Home"; color: textSecondary; font.pixelSize: 12 }

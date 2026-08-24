@@ -237,6 +237,12 @@ def test_couch_qml_asset_is_present() -> None:
     assert "PLAY ON DEMAND" in text
     assert "ADD MEDIA FOLDER" in text
     assert "libraryItems" in text
+    assert "property bool infoVisible: false" in text
+    assert "infoPanelComponent" in text
+    assert "infoSceneOverlay" in text
+    assert "infoOverlay" in text
+    assert "WHY THIS IS HERE" in text
+    assert "Indexed in place" in text
 
     couch_qt = (
         Path(__file__).resolve().parents[1]
@@ -246,6 +252,8 @@ def test_couch_qml_asset_is_present() -> None:
     ).read_text(encoding="utf-8")
     assert "QTimer.singleShot(10000, hide)" in couch_qt
     assert 'setProperty("liveHudVisible", False)' in couch_qt
+    assert 'ControlIntent.INFO and screen in info_screens' in couch_qt
+    assert 'setProperty("infoVisible", opening)' in couch_qt
     assert "Channel 001 is unassigned" in couch_qt
     assert "_select_guide_anchor" in couch_qt
     assert "_build_home_television_view" in couch_qt

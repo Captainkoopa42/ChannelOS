@@ -18,10 +18,12 @@ import channelos
 
 class FakeHost(QObject):
     screenChanged = Signal()
+    libraryInfoItemChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self._screen = "library"
+        self._library_info_item = {}
 
     @Property(str, notify=screenChanged)
     def screen(self) -> str:
@@ -33,6 +35,15 @@ class FakeHost(QObject):
             return
         self._screen = value
         self.screenChanged.emit()
+
+    @Property("QVariantMap", notify=libraryInfoItemChanged)
+    def libraryInfoItem(self):
+        return self._library_info_item
+
+    @libraryInfoItem.setter
+    def libraryInfoItem(self, value) -> None:
+        self._library_info_item = dict(value or {})
+        self.libraryInfoItemChanged.emit()
 
 
 class FakeChannelOS(QObject):
@@ -173,6 +184,7 @@ def test_library_qml_instantiates_headlessly() -> None:
     assert item.property("selectedColumn") == 0
     assert item.property("expandedShelfId") == "all"
     assert item.property("managerVisible") is False
+    assert host.libraryInfoItem.get("assetId") == "sha256:test"
     assert item.property("shelfCount") >= 2
 
     host.screen = "home"

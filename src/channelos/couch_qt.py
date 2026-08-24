@@ -31,6 +31,8 @@ from .runtime import (
 )
 from .scanner import MediaScanner, ScanProgress, ScanSummary
 from .settings import (
+    ARTWORK_CACHE_LIMIT_CHOICES_MB,
+    PERFORMANCE_PROFILES,
     SKIP_BACK_CHOICES,
     SKIP_FORWARD_CHOICES,
     CouchSettings,
@@ -47,7 +49,7 @@ class CouchController(QObject):
     playbackChanged = Signal()
     homeTelevisionChanged = Signal()
     libraryChanged = Signal()
-    libraryArtworkResolved = Signal(str, str)
+    libraryArtworkResolved = Signal(str, str, bool)
     onDemandChanged = Signal()
     settingsChanged = Signal()
 
@@ -65,6 +67,7 @@ class CouchController(QObject):
             self._library.database_path.parent / "artwork"
         )
         self._artwork_urls: dict[str, str] = {}
+        self._artwork_paths: dict[str, Path] = {}
         self._artwork_pending: set[str] = set()
         self._artwork_unavailable: set[str] = set()
         self._artwork_queue: queue.Queue[
@@ -98,6 +101,9 @@ class CouchController(QObject):
             self._runtime_store.database_path.with_name("settings.json")
         )
         self._settings = self._settings_store.load()
+        cache_stats = self._artwork_cache.stats()
+        self._artwork_cache_bytes = cache_stats.size_bytes
+        self._artwork_cache_files = cache_stats.file_count
         self._volume = self._settings.volume_percent
         self._muted = self._settings.muted
 
@@ -220,6 +226,19 @@ class CouchController(QObject):
             "muted": self._settings.muted,
             "skipBackSeconds": self._settings.skip_back_seconds,
             "skipForwardSeconds": self._settings.skip_forward_seconds,
+            "performanceProfile": self._settings.performance_profile,
+            "generateVideoThumbnails": (
+                self._settings.generate_video_thumbnails
+            ),
+            "artworkCacheLimitMb": self._settings.artwork_cache_limit_mb,
+            "backgroundArtworkDuringPlayback": (
+                self._settings.background_artwork_during_playback
+            ),
+            "reducedMotion": self._settings.reduced_motion,
+            "thumbnailWidth": self._settings.thumbnail_width,
+            "ffmpegThreads": self._settings.ffmpeg_threads,
+            "artworkCacheBytes": self._artwork_cache_bytes,
+            "artworkCacheFiles": self._artwork_cache_files,
         }
 
     @Slot()
@@ -280,32 +299,86 @@ class CouchController(QObject):
         while True:
             asset_id, media_path, duration = self._artwork_queue.get()
             try:
+                settings = self._settings
+                playback_active = (
+                    self._on_demand.active
+                    or bool(self._playback.get("active"))
+                )
+                deferred = bool(
+                    settings.generate_video_thumbnails
+                    and playback_active
+                    and not settings.background_artwork_during_playback
+                )
                 resolved = self._artwork_cache.resolve(
                     media_path,
                     asset_id,
                     duration,
+                    allow_generate=(
+                        settings.generate_video_thumbnails and not deferred
+                    ),
+                    max_width=settings.thumbnail_width,
+                    ffmpeg_threads=settings.ffmpeg_threads,
                 )
+                if (
+                    resolved is not None
+                    and resolved.parent == self._artwork_cache.cache_directory
+                    and self._artwork_cache._is_generated_cache_file(resolved)
+                ):
+                    change = self._artwork_cache.prune(
+                        settings.artwork_cache_limit_mb * 1024 * 1024
+                    )
+                    if not resolved.exists():
+                        resolved = None
+                    self._artwork_cache_bytes = change.remaining.size_bytes
+                    self._artwork_cache_files = change.remaining.file_count
                 self.libraryArtworkResolved.emit(
                     asset_id,
                     "" if resolved is None else str(resolved),
+                    deferred,
                 )
             except Exception:
                 # Artwork is optional presentation. A failure must never take
                 # down Library browsing or replace the established fallback.
-                self.libraryArtworkResolved.emit(asset_id, "")
+                self.libraryArtworkResolved.emit(asset_id, "", False)
             finally:
                 self._artwork_queue.task_done()
 
-    @Slot(str, str)
-    def _accept_library_artwork(self, asset_id: str, resolved_path: str) -> None:
+    @Slot(str, str, bool)
+    def _accept_library_artwork(
+        self,
+        asset_id: str,
+        resolved_path: str,
+        retryable: bool,
+    ) -> None:
         self._artwork_pending.discard(asset_id)
-        if resolved_path:
+        artwork_changed = bool(self._forget_missing_generated_artwork())
+        resolved = Path(resolved_path) if resolved_path else None
+        if resolved is not None and resolved.exists():
+            self._artwork_paths[asset_id] = resolved
             self._artwork_urls[asset_id] = QUrl.fromLocalFile(
                 resolved_path
             ).toString()
-            self._artwork_publish_timer.start()
-        else:
+            artwork_changed = True
+        elif not retryable:
             self._artwork_unavailable.add(asset_id)
+        if artwork_changed:
+            self._artwork_publish_timer.start()
+        self.settingsChanged.emit()
+
+    def _forget_missing_generated_artwork(self) -> int:
+        missing = [
+            asset_id
+            for asset_id, path in self._artwork_paths.items()
+            if (
+                path.parent == self._artwork_cache.cache_directory
+                and self._artwork_cache._is_generated_cache_file(path)
+                and not path.exists()
+            )
+        ]
+        for asset_id in missing:
+            self._artwork_paths.pop(asset_id, None)
+            self._artwork_urls.pop(asset_id, None)
+        return len(missing)
 
     @Slot()
     def _publish_library_artwork(self) -> None:
@@ -779,6 +852,15 @@ class CouchController(QObject):
         self._settings = settings
         self._volume = settings.volume_percent
         self._muted = settings.muted
+        self._artwork_unavailable.clear()
+        change = self._artwork_cache.prune(
+            settings.artwork_cache_limit_mb * 1024 * 1024
+        )
+        if self._forget_missing_generated_artwork():
+            self._library_snapshot = self._build_library_snapshot()
+            self.libraryChanged.emit()
+        self._artwork_cache_bytes = change.remaining.size_bytes
+        self._artwork_cache_files = change.remaining.file_count
         self.settingsChanged.emit()
 
     @staticmethod
@@ -845,7 +927,15 @@ class CouchController(QObject):
             return self.toggleMute()
 
         try:
-            if name == "skipBack":
+            if name == "performanceProfile":
+                value = self._cycle_choice(
+                    self._settings.performance_profile,
+                    PERFORMANCE_PROFILES,
+                    step,
+                )
+                settings = self._settings.with_performance_profile(value)
+                message = f"Performance profile: {value.title()}"
+            elif name == "skipBack":
                 value = self._cycle_choice(
                     self._settings.skip_back_seconds,
                     SKIP_BACK_CHOICES,
@@ -867,6 +957,54 @@ class CouchController(QObject):
                     skip_forward_seconds=value,
                 )
                 message = f"Skip forward {value} seconds"
+            elif name == "generateVideoThumbnails":
+                value = not self._settings.generate_video_thumbnails
+                settings = replace(
+                    self._settings,
+                    performance_profile="custom",
+                    generate_video_thumbnails=value,
+                )
+                message = (
+                    "Generated video thumbnails on"
+                    if value
+                    else "Generated video thumbnails off"
+                )
+            elif name == "artworkCacheLimit":
+                value = self._cycle_choice(
+                    self._settings.artwork_cache_limit_mb,
+                    ARTWORK_CACHE_LIMIT_CHOICES_MB,
+                    step,
+                )
+                settings = replace(
+                    self._settings,
+                    performance_profile="custom",
+                    artwork_cache_limit_mb=value,
+                )
+                message = (
+                    "Artwork cache unlimited"
+                    if value == 0
+                    else f"Artwork cache limited to {value} MB"
+                )
+            elif name == "backgroundArtworkDuringPlayback":
+                value = not self._settings.background_artwork_during_playback
+                settings = replace(
+                    self._settings,
+                    performance_profile="custom",
+                    background_artwork_during_playback=value,
+                )
+                message = (
+                    "Background artwork during playback on"
+                    if value
+                    else "Background artwork waits until playback stops"
+                )
+            elif name == "reducedMotion":
+                value = not self._settings.reduced_motion
+                settings = replace(
+                    self._settings,
+                    performance_profile="custom",
+                    reduced_motion=value,
+                )
+                message = "Reduced motion on" if value else "Reduced motion off"
             else:
                 raise ValueError(f"unknown setting: {name}")
 
@@ -877,6 +1015,43 @@ class CouchController(QObject):
                 "settings": self.settings,
             }
         except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(result="QVariantMap")
+    def clearArtworkCache(self) -> dict[str, object]:
+        """Clear generated thumbnails without touching media or sidecar art."""
+
+        try:
+            change = self._artwork_cache.clear_generated()
+            removed_assets = [
+                asset_id
+                for asset_id, path in self._artwork_paths.items()
+                if (
+                    path.parent == self._artwork_cache.cache_directory
+                    and self._artwork_cache._is_generated_cache_file(path)
+                )
+            ]
+            for asset_id in removed_assets:
+                self._artwork_paths.pop(asset_id, None)
+                self._artwork_urls.pop(asset_id, None)
+            self._artwork_unavailable.clear()
+            self._artwork_cache_bytes = change.remaining.size_bytes
+            self._artwork_cache_files = change.remaining.file_count
+            self._library_snapshot = self._build_library_snapshot()
+            self.libraryChanged.emit()
+            self.settingsChanged.emit()
+            return {
+                "ok": True,
+                "message": (
+                    f"Cleared {change.removed_files} generated thumbnails "
+                    f"({change.removed_bytes / (1024 * 1024):.1f} MB). "
+                    "Media and sidecar images were untouched."
+                ),
+                "removedFiles": change.removed_files,
+                "removedBytes": change.removed_bytes,
+                "settings": self.settings,
+            }
+        except OSError as exc:
             return self._error(exc)
 
     @Slot(result="QVariantMap")
@@ -1323,7 +1498,17 @@ class CouchKeyFilter(QObject):
 
     def _adjust_selected_setting(self, direction: int) -> bool:
         selection = int(self._window.property("settingsSelection"))
-        names = ("volume", "muted", "skipBack", "skipForward")
+        names = (
+            "performanceProfile",
+            "volume",
+            "muted",
+            "skipBack",
+            "skipForward",
+            "generateVideoThumbnails",
+            "artworkCacheLimit",
+            "backgroundArtworkDuringPlayback",
+            "reducedMotion",
+        )
         if not 0 <= selection < len(names):
             return False
         result = self._controller.adjustSetting(names[selection], direction)
@@ -1466,7 +1651,7 @@ class CouchKeyFilter(QObject):
                 current = int(self._window.property("settingsSelection"))
                 self._window.setProperty(
                     "settingsSelection",
-                    min(4, current + 1),
+                    min(10, current + 1),
                 )
                 return True
             if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
@@ -1474,7 +1659,11 @@ class CouchKeyFilter(QObject):
                 return self._adjust_selected_setting(direction)
             if intent is ControlIntent.SELECT:
                 selection = int(self._window.property("settingsSelection"))
-                if selection == 4:
+                if selection == 9:
+                    result = self._controller.clearArtworkCache()
+                    self._notify(result)
+                    return True
+                if selection == 10:
                     result = self._controller.resetSettings()
                     self._notify(result)
                     self._window.setProperty(

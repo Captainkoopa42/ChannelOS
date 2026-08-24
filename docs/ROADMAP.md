@@ -103,6 +103,9 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 - [ ] Home / Back / Info navigation — Home and Back work; dedicated Info behavior remains incomplete
 - [x] Functional Home destinations and controller/mouse-accessible quick-action cards
 - [x] Persistent couch Settings for volume, mute, and Live/On Demand skip distances
+- [ ] Standard/Lightweight/Custom machine-performance profiles, generated-art
+  cache controls, and reduced motion — implemented and automated-test covered;
+  Windows feature-branch validation pending
 - [x] Large, television-readable focus states and targets
 - [x] Default dark navy/charcoal + cool-blue ChannelOS visual language
 - [ ] SteamOS/controller compatibility validation

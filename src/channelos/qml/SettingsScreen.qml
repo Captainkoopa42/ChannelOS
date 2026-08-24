@@ -1,5 +1,6 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
-import QtQuick.Controls
 
 Item {
     id: settingsRoot
@@ -9,26 +10,87 @@ Item {
             volumePercent: 100,
             muted: false,
             skipBackSeconds: 10,
-            skipForwardSeconds: 30
+            skipForwardSeconds: 30,
+            performanceProfile: "standard",
+            generateVideoThumbnails: true,
+            artworkCacheLimitMb: 0,
+            backgroundArtworkDuringPlayback: true,
+            reducedMotion: false,
+            artworkCacheBytes: 0,
+            artworkCacheFiles: 0
         })
+    readonly property var settingsRows: [
+        { title: "Performance Profile", detail: "Standard preserves full artwork behavior. Lightweight reduces optional background work." },
+        { title: "Volume", detail: "The volume ChannelOS uses now and on its next launch." },
+        { title: "Muted", detail: "Remember whether ChannelOS should start muted." },
+        { title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
+        { title: "Skip Forward", detail: "How far Right/Fast Forward jumps during Live TV and On Demand." },
+        { title: "Generate Video Thumbnails", detail: "Use FFmpeg when no local sidecar image or cached thumbnail exists." },
+        { title: "Generated Artwork Cache", detail: "Limit only ChannelOS-generated thumbnails. Zero means unlimited." },
+        { title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
+        { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
+        { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
+        { title: "Reset Defaults", detail: "Restore Standard mode, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
+    ]
 
     anchors.fill: parent
     visible: hostWindow !== null && hostWindow.screen === "settings"
 
+    function profileLabel() {
+        var profile = String(preferences.performanceProfile || "standard")
+        return profile.charAt(0).toUpperCase() + profile.slice(1)
+    }
+
+    function cacheLimitLabel() {
+        var limit = Number(preferences.artworkCacheLimitMb || 0)
+        return limit > 0 ? limit + " MB" : "Unlimited"
+    }
+
+    function cacheUsageLabel() {
+        var bytes = Number(preferences.artworkCacheBytes || 0)
+        var files = Number(preferences.artworkCacheFiles || 0)
+        var size = bytes >= 1048576
+                 ? (bytes / 1048576).toFixed(1) + " MB"
+                 : (bytes / 1024).toFixed(1) + " KB"
+        return files + (files === 1 ? " thumbnail • " : " thumbnails • ") + size
+    }
+
     function valueFor(index) {
         if (index === 0)
-            return (preferences.volumePercent || 0) + "%"
+            return profileLabel()
         if (index === 1)
-            return preferences.muted ? "On" : "Off"
+            return (preferences.volumePercent || 0) + "%"
         if (index === 2)
-            return (preferences.skipBackSeconds || 10) + " seconds"
+            return preferences.muted ? "On" : "Off"
         if (index === 3)
+            return (preferences.skipBackSeconds || 10) + " seconds"
+        if (index === 4)
             return (preferences.skipForwardSeconds || 30) + " seconds"
-        return "Restore"
+        if (index === 5)
+            return preferences.generateVideoThumbnails ? "On" : "Off"
+        if (index === 6)
+            return cacheLimitLabel()
+        if (index === 7)
+            return preferences.backgroundArtworkDuringPlayback ? "On" : "Off"
+        if (index === 8)
+            return preferences.reducedMotion ? "On" : "Off"
+        if (index === 9)
+            return cacheUsageLabel()
+        return "Standard"
     }
 
     function settingName(index) {
-        return ["volume", "muted", "skipBack", "skipForward"][index]
+        return [
+            "performanceProfile",
+            "volume",
+            "muted",
+            "skipBack",
+            "skipForward",
+            "generateVideoThumbnails",
+            "artworkCacheLimit",
+            "backgroundArtworkDuringPlayback",
+            "reducedMotion"
+        ][index]
     }
 
     function showResult(result) {
@@ -44,9 +106,16 @@ Item {
     }
 
     function adjust(index, direction) {
-        if (index < 0 || index > 3)
+        if (index < 0 || index > 8)
             return
         showResult(channelOS.adjustSetting(settingName(index), direction))
+    }
+
+    function activateAction(index) {
+        if (index === 9)
+            showResult(channelOS.clearArtworkCache())
+        else if (index === 10)
+            showResult(channelOS.resetSettings())
     }
 
     Rectangle {
@@ -56,7 +125,7 @@ Item {
 
     Timer {
         id: statusClearTimer
-        interval: 4200
+        interval: 5200
         repeat: false
         onTriggered: {
             if (settingsRoot.hostWindow !== null)
@@ -83,18 +152,8 @@ Item {
 
             Row {
                 spacing: 2
-                Text {
-                    text: "Channel"
-                    color: "#f4f7fb"
-                    font.pixelSize: 34
-                    font.weight: Font.DemiBold
-                }
-                Text {
-                    text: "OS"
-                    color: "#42adff"
-                    font.pixelSize: 34
-                    font.weight: Font.DemiBold
-                }
+                Text { text: "Channel"; color: "#f4f7fb"; font.pixelSize: 34; font.weight: Font.DemiBold }
+                Text { text: "OS"; color: "#42adff"; font.pixelSize: 34; font.weight: Font.DemiBold }
             }
 
             Item { width: 1; height: 18 }
@@ -106,7 +165,6 @@ Item {
                 color: "#12396a"
                 border.color: "#42adff"
                 border.width: 2
-
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 18
@@ -123,7 +181,6 @@ Item {
                 height: 52
                 radius: 7
                 color: backMouse.containsMouse ? "#10283f" : "transparent"
-
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 18
@@ -132,7 +189,6 @@ Item {
                     color: "#9fb0c2"
                     font.pixelSize: 18
                 }
-
                 MouseArea {
                     id: backMouse
                     anchors.fill: parent
@@ -149,17 +205,22 @@ Item {
             anchors.bottom: parent.bottom
             anchors.margins: 38
             spacing: 8
-
             Text {
-                text: "SOUND & PLAYBACK"
+                text: "CURRENT PROFILE"
                 color: "#42adff"
                 font.pixelSize: 13
                 font.weight: Font.Bold
                 font.letterSpacing: 2
             }
             Text {
+                text: settingsRoot.profileLabel()
+                color: "#f4f7fb"
+                font.pixelSize: 22
+                font.weight: Font.DemiBold
+            }
+            Text {
                 width: parent.width
-                text: "Preferences are stored locally in .channelos/settings.json. Your media and channel databases are not modified."
+                text: "Settings are local. Lightweight changes optional artwork work and motion—not playback quality, schedules, media, or channels."
                 color: "#9fb0c2"
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
@@ -174,174 +235,180 @@ Item {
         anchors.top: parent.top
         anchors.bottom: settingsFooter.top
 
-        Column {
+        Text {
+            id: settingsTitle
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
-            anchors.margins: 44
+            anchors.leftMargin: 44
+            anchors.rightMargin: 44
+            anchors.topMargin: 32
+            text: "Settings"
+            color: "#f4f7fb"
+            font.pixelSize: 34
+            font.weight: Font.DemiBold
+        }
+
+        Text {
+            id: settingsSubtitle
+            anchors.left: settingsTitle.left
+            anchors.right: settingsTitle.right
+            anchors.top: settingsTitle.bottom
+            anchors.topMargin: 4
+            text: "Choose a ready-made profile or tune individual controls. Changes save automatically."
+            color: "#9fb0c2"
+            font.pixelSize: 16
+            elide: Text.ElideRight
+        }
+
+        ListView {
+            id: settingsList
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: settingsSubtitle.bottom
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 44
+            anchors.rightMargin: 34
+            anchors.topMargin: 22
+            anchors.bottomMargin: 16
             spacing: 8
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+            model: settingsRoot.settingsRows
+            currentIndex: settingsRoot.hostWindow !== null
+                          ? settingsRoot.hostWindow.settingsSelection : 0
+            onCurrentIndexChanged: positionViewAtIndex(currentIndex, ListView.Contain)
 
-            Text {
-                text: "Settings"
-                color: "#f4f7fb"
-                font.pixelSize: 34
-                font.weight: Font.DemiBold
-            }
-            Text {
-                text: "Simple defaults for your couch experience. Changes save automatically."
-                color: "#9fb0c2"
-                font.pixelSize: 17
-            }
+            delegate: Rectangle {
+                id: settingRow
+                required property int index
+                required property var modelData
+                readonly property bool selected:
+                    settingsRoot.hostWindow !== null
+                    && index === settingsRoot.hostWindow.settingsSelection
+                width: Math.max(1, settingsList.width - 8)
+                height: 82
+                radius: 9
+                color: selected ? "#102b50" : "#0b1b2e"
+                border.color: selected ? "#42adff" : "#17324a"
+                border.width: selected ? 2 : 1
 
-            Item { width: 1; height: 24 }
-
-            Repeater {
-                model: [
-                    { title: "Volume", detail: "The volume ChannelOS uses now and on its next launch." },
-                    { title: "Muted", detail: "Remember whether ChannelOS should start muted." },
-                    { title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
-                    { title: "Skip Forward", detail: "How far Right/Fast Forward jumps during Live TV and On Demand." },
-                    { title: "Reset Defaults", detail: "Restore volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
-                ]
-
-                delegate: Rectangle {
-                    readonly property bool selected:
-                        settingsRoot.hostWindow !== null
-                        && index === settingsRoot.hostWindow.settingsSelection
-                    // Repeater delegates briefly have no parent while Qt is
-                    // constructing them. Use stable root geometry so startup
-                    // never evaluates parent.width through a null parent.
-                    width: Math.max(
-                        1,
-                        settingsRoot.width - settingsSidebar.width - 88
-                    )
-                    height: 94
-                    radius: 9
-                    color: selected ? "#102b50" : "#0b1b2e"
-                    border.color: selected ? "#42adff" : "#17324a"
-                    border.width: selected ? 2 : 1
-
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: settingsRoot.hostWindow.settingsSelection = index
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        settingsRoot.hostWindow.settingsSelection = settingRow.index
+                        settingsRoot.forceActiveFocus()
                     }
+                }
 
-                    Column {
-                        anchors.left: parent.left
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.leftMargin: 22
-                        spacing: 6
-                        width: parent.width * 0.63
-
-                        Text {
-                            text: modelData.title
-                            color: "#f4f7fb"
-                            font.pixelSize: 20
-                            font.weight: Font.DemiBold
-                        }
-                        Text {
-                            text: modelData.detail
-                            color: "#9fb0c2"
-                            font.pixelSize: 14
-                            width: parent.width
-                            elide: Text.ElideRight
-                        }
+                Column {
+                    anchors.left: parent.left
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.leftMargin: 20
+                    spacing: 4
+                    width: Math.max(1, parent.width - 300)
+                    Text {
+                        text: settingRow.modelData.title
+                        color: "#f4f7fb"
+                        font.pixelSize: 18
+                        font.weight: Font.DemiBold
                     }
-
-                    Row {
-                        anchors.right: parent.right
-                        anchors.rightMargin: 20
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 10
-                        visible: index < 4
-
-                        Rectangle {
-                            width: 42
-                            height: 42
-                            radius: 6
-                            color: minusMouse.containsMouse ? "#1a4d82" : "#10283f"
-                            border.color: "#1a91ff"
-                            Text {
-                                anchors.centerIn: parent
-                                text: "−"
-                                color: "#f4f7fb"
-                                font.pixelSize: 24
-                            }
-                            MouseArea {
-                                id: minusMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    settingsRoot.hostWindow.settingsSelection = index
-                                    settingsRoot.adjust(index, -1)
-                                }
-                            }
-                        }
-
-                        Text {
-                            width: 116
-                            anchors.verticalCenter: parent.verticalCenter
-                            horizontalAlignment: Text.AlignHCenter
-                            text: settingsRoot.valueFor(index)
-                            color: "#42adff"
-                            font.pixelSize: 18
-                            font.weight: Font.DemiBold
-                        }
-
-                        Rectangle {
-                            width: 42
-                            height: 42
-                            radius: 6
-                            color: plusMouse.containsMouse ? "#1a4d82" : "#10283f"
-                            border.color: "#1a91ff"
-                            Text {
-                                anchors.centerIn: parent
-                                text: "+"
-                                color: "#f4f7fb"
-                                font.pixelSize: 24
-                            }
-                            MouseArea {
-                                id: plusMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    settingsRoot.hostWindow.settingsSelection = index
-                                    settingsRoot.adjust(index, 1)
-                                }
-                            }
-                        }
+                    Text {
+                        text: settingRow.modelData.detail
+                        color: "#9fb0c2"
+                        font.pixelSize: 13
+                        width: parent.width
+                        elide: Text.ElideRight
                     }
+                }
+
+                Row {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 18
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
+                    visible: settingRow.index < 9
 
                     Rectangle {
-                        anchors.right: parent.right
-                        anchors.rightMargin: 20
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 150
-                        height: 44
+                        width: 38
+                        height: 38
                         radius: 6
-                        visible: index === 4
-                        color: resetMouse.containsMouse ? "#1a4d82" : "#10283f"
+                        color: minusMouse.containsMouse ? "#1a4d82" : "#10283f"
                         border.color: "#1a91ff"
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Reset"
-                            color: "#f4f7fb"
-                            font.pixelSize: 16
-                            font.weight: Font.DemiBold
-                        }
-
+                        Text { anchors.centerIn: parent; text: "−"; color: "#f4f7fb"; font.pixelSize: 22 }
                         MouseArea {
-                            id: resetMouse
+                            id: minusMouse
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                settingsRoot.hostWindow.settingsSelection = 4
-                                settingsRoot.showResult(channelOS.resetSettings())
+                                settingsRoot.hostWindow.settingsSelection = settingRow.index
+                                settingsRoot.adjust(settingRow.index, -1)
                             }
+                        }
+                    }
+
+                    Text {
+                        width: 156
+                        anchors.verticalCenter: parent.verticalCenter
+                        horizontalAlignment: Text.AlignHCenter
+                        text: settingsRoot.valueFor(settingRow.index)
+                        color: "#42adff"
+                        font.pixelSize: 16
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                    }
+
+                    Rectangle {
+                        width: 38
+                        height: 38
+                        radius: 6
+                        color: plusMouse.containsMouse ? "#1a4d82" : "#10283f"
+                        border.color: "#1a91ff"
+                        Text { anchors.centerIn: parent; text: "+"; color: "#f4f7fb"; font.pixelSize: 22 }
+                        MouseArea {
+                            id: plusMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                settingsRoot.hostWindow.settingsSelection = settingRow.index
+                                settingsRoot.adjust(settingRow.index, 1)
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    anchors.right: parent.right
+                    anchors.rightMargin: 18
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 236
+                    height: 42
+                    radius: 6
+                    visible: settingRow.index >= 9
+                    color: actionMouse.containsMouse ? "#1a4d82" : "#10283f"
+                    border.color: "#1a91ff"
+                    Text {
+                        anchors.centerIn: parent
+                        text: settingRow.index === 9
+                              ? "Clear • " + settingsRoot.cacheUsageLabel()
+                              : "Restore Standard Defaults"
+                        color: "#f4f7fb"
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
+                        elide: Text.ElideRight
+                        width: parent.width - 16
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                    MouseArea {
+                        id: actionMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            settingsRoot.hostWindow.settingsSelection = settingRow.index
+                            settingsRoot.activateAction(settingRow.index)
                         }
                     }
                 }
@@ -358,7 +425,6 @@ Item {
         color: "#071322"
         border.color: "#1a3550"
         border.width: 1
-
         Text {
             anchors.left: parent.left
             anchors.leftMargin: 30

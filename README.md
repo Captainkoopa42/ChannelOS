@@ -263,7 +263,7 @@ Every major feature should answer five questions:
 ## License
 
 ChannelOS is open-source software licensed under the [Mozilla Public License
-2.0](LICENSE.md). Copyright © 2026 William Robert Adams.
+2.0](LICENSE.md). Copyright (c) 2026 William Robert Adams.
 
 Third-party components keep their own licenses. See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the current development

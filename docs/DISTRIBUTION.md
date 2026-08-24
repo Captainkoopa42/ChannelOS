@@ -4,7 +4,7 @@
 
 **ChannelOS license:** Mozilla Public License 2.0
 
-**Copyright:** Copyright © 2026 William Robert Adams
+**Copyright:** Copyright (c) 2026 William Robert Adams
 
 This document defines the rules for turning the ChannelOS source tree into a
 redistributable application. It is a technical compliance policy, not legal
@@ -25,7 +25,7 @@ Every release must preserve these properties:
 - Dynamically linked LGPL components remain replaceable by the user.
 - Required license texts, notices, corresponding-source information, and
   installation/relinking information travel with the release.
-- The exact files in the release—not a package name or assumption—determine its
+- The exact files in the release, not a package name or assumption, determine its
   third-party license obligations.
 
 ## 2. Source distributions

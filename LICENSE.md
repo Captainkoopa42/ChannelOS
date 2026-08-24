@@ -1,7 +1,7 @@
 # Mozilla Public License 2.0
 
 ChannelOS
-Copyright © 2026 William Robert Adams
+Copyright (c) 2026 William Robert Adams
 
 Except for third-party material identified separately, the Source Code Form in
 this repository is subject to the terms of the Mozilla Public License, v. 2.0.

@@ -19,7 +19,7 @@ The current Qt Quick / PySide6 couch application now includes:
 - ChannelOS startup/home presentation,
 - deliberate Channel 001 unassigned/static state,
 - real multi-channel Guide,
-- keyboard/D-pad-style navigation,
+- keyboard/D-pad-style navigation plus optional native Windows XInput,
 - authoritative selected-program detail,
 - current Broadcast Clock marker,
 - adaptive short-form Guide presentation,
@@ -276,7 +276,7 @@ The Windows development machine has validated:
 
 Major remaining couch/release work includes:
 
-- native controller/Steam Input adapter and real-machine validation,
+- native controller/Steam Input real-machine validation,
 - selected-title backdrop and richer artwork presentation polish,
 - Library -> Add to Channel authoring flow,
 - normal-user playback-runtime packaging,

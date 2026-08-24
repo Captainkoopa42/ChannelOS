@@ -116,7 +116,7 @@ This is a design-audit estimate, not a mathematical quality score. Implementatio
 | Library is separate active-selection mode | Content-first shelves, local artwork, management surface, and durable Continue Watching implemented | High |
 | Library and channels share one media index | Implemented | Very high |
 | On Demand does not contaminate channel scheduling | Implemented with separate playback session | Very high |
-| Couch-first presentation | Working keyboard/D-pad implementation | High |
+| Couch-first presentation | Keyboard/D-pad plus native Windows XInput implementation; hardware gate pending | High |
 | Functional Home destinations | Implemented and real-machine tested | High |
 | Persistent Settings | Basic controls and performance/cache profiles merged and Windows validated | High |
 | User is broadcaster | Safe Channel Builder MVP implemented | High |
@@ -151,6 +151,8 @@ Implemented:
   cache controls,
 - transport-neutral couch control intents with keyboard, multimedia-key, and
   consumer-remote-key translation,
+- optional native Windows XInput discovery, hot-plug handling, analog
+  navigation/volume, and standard gamepad transport bindings,
 - pause / resume,
 - rewind and skip forward,
 - LIVE return,
@@ -164,7 +166,7 @@ Implemented:
 
 Still needed:
 
-- native controller/Steam Input adapter and real-machine validation,
+- native controller/Steam Input real-machine validation,
 - startup/resume polish,
 - release hardening.
 
@@ -312,7 +314,8 @@ When On Demand temporarily owns the presentation surface, ChannelOS may stop the
 
 ## Important remaining first-release work
 
-1. Native controller/Steam Input adapter and real-machine validation.
+1. Native controller/Steam Input real-machine validation (the Windows XInput
+   adapter is implemented; hardware behavior has not yet passed the gate).
 2. Normal-user libVLC/runtime packaging.
 3. Windows installer / repeatable package.
 4. Linux and SteamOS validation.

@@ -333,6 +333,42 @@ Item {
         playSelected()
     }
 
+    function handleBack() {
+        if (managerVisible) {
+            returnFromManager()
+        } else if (searchField.activeFocus) {
+            searchField.focus = false
+            forceActiveFocus()
+        } else if (query.length) {
+            query = ""
+        } else if (hostWindow) {
+            hostWindow.screen = "home"
+        }
+    }
+
+    function handleControllerIntent(intent: string): void {
+        if (!visible)
+            return
+        if (intent === "BACK") {
+            handleBack()
+            return
+        }
+        if (managerVisible || searchField.activeFocus)
+            return
+        if (intent === "LEFT")
+            moveColumn(-1)
+        else if (intent === "RIGHT")
+            moveColumn(1)
+        else if (intent === "UP")
+            moveShelf(-1)
+        else if (intent === "DOWN")
+            moveShelf(1)
+        else if (intent === "SELECT")
+            activateSelection()
+        else if (intent === "ADD_MEDIA_SOURCE")
+            openManager()
+    }
+
     function playSelected() {
         var item = selectedItem()
         if (!item.assetId)
@@ -467,16 +503,7 @@ Item {
     Shortcut {
         sequence: "Escape"
         enabled: libraryRoot.visible && !libraryRoot.managerVisible
-        onActivated: {
-            if (searchField.activeFocus) {
-                searchField.focus = false
-                libraryRoot.forceActiveFocus()
-            } else if (query.length) {
-                query = ""
-            } else if (hostWindow) {
-                hostWindow.screen = "home"
-            }
-        }
+        onActivated: libraryRoot.handleBack()
     }
 
     Rectangle {

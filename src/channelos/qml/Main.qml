@@ -39,6 +39,8 @@ ApplicationWindow {
     property int volumePercent: 100
     property bool muted: false
     property bool audioHudVisible: false
+    property bool controllerConnected: false
+    property string controllerName: ""
 
     signal homeMenuActivated(int index)
     signal homeCardActivated(int index)

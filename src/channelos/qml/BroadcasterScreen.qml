@@ -57,6 +57,28 @@ Item {
         return channels[selectedChannelIndex]
     }
 
+    function handleControllerIntent(intent: string): void {
+        if (!hostWindow || hostWindow.screen !== "broadcaster")
+            return
+        if (intent === "BACK") {
+            if (editorMode === "list")
+                leaveBroadcaster()
+            else
+                cancelEditor()
+            return
+        }
+        if (editorMode !== "list")
+            return
+        if (intent === "UP")
+            selectedChannelIndex = Math.max(0, selectedChannelIndex - 1)
+        else if (intent === "DOWN")
+            selectedChannelIndex = Math.min(
+                        Math.max(0, channels.length - 1),
+                        selectedChannelIndex + 1)
+        else if (intent === "SELECT")
+            beginEdit()
+    }
+
     function resetFeedback() {
         feedbackMessage = ""
         feedbackIsError = false

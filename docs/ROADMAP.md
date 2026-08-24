@@ -87,9 +87,9 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 **Goal:** Make the computer disappear during ordinary viewing while preserving direct control.
 
 - [x] Full-screen live view
-- [x] Remote/controller input abstraction — transport-neutral commands and the
-  Qt keyboard/media/consumer-key adapter are implemented; native gamepad and
-  SteamOS validation remain
+- [x] Remote/controller input abstraction — transport-neutral commands,
+  keyboard/media keys, and a dependency-free Windows XInput hot-plug adapter
+  are implemented; Windows hardware and SteamOS validation remain
 - [ ] Open ChannelOS control-intent protocol / IPC boundary
 - [x] Numeric direct tuning in the couch UI
 - [x] Channel up/down
@@ -122,7 +122,7 @@ Additional Phase 3 work already validated:
 - [x] Broadcast vs. Viewer Clock presentation
 - [x] Readable short-form Guide aggregation without modifying schedule truth
 
-**Current state:** ordinary viewing already behaves like television on the Windows development machine. The remaining Phase 3 work is increasingly native-controller input, packaging, and release hardening rather than proof that the core experience functions.
+**Current state:** ordinary viewing already behaves like television on the Windows development machine. Native Xbox-compatible controller input is implemented behind the same control-intent boundary and awaits the Windows hardware gate. The remaining Phase 3 work is increasingly controller/platform validation, packaging, and release hardening rather than proof that the core experience functions.
 
 **Exit target:** A keyboard and mouse are optional for ordinary viewing, while pause/seek/volume controls remain under the viewer's command. The same couch UI works as a normal desktop application and as a Steam/SteamOS-launched application.
 

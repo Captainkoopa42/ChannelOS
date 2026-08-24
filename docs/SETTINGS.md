@@ -68,8 +68,8 @@ Escape / H      Return Home
 S               Open Settings outside an active text editor
 ```
 
-The same control-intent boundary supports mouse, keyboard, D-pad, and future
-native controller adapters.
+The same control-intent boundary supports mouse, keyboard, D-pad, and the
+optional native Windows XInput controller adapter.
 
 ## Persistence
 
@@ -85,6 +85,6 @@ only this settings file and reapplies Standard mode.
 
 ## Deliberate limits
 
-Native controller bindings, a light-color theme, playback-runtime selection,
-server/remote permissions, and startup/crash-recovery controls remain later
-work. Household viewer profiles are a separate roadmap feature.
+User-editable controller bindings, a light-color theme, playback-runtime
+selection, server/remote permissions, and startup/crash-recovery controls
+remain later work. Household viewer profiles are a separate roadmap feature.

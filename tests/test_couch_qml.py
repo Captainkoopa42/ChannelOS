@@ -96,6 +96,8 @@ def test_main_qml_instantiates_headlessly() -> None:
     assert roots[0].property("homeCardSelection") == 0
     assert roots[0].property("settingsSelection") == 0
     assert roots[0].property("infoVisible") is False
+    assert roots[0].property("controllerConnected") is False
+    assert roots[0].property("controllerName") == ""
     assert roots[0].property("channelEntry") == ""
     roots[0].setProperty("screen", "ondemand")
     roots[0].setProperty("channelEntry", "007")

@@ -347,7 +347,7 @@ Item {
     }
 
     function handleControllerIntent(intent: string): void {
-        if (!visible)
+        if (!hostWindow || hostWindow.screen !== "library")
             return
         if (intent === "BACK") {
             handleBack()

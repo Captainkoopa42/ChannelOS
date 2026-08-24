@@ -17,10 +17,72 @@ from PySide6.QtCore import (
     Slot,
     qInstallMessageHandler,
 )
-from PySide6.QtGui import QGuiApplication, QWindow
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 
 import channelos
+
+
+class FakeSettingsHost(QObject):
+    screenChanged = Signal()
+    settingsSelectionChanged = Signal()
+    statusMessageChanged = Signal()
+    volumePercentChanged = Signal()
+    mutedChanged = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._screen = "settings"
+        self._settings_selection = 0
+        self._status_message = ""
+        self._volume_percent = 100
+        self._muted = False
+
+    @Property(str, notify=screenChanged)
+    def screen(self) -> str:
+        return self._screen
+
+    @screen.setter
+    def screen(self, value: str) -> None:
+        if value != self._screen:
+            self._screen = value
+            self.screenChanged.emit()
+
+    @Property(int, notify=settingsSelectionChanged)
+    def settingsSelection(self) -> int:
+        return self._settings_selection
+
+    @settingsSelection.setter
+    def settingsSelection(self, value: int) -> None:
+        self._settings_selection = int(value)
+        self.settingsSelectionChanged.emit()
+
+    @Property(str, notify=statusMessageChanged)
+    def statusMessage(self) -> str:
+        return self._status_message
+
+    @statusMessage.setter
+    def statusMessage(self, value: str) -> None:
+        self._status_message = str(value)
+        self.statusMessageChanged.emit()
+
+    @Property(int, notify=volumePercentChanged)
+    def volumePercent(self) -> int:
+        return self._volume_percent
+
+    @volumePercent.setter
+    def volumePercent(self, value: int) -> None:
+        self._volume_percent = int(value)
+        self.volumePercentChanged.emit()
+
+    @Property(bool, notify=mutedChanged)
+    def muted(self) -> bool:
+        return self._muted
+
+    @muted.setter
+    def muted(self, value: bool) -> None:
+        self._muted = bool(value)
+        self.mutedChanged.emit()
 
 
 class FakeSettingsController(QObject):
@@ -80,12 +142,7 @@ class FakeSettingsController(QObject):
 def test_settings_qml_instantiates_headlessly() -> None:
     app = QGuiApplication.instance() or QGuiApplication([])
     controller = FakeSettingsController()
-    host = QWindow()
-    host.setProperty("screen", "settings")
-    host.setProperty("settingsSelection", 0)
-    host.setProperty("statusMessage", "")
-    host.setProperty("volumePercent", 100)
-    host.setProperty("muted", False)
+    host = FakeSettingsHost()
 
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("channelOS", controller)
@@ -113,12 +170,11 @@ def test_settings_qml_instantiates_headlessly() -> None:
         app.processEvents()
         assert item.property("visible") is True
 
-        host.setProperty("screen", "home")
+        host.screen = "home"
         app.processEvents()
         assert item.property("visible") is False
 
         item.deleteLater()
-        host.close()
         app.processEvents()
     finally:
         qInstallMessageHandler(previous_handler)

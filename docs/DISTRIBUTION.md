@@ -158,6 +158,8 @@ not an installer and not a one-file executable. Its inputs and controls are:
   `packaging/windows/runtime-lock.json`;
 - extraction of only `libvlc.dll`, `libvlccore.dll`, and `plugins/` from the
   audited x64 native tree;
+- a frozen-executable startup probe plus an explicit inventory check for the
+  QtQuick, Controls, Layouts, and QtQml module files ChannelOS imports;
 - a full package file inventory and SHA-256 values in `PACKAGE-BOM.json`; and
 - CI validation that rejects unexpected files, import libraries, hash changes,
   incomplete notices, or a GPL companion package.

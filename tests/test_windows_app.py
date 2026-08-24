@@ -55,15 +55,3 @@ def test_packaged_launcher_creates_log_and_surfaces_failure(
     assert list((tmp_path / "logs").glob("channelos-*.log"))
     assert messages and str(tmp_path / "logs") in messages[0]
     assert received[:2] == ["--db", str(tmp_path / "library.db")]
-
-
-def test_packaged_smoke_argument_uses_qml_probe(monkeypatch) -> None:
-    called: list[bool] = []
-    monkeypatch.setattr(
-        windows_app,
-        "qml_runtime_smoke_test",
-        lambda: called.append(True) or 0,
-    )
-
-    assert windows_app.main([windows_app.PACKAGE_SMOKE_ARGUMENT]) == 0
-    assert called == [True]

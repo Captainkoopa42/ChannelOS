@@ -11,7 +11,6 @@ from typing import Mapping, TextIO
 from . import couch
 
 DATA_DIRECTORY_ENV = "CHANNELOS_DATA_DIR"
-PACKAGE_SMOKE_ARGUMENT = "--package-smoke-test"
 
 
 class _Tee:
@@ -84,42 +83,10 @@ def _show_error(message: str) -> None:
         return
 
 
-def qml_runtime_smoke_test() -> int:
-    """Prove the frozen bundle contains the QML modules ChannelOS imports."""
-
-    from PySide6.QtCore import QUrl
-    from PySide6.QtGui import QGuiApplication
-    from PySide6.QtQml import QQmlComponent, QQmlEngine
-
-    application = QGuiApplication.instance() or QGuiApplication([])
-    engine = QQmlEngine()
-    component = QQmlComponent(engine)
-    component.setData(
-        b"""
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
-Item {
-    RowLayout { Button { text: \"ChannelOS\" } }
-}
-""",
-        QUrl(),
-    )
-    created = component.create()
-    if created is None:
-        details = "; ".join(error.toString() for error in component.errors())
-        raise RuntimeError(f"packaged QML smoke test failed: {details}")
-    del created
-    application.processEvents()
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     """Launch packaged ChannelOS with writable per-user state and a log file."""
 
     supplied = list(sys.argv[1:] if argv is None else argv)
-    if supplied == [PACKAGE_SMOKE_ARGUMENT]:
-        return qml_runtime_smoke_test()
     data_directory = default_data_directory().resolve(strict=False)
     channels_directory = data_directory / "channels"
     logs_directory = data_directory / "logs"

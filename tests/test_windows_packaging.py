@@ -92,6 +92,10 @@ def test_package_validation_compares_every_frozen_file(tmp_path: Path) -> None:
         "licenses/LGPL-3.0.txt",
         "licenses/PYTHON.txt",
         "licenses/REPLACING-LGPL-LIBRARIES.md",
+        "_internal/PySide6/Qt/qml/QtQml/qmldir",
+        "_internal/PySide6/Qt/qml/QtQuick/qmldir",
+        "_internal/PySide6/Qt/qml/QtQuick/Controls/qmldir",
+        "_internal/PySide6/Qt/qml/QtQuick/Layouts/qmldir",
     )
     for relative in required_files:
         path = tmp_path / relative

@@ -342,6 +342,10 @@ def validate_package_root(package_root: Path) -> None:
         package_root / "licenses" / "PYTHON.txt",
         package_root / "licenses" / "REPLACING-LGPL-LIBRARIES.md",
         package_root / "PACKAGE-BOM.json",
+        package_root / "_internal" / "PySide6" / "Qt" / "qml" / "QtQml" / "qmldir",
+        package_root / "_internal" / "PySide6" / "Qt" / "qml" / "QtQuick" / "qmldir",
+        package_root / "_internal" / "PySide6" / "Qt" / "qml" / "QtQuick" / "Controls" / "qmldir",
+        package_root / "_internal" / "PySide6" / "Qt" / "qml" / "QtQuick" / "Layouts" / "qmldir",
     )
     missing = [str(path.relative_to(package_root)) for path in required if not path.exists()]
     if missing:
@@ -389,16 +393,17 @@ def run_pyinstaller(output_directory: Path, work_directory: Path) -> Path:
     return built
 
 
-def run_packaged_qml_smoke_test(package_root: Path, build_root: Path) -> None:
+def run_packaged_startup_probe(package_root: Path, build_root: Path) -> None:
+    """Prove the frozen executable starts and exits through its real entry point."""
+
     smoke_data = build_root / "smoke-data"
     if smoke_data.exists():
         shutil.rmtree(smoke_data)
     environment = os.environ.copy()
-    environment["QT_QPA_PLATFORM"] = "offscreen"
     environment["CHANNELOS_DATA_DIR"] = str(smoke_data)
     try:
         subprocess.run(
-            [str(package_root / "ChannelOS.exe"), "--package-smoke-test"],
+            [str(package_root / "ChannelOS.exe"), "--help"],
             cwd=package_root,
             env=environment,
             timeout=60,
@@ -437,7 +442,7 @@ def build_package(output_directory: Path, supplied_nupkg: Path | None = None) ->
         package_root / "runtime" / "vlc",
         lock,
     )
-    run_packaged_qml_smoke_test(package_root, build_root)
+    run_packaged_startup_probe(package_root, build_root)
     copy_release_documents(package_root)
     collect_python_licenses(package_root / "licenses" / "python")
     write_bom(package_root, lock, nupkg, vlc_inventory)

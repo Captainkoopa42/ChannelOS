@@ -187,6 +187,16 @@ def test_library_qml_instantiates_headlessly() -> None:
         Q_ARG(str, "BACK"),
     )
     assert invoked
+    # The first Back releases the search field's startup focus, matching the
+    # keyboard path. A second Back returns Home.
+    app.processEvents()
+    invoked = QMetaObject.invokeMethod(
+        item,
+        "handleControllerIntent",
+        Qt.ConnectionType.DirectConnection,
+        Q_ARG(str, "BACK"),
+    )
+    assert invoked
     assert host.screen == "home"
     app.processEvents()
 

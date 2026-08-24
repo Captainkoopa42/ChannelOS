@@ -342,14 +342,27 @@ def validate_package_root(package_root: Path) -> None:
         package_root / "licenses" / "PYTHON.txt",
         package_root / "licenses" / "REPLACING-LGPL-LIBRARIES.md",
         package_root / "PACKAGE-BOM.json",
-        package_root / "_internal" / "PySide6" / "Qt" / "qml" / "QtQml" / "qmldir",
-        package_root / "_internal" / "PySide6" / "Qt" / "qml" / "QtQuick" / "qmldir",
-        package_root / "_internal" / "PySide6" / "Qt" / "qml" / "QtQuick" / "Controls" / "qmldir",
-        package_root / "_internal" / "PySide6" / "Qt" / "qml" / "QtQuick" / "Layouts" / "qmldir",
     )
     missing = [str(path.relative_to(package_root)) for path in required if not path.exists()]
     if missing:
         raise PackageError(f"package is incomplete: {', '.join(missing)}")
+
+    qml_root = package_root / "_internal"
+    required_qml_modules = (
+        "qml/QtQml/qmldir",
+        "qml/QtQuick/qmldir",
+        "qml/QtQuick/Controls/qmldir",
+        "qml/QtQuick/Layouts/qmldir",
+    )
+    missing_qml = [
+        relative
+        for relative in required_qml_modules
+        if not any(path.is_file() for path in qml_root.rglob(relative))
+    ]
+    if missing_qml:
+        raise PackageError(
+            "package is missing required QML modules: " + ", ".join(missing_qml)
+        )
 
     forbidden = [
         path.relative_to(package_root).as_posix()

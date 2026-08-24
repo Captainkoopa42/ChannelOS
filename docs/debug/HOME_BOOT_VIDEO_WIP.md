@@ -34,7 +34,15 @@ Observed progression:
 
 The embedded native `QWindow`/`WindowContainer` exists and is visible, but startup playback may still begin before Windows/Qt has fully realized the native child for D3D11 presentation.
 
-The next narrowly-scoped experiment is to delay `startHomePlayback()` briefly after the fullscreen Home window is shown, while keeping the Home surface visible first.
+The fixed 500 ms delay was useful as an isolation step, but it still guessed when the native child was ready. The current branch now uses a bounded readiness gate instead:
+
+1. show the QML host window,
+2. wait for the host and embedded video window to be visible, exposed, and non-zero in size,
+3. require that state to remain stable across three checks,
+4. only then request the native handle, attach libVLC, and start Home playback,
+5. make one diagnosed fallback attempt after five seconds rather than waiting forever.
+
+The PowerShell output carries `[ChannelOS Home video]` messages so the exact startup state can be reported from the Windows test machine.
 
 This is a presentation/startup timing experiment, not a redesign of the television runtime.
 

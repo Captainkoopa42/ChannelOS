@@ -254,7 +254,11 @@ def test_couch_qml_asset_is_present() -> None:
     assert '"mode"] = "previous"' in couch_qt
     assert "def continueWatching" in couch_qt
     assert "def startHomePlayback" in couch_qt
-    assert "QTimer.singleShot(500, controller.startHomePlayback)" in couch_qt
+    assert "NativeWindowStartupGate" in couch_qt
+    assert "sample_native_windows" in couch_qt
+    assert "attach_surface_and_start_home" in couch_qt
+    assert "int(video_window.winId())" in couch_qt
+    assert "QTimer.singleShot(500, controller.startHomePlayback)" not in couch_qt
     assert "not self._surface_ready" in couch_qt
     assert "continue_watching(default_channel=1)" in couch_qt
     assert "Continue Watching will connect" not in couch_qt

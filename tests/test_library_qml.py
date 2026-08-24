@@ -158,6 +158,7 @@ def test_library_qml_instantiates_headlessly() -> None:
 
     assert item.property("selectedShelf") == 0
     assert item.property("selectedColumn") == 0
+    assert item.property("expandedShelfId") == "all"
     assert item.property("managerVisible") is False
     assert item.property("shelfCount") >= 2
 

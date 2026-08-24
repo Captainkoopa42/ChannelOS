@@ -159,6 +159,13 @@ long/short-form groupings. Until local artwork exists, deterministic branded
 media cards keep every indexed file browsable without pretending that external
 metadata has already been matched.
 
+The shelves use an accordion presentation so only one collection needs to be
+open at a time. A viewer can select compact shelf headers with Up/Down, expand
+with Enter or Right, collapse from the first card with Left, and toggle a shelf
+with the mouse. File-backed cards display a concise format such as MP4 or MKV
+instead of exposing the decoder's raw container list, and long source names are
+elided within their shelf header.
+
 The former three-pane Library remains available as the secondary **Manage
 Sources** surface. Adding, rescanning, and removing indexed roots therefore
 stays powerful without making storage administration the first thing a viewer

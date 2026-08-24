@@ -30,6 +30,7 @@ Item {
     readonly property int shelfCount: shelves.length
     property int selectedShelf: 0
     property int selectedColumn: 0
+    property string expandedShelfId: "all"
     property string query: ""
     property bool managerVisible: false
     property string clockText: ""
@@ -67,6 +68,29 @@ Item {
         return String(item.title || item.fileName || "Untitled Media")
     }
 
+    function friendlyFormat(item) {
+        var fileName = String(item.fileName || item.path || "")
+        var dot = fileName.lastIndexOf(".")
+        var extension = dot >= 0 ? fileName.substring(dot + 1).toLowerCase() : ""
+        var knownExtensions = [
+            "mp4", "m4v", "mov", "mkv", "webm", "avi", "ts", "m2ts",
+            "mts", "mpg", "mpeg", "wmv", "flv"
+        ]
+        if (knownExtensions.indexOf(extension) >= 0)
+            return extension.toUpperCase()
+
+        var raw = String(item.containerFormat || "").split(",")[0].trim().toLowerCase()
+        var aliases = {
+            "matroska": "MKV",
+            "quicktime": "MOV",
+            "mpegts": "TS",
+            "mpeg": "MPEG"
+        }
+        if (aliases[raw])
+            return aliases[raw]
+        return raw.length ? raw.toUpperCase() : "MEDIA"
+    }
+
     function sortedCopy(items) {
         var result = items.slice(0)
         result.sort(function(a, b) {
@@ -99,6 +123,7 @@ Item {
                     matches.push(owned[matchIndex])
             }
             next.push({
+                shelfId: "search",
                 title: "SEARCH RESULTS",
                 subtitle: matches.length + " matching owned media item"
                           + (matches.length === 1 ? "" : "s"),
@@ -107,6 +132,7 @@ Item {
             })
         } else if (owned.length) {
             next.push({
+                shelfId: "all",
                 title: "ALL MEDIA",
                 subtitle: "Your complete indexed collection",
                 items: owned,
@@ -123,6 +149,7 @@ Item {
                 }
                 if (sourceItems.length) {
                     next.push({
+                        shelfId: "source:" + sourcePath,
                         title: String(source.name || "MEDIA SOURCE").toUpperCase(),
                         subtitle: sourceItems.length + " indexed item"
                                   + (sourceItems.length === 1 ? "" : "s"),
@@ -143,6 +170,7 @@ Item {
             }
             if (featureLength.length) {
                 next.push({
+                    shelfId: "feature",
                     title: "FEATURE LENGTH",
                     subtitle: "Long-form movies, recordings, and specials",
                     items: featureLength,
@@ -151,6 +179,7 @@ Item {
             }
             if (shortForm.length) {
                 next.push({
+                    shelfId: "short",
                     title: "SHORT FORM",
                     subtitle: "Episodes, clips, and shorter programs",
                     items: shortForm,
@@ -182,6 +211,26 @@ Item {
         ensureSelectionVisible()
     }
 
+    function shelfExpanded(shelfIndex) {
+        if (shelfIndex < 0 || shelfIndex >= shelves.length)
+            return false
+        if (String(query || "").trim().length)
+            return true
+        return String(shelves[shelfIndex].shelfId || "") === expandedShelfId
+    }
+
+    function toggleShelf(shelfIndex) {
+        if (shelfIndex < 0 || shelfIndex >= shelves.length)
+            return
+        selectCard(shelfIndex, selectedColumn)
+        var shelfId = String(shelves[shelfIndex].shelfId || "")
+        if (String(query || "").trim().length)
+            expandedShelfId = shelfId
+        else
+            expandedShelfId = expandedShelfId === shelfId ? "" : shelfId
+        Qt.callLater(ensureSelectionVisible)
+    }
+
     function moveShelf(delta) {
         if (!shelves.length)
             return
@@ -191,9 +240,18 @@ Item {
     function moveColumn(delta) {
         if (!shelves.length)
             return
+        if (!shelfExpanded(selectedShelf)) {
+            if (delta > 0)
+                toggleShelf(selectedShelf)
+            return
+        }
         var items = shelves[selectedShelf].items || []
         if (!items.length)
             return
+        if (delta < 0 && selectedColumn === 0) {
+            toggleShelf(selectedShelf)
+            return
+        }
         selectedColumn = Math.max(0, Math.min(items.length - 1, selectedColumn + delta))
         ensureSelectionVisible()
     }
@@ -204,9 +262,17 @@ Item {
         shelvesList.positionViewAtIndex(selectedShelf, ListView.Contain)
         Qt.callLater(function() {
             var shelfItem = shelvesList.itemAtIndex(selectedShelf)
-            if (shelfItem && shelfItem.cardListView)
+            if (shelfItem && shelfItem.expanded && shelfItem.cardListView)
                 shelfItem.cardListView.positionViewAtIndex(selectedColumn, ListView.Contain)
         })
+    }
+
+    function activateSelection() {
+        if (!shelfExpanded(selectedShelf)) {
+            toggleShelf(selectedShelf)
+            return
+        }
+        playSelected()
     }
 
     function playSelected() {
@@ -255,6 +321,7 @@ Item {
     onQueryChanged: {
         selectedShelf = 0
         selectedColumn = 0
+        expandedShelfId = String(query || "").trim().length ? "search" : "all"
         rebuildShelves()
     }
     onAllItemsChanged: rebuildShelves()
@@ -312,12 +379,12 @@ Item {
     Shortcut {
         sequence: "Return"
         enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
-        onActivated: libraryRoot.playSelected()
+        onActivated: libraryRoot.activateSelection()
     }
     Shortcut {
         sequence: "Space"
         enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
-        onActivated: libraryRoot.playSelected()
+        onActivated: libraryRoot.activateSelection()
     }
     Shortcut {
         sequence: "Ctrl+F"
@@ -627,7 +694,7 @@ Item {
                 }
                 Text {
                     text: libraryRoot.formatDuration(selectedBanner.item.durationSeconds)
-                          + "  •  " + String(selectedBanner.item.containerFormat || "MEDIA")
+                          + "  •  " + libraryRoot.friendlyFormat(selectedBanner.item)
                           + "  •  " + String(selectedBanner.item.sourceName || "Owned Media")
                     color: textSecondary
                     font.pixelSize: 13
@@ -670,28 +737,79 @@ Item {
                 required property var modelData
                 property int shelfIndex: index
                 property var shelfData: modelData
+                property bool expanded: libraryRoot.shelfExpanded(shelfIndex)
                 width: shelvesList.width
-                height: shelfData.featured ? 222 : 179
+                height: expanded ? (shelfData.featured ? 222 : 179) : 42
                 property alias cardListView: cardList
 
-                Row {
+                Behavior on height {
+                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                }
+
+                Rectangle {
                     id: shelfHeading
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
-                    height: 33
-                    spacing: 12
+                    anchors.rightMargin: 24
+                    height: 38
+                    radius: 5
+                    color: shelfDelegate.shelfIndex === libraryRoot.selectedShelf
+                           ? "#0d2035" : "transparent"
+
                     Text {
+                        id: shelfChevron
+                        anchors.left: parent.left
+                        anchors.leftMargin: 9
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: shelfDelegate.expanded ? "▾" : "▸"
+                        color: shelfDelegate.shelfIndex === libraryRoot.selectedShelf
+                               ? accentBright : textSecondary
+                        font.pixelSize: 16
+                    }
+
+                    Text {
+                        id: shelfTitle
+                        anchors.left: shelfChevron.right
+                        anchors.leftMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(implicitWidth, shelfHeading.width * 0.52)
                         text: shelfDelegate.shelfData.title
                         color: textPrimary
                         font.pixelSize: 16
                         font.weight: Font.DemiBold
+                        elide: Text.ElideRight
                     }
+
                     Text {
+                        id: shelfSubtitle
+                        anchors.left: shelfTitle.right
+                        anchors.right: shelfCount.left
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
                         text: shelfDelegate.shelfData.subtitle
                         color: textSecondary
                         font.pixelSize: 12
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        id: shelfCount
+                        anchors.right: parent.right
+                        anchors.rightMargin: 11
                         anchors.verticalCenter: parent.verticalCenter
+                        text: String((shelfDelegate.shelfData.items || []).length) + " items"
+                        color: accentBright
+                        font.pixelSize: 12
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: {
+                            libraryRoot.toggleShelf(shelfDelegate.shelfIndex)
+                            libraryRoot.forceActiveFocus()
+                        }
                     }
                 }
 
@@ -702,6 +820,8 @@ Item {
                     anchors.top: shelfHeading.bottom
                     anchors.bottom: parent.bottom
                     orientation: ListView.Horizontal
+                    visible: shelfDelegate.expanded
+                    opacity: shelfDelegate.expanded ? 1 : 0
                     spacing: 11
                     clip: true
                     model: shelfDelegate.shelfData.items || []
@@ -740,7 +860,9 @@ Item {
                                 anchors.left: parent.left
                                 anchors.top: parent.top
                                 anchors.margins: 13
-                                text: String(mediaCard.modelData.containerFormat || "MEDIA").toUpperCase()
+                                width: parent.width - 26
+                                elide: Text.ElideRight
+                                text: libraryRoot.friendlyFormat(mediaCard.modelData)
                                 color: "#d9ecff"
                                 opacity: 0.78
                                 font.pixelSize: mediaCard.width > 260 ? 22 : 17
@@ -850,7 +972,7 @@ Item {
                 anchors.leftMargin: 30
                 spacing: 24
                 Text { text: "ARROWS  Browse"; color: textSecondary; font.pixelSize: 12 }
-                Text { text: "ENTER  Play"; color: textSecondary; font.pixelSize: 12 }
+                Text { text: "ENTER  Open / Play"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "CTRL+F  Search"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "M  Manage Sources"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "ESC  Home"; color: textSecondary; font.pixelSize: 12 }

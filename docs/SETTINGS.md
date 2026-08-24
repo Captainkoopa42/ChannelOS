@@ -43,6 +43,19 @@ Volume and mute changes apply to the active Live TV or On Demand session and
 become the next-launch defaults. Skip choices apply to both television and On
 Demand control intents.
 
+## Truthful presentation
+
+The persisted Settings snapshot is the source for both behavior and visible
+values. The Settings rows update immediately, the volume/mute HUD mirrors the
+effective audio state, Library performance behavior follows the active profile,
+and the Live/On Demand control legend shows the configured skip distances.
+
+When a controller is connected those playback hints use the controller labels
+(`LT`, `RT`, bumpers, stick clicks, and face buttons). Without a controller they
+use the equivalent keyboard labels. The displayed skip distances come from the
+same values used by the actual seek command, so changing 10 seconds to 15
+seconds cannot leave a stale `-10s` label behind.
+
 ## Generated artwork safety
 
 The Settings screen reports generated-thumbnail count and size. **Clear

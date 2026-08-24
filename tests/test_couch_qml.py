@@ -24,6 +24,7 @@ class FakeChannelOS(QObject):
     homeTelevisionChanged = Signal()
     libraryChanged = Signal()
     onDemandChanged = Signal()
+    settingsChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -36,6 +37,18 @@ class FakeChannelOS(QObject):
             "title": "NO PROGRAMMING",
         }
         self._on_demand = {"active": False}
+        self.skips: list[float] = []
+        self._settings = {
+            "volumePercent": 100,
+            "muted": False,
+            "skipBackSeconds": 10,
+            "skipForwardSeconds": 30,
+            "performanceProfile": "standard",
+            "generateVideoThumbnails": True,
+            "artworkCacheLimitMb": 0,
+            "backgroundArtworkDuringPlayback": True,
+            "reducedMotion": False,
+        }
         self._library_snapshot = {
             "count": 0,
             "locationCount": 0,
@@ -69,9 +82,17 @@ class FakeChannelOS(QObject):
     def onDemand(self):
         return self._on_demand
 
+    @Property("QVariantMap", notify=settingsChanged)
+    def settings(self):
+        return self._settings
+
     @Slot()
     def refresh(self) -> None:
         self.snapshotChanged.emit()
+
+    def skipOnDemand(self, delta_seconds: float):
+        self.skips.append(float(delta_seconds))
+        return {"ok": True, "message": f"Skipped {delta_seconds:g} seconds"}
 
 
 def test_main_qml_instantiates_headlessly() -> None:
@@ -98,14 +119,28 @@ def test_main_qml_instantiates_headlessly() -> None:
     assert roots[0].property("infoVisible") is False
     assert roots[0].property("controllerConnected") is False
     assert roots[0].property("controllerName") == ""
+    assert roots[0].property("configuredSkipBackSeconds") == 10
+    assert roots[0].property("configuredSkipForwardSeconds") == 30
+    controller._settings.update(
+        volumePercent=65,
+        muted=True,
+        skipBackSeconds=15,
+        skipForwardSeconds=60,
+    )
+    controller.settingsChanged.emit()
+    app.processEvents()
+    assert roots[0].property("configuredSkipBackSeconds") == 15
+    assert roots[0].property("configuredSkipForwardSeconds") == 60
+    assert roots[0].property("volumePercent") == 65
+    assert roots[0].property("muted") is True
     assert roots[0].property("channelEntry") == ""
     roots[0].setProperty("screen", "ondemand")
     roots[0].setProperty("channelEntry", "007")
     assert roots[0].property("channelEntry") == "007"
     roots[0].setProperty("channelEntry", "")
     roots[0].setProperty("screen", "home")
-    assert roots[0].property("volumePercent") == 100
-    assert roots[0].property("muted") is False
+    assert roots[0].property("volumePercent") == 65
+    assert roots[0].property("muted") is True
     roots[0].setProperty("infoVisible", True)
     assert roots[0].property("infoVisible") is True
     roots[0].setProperty("infoVisible", False)
@@ -210,6 +245,27 @@ def test_transport_intents_keep_toggle_and_idempotent_semantics() -> None:
         ControlIntent.PAUSE,
         paused=True,
     )
+
+
+def test_skip_intents_use_the_current_settings_values() -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    controller._settings.update(
+        skipBackSeconds=15,
+        skipForwardSeconds=60,
+    )
+    window = QWindow()
+    window.setProperty("screen", "ondemand")
+    window.setProperty("infoVisible", False)
+
+    router = CouchKeyFilter(controller, window)  # type: ignore[arg-type]
+
+    assert router.dispatch_command(ControlCommand(ControlIntent.SKIP_BACK))
+    assert router.dispatch_command(ControlCommand(ControlIntent.SKIP_FORWARD))
+    assert controller.skips == [-15.0, 60.0]
+
+    window.close()
+    app.processEvents()
 
 
 def test_info_intent_toggles_context_drawer_and_back_closes_it() -> None:

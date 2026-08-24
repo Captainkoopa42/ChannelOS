@@ -77,6 +77,12 @@ delay. This avoids drift near the deadzone while retaining responsive shelf and
 Guide browsing. D-pad and stick input that request the same direction in one
 sample are de-duplicated.
 
+The Live and On Demand HUD legends switch to controller names while a gamepad
+is connected. Their trigger labels read the current persisted Skip Back and
+Skip Forward values (for example, `LT -15s` and `RT +60s`) instead of showing
+the defaults after the viewer changes Settings. Disconnecting the controller
+restores the keyboard legend with the same live values.
+
 The content-first Library receives controller navigation through its own shelf
 overlay, so the D-pad/left stick browse shelves and cards rather than the old
 flat-list model. The existing Channel Builder can be browsed and opened with a

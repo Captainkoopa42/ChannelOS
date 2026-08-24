@@ -41,6 +41,24 @@ ApplicationWindow {
     property bool audioHudVisible: false
     property bool controllerConnected: false
     property string controllerName: ""
+    readonly property var settingsSnapshot:
+        channelOS && channelOS.settings
+        ? channelOS.settings
+        : ({
+               volumePercent: 100,
+               muted: false,
+               skipBackSeconds: 10,
+               skipForwardSeconds: 30,
+               performanceProfile: "standard",
+               generateVideoThumbnails: true,
+               artworkCacheLimitMb: 0,
+               backgroundArtworkDuringPlayback: true,
+               reducedMotion: false
+           })
+    readonly property int configuredSkipBackSeconds:
+        Math.max(1, Number(settingsSnapshot.skipBackSeconds || 10))
+    readonly property int configuredSkipForwardSeconds:
+        Math.max(1, Number(settingsSnapshot.skipForwardSeconds || 30))
 
     signal homeMenuActivated(int index)
     signal homeCardActivated(int index)
@@ -369,10 +387,20 @@ ApplicationWindow {
         statusTimer.restart()
     }
 
+    function syncDisplayedSettings() {
+        volumePercent = Math.max(
+                    0,
+                    Math.min(100, Number(settingsSnapshot.volumePercent || 0)))
+        muted = Boolean(settingsSnapshot.muted)
+    }
+
     Component.onCompleted: {
+        syncDisplayedSettings()
         if (rows.length > 0)
             selectRow(0)
     }
+
+    onSettingsSnapshotChanged: syncDisplayedSettings()
 
     onRowsChanged: {
         if (rows.length > 0)
@@ -916,16 +944,16 @@ ApplicationWindow {
                     anchors.bottomMargin: 16
                     spacing: 25
 
-                    Text { text: "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "LEFT  -10s"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "RIGHT  +30s"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "UP/DOWN  Channel"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "0-9  Tune"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "P  Previous"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "L  Live"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "I  Info  ·  G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "A / X  Pause / Play" : "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: (root.controllerConnected ? "LT  -" : "LEFT  -") + root.configuredSkipBackSeconds + "s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: (root.controllerConnected ? "RT  +" : "RIGHT  +") + root.configuredSkipForwardSeconds + "s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "LB/RB  Channel" : "UP/DOWN  Channel"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "MENU  Home" : "0-9  Tune"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "R3  Previous" : "P  Previous"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "R-STICK  Volume" : "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { visible: !root.controllerConnected; text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "L3  Live" : "L  Live"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "Y  Info  ·  VIEW  Guide" : "I  Info  ·  G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
                 }
             }
         }
@@ -1025,14 +1053,14 @@ ApplicationWindow {
                     anchors.bottomMargin: 18
                     spacing: 28
 
-                    Text { text: "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "LEFT  -10s"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "RIGHT  +30s"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "0-9  Tune Channel"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "P  Previous Channel"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: "I  Info  ·  ESC  Library"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "A / X  Pause / Play" : "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: (root.controllerConnected ? "LT  -" : "LEFT  -") + root.configuredSkipBackSeconds + "s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: (root.controllerConnected ? "RT  +" : "RIGHT  +") + root.configuredSkipForwardSeconds + "s"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "R-STICK  Volume" : "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { visible: !root.controllerConnected; text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "LB/RB  Tune Channel" : "0-9  Tune Channel"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "R3  Previous Channel" : "P  Previous Channel"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "Y  Info  ·  B  Library" : "I  Info  ·  ESC  Library"; color: root.textSecondary; font.pixelSize: 13 }
                 }
             }
         }

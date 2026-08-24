@@ -39,7 +39,7 @@ class FakeChannelOS(QObject):
     libraryChanged = Signal()
     libraryScanChanged = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, *, continue_watching: bool = False) -> None:
         super().__init__()
         self._library = {
             "count": 1,
@@ -57,6 +57,14 @@ class FakeChannelOS(QObject):
                     "sizeBytes": 1234,
                     "containerFormat": "MP4",
                     "artworkUrl": "",
+                    "continueWatching": continue_watching,
+                    "watchPositionSeconds": 12.0 if continue_watching else 0.0,
+                    "watchProgress": 0.4 if continue_watching else 0.0,
+                    "lastWatchedAt": (
+                        "2026-08-24T05:00:00+00:00"
+                        if continue_watching
+                        else ""
+                    ),
                 }
             ],
             "sources": [
@@ -170,6 +178,40 @@ def test_library_qml_instantiates_headlessly() -> None:
     host.screen = "home"
     app.processEvents()
     assert host.screen == "home"
+
+    item.deleteLater()
+    app.processEvents()
+
+
+def test_library_qml_opens_continue_watching_when_resume_state_exists() -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS(continue_watching=True)
+    host = FakeHost()
+
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("channelOS", controller)
+
+    qml_path = (
+        Path(channelos.__file__).resolve().parent
+        / "qml"
+        / "LibraryScreen.qml"
+    )
+    component = QQmlComponent(engine)
+    component.loadUrl(QUrl.fromLocalFile(str(qml_path)))
+
+    if component.isLoading():
+        app.processEvents()
+
+    errors = "\n".join(error.toString() for error in component.errors())
+    assert component.isReady(), errors
+
+    item = component.create(engine.rootContext())
+    assert item is not None, errors
+    item.setProperty("hostWindow", host)
+    app.processEvents()
+
+    assert item.property("expandedShelfId") == "continue"
+    assert item.property("shelfCount") >= 3
 
     item.deleteLater()
     app.processEvents()

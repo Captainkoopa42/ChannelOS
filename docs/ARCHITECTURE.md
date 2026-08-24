@@ -203,6 +203,21 @@ Fast-forward is capped at LIVE.
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**
 
+## On Demand watch state
+
+Direct Library playback owns a third, deliberately separate clock: the On
+Demand playhead. It is keyed by stable media asset ID and viewer ID in the local
+runtime database. It never changes a channel epoch, Broadcast Clock, schedule,
+or per-channel Viewer Clock.
+
+```text
+on_demand_watch(viewer_id, asset_id)
+    -> position, duration, completion, last watched time
+```
+
+The first implementation uses the explicit `default` viewer while preserving
+the storage boundary needed for later profiles.
+
 ## Returning to channels
 
 Per-channel continuity enables three explicit policies:

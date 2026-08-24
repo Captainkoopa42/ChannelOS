@@ -145,6 +145,20 @@ def test_on_demand_pause_resume_and_seek(tmp_path):
     assert session.skip(-100.0).position_seconds == pytest.approx(0.0)
 
 
+def test_on_demand_can_start_from_a_saved_position(tmp_path):
+    backend = FakeBackend()
+    session = OnDemandSession(backend_factory=lambda: backend)
+
+    state = session.play_media(
+        make_media(tmp_path, duration=120.0),
+        start_seconds=42.5,
+    )
+
+    assert backend.events[-1] == "seek"
+    assert backend.position == pytest.approx(42.5)
+    assert state.position_seconds == pytest.approx(42.5)
+
+
 def test_on_demand_stop_clears_media(tmp_path):
     backend = FakeBackend()
 

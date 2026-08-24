@@ -145,7 +145,7 @@ Rich Library work still remaining:
 - [ ] Genres
 - [ ] User tags
 - [ ] Collections
-- [ ] Continue Watching
+- [x] Persistent local Continue Watching and resume state for the default viewer
 - [ ] Recently Added
 - [ ] Favorites
 - [ ] Add to Channel

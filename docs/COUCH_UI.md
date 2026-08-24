@@ -177,9 +177,17 @@ elided within their shelf header.
 The former three-pane Library remains available as the secondary **Manage
 Sources** surface. Adding, rescanning, and removing indexed roots therefore
 stays powerful without making storage administration the first thing a viewer
-sees. Continue Watching, Recently Added, and semantic movie/television shelves
-remain intentionally absent until ChannelOS stores the facts required to label
-them truthfully.
+sees. Recently Added and semantic movie/television shelves remain intentionally
+absent until ChannelOS stores the facts required to label them truthfully.
+
+Continue Watching is backed by durable On Demand watch state in the runtime
+database. ChannelOS checkpoints the active playhead about every five seconds
+and also saves on pause, seek, stop, and application shutdown. A title enters
+the shelf only after meaningful viewing (10-30 seconds, scaled for short media),
+and leaves it at 95% watched or natural end-of-file. Selecting it resumes the
+stable media asset at the saved playhead; selecting a completed title starts it
+from the beginning. The current default viewer ID leaves a clean storage
+boundary for later profiles without pretending that profile UI exists today.
 
 On Demand uses a playback session separate from television scheduling.
 
@@ -231,7 +239,6 @@ Major remaining couch/release work includes:
 - controller/remote abstraction,
 - Settings,
 - selected-title backdrop and richer artwork presentation polish,
-- Continue Watching integration,
 - Library -> Add to Channel authoring flow,
 - normal-user playback-runtime packaging,
 - SteamOS/controller validation,

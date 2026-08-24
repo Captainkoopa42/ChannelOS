@@ -1,6 +1,6 @@
 # ChannelOS Implementation Status
 
-**Snapshot:** August 21, 2026  
+**Snapshot:** August 23, 2026
 **Status:** Working local alpha  
 **Active implementation:** Library 2.0 / first-release couch experience  
 **Canonical product definition:** [MASTER_DESIGN.md](MASTER_DESIGN.md)
@@ -37,6 +37,7 @@ A real Windows machine can now:
 - play indexed media through an independent On Demand session,
 - pause and seek On Demand media,
 - recover correctly when replaying or rewinding after natural end-of-file,
+- persist meaningful On Demand playheads and resume them from Continue Watching,
 - return from On Demand to live television while preserving television clock state,
 - create and edit portable channel definitions through the Broadcaster,
 - reload created/edited channels immediately into runtime and Guide state.
@@ -51,7 +52,7 @@ The largest remaining first-release work is now product experience and release h
 
 Estimated completion:
 
-**approximately 75%**
+**approximately 78-80%**
 
 This is the focused first-release experience: local ownership/indexing, persistent channels, Guide, live playback, television controls, Library / On Demand, minimum broadcaster/channel management, normal-user packaging, controller/remote polish, settings, and release hardening.
 
@@ -101,7 +102,7 @@ This is a design-audit estimate, not a mathematical quality score. Implementatio
 | Traditional television Guide | Implemented and real-machine tested | Very high |
 | Guide derives from runtime truth | Implemented | Very high |
 | Live television is passive by default | Implemented | High |
-| Library is separate active-selection mode | Functional management foundation; consumer presentation incomplete | High |
+| Library is separate active-selection mode | Content-first shelves, local artwork, management surface, and durable Continue Watching implemented | High |
 | Library and channels share one media index | Implemented | Very high |
 | On Demand does not contaminate channel scheduling | Implemented with separate playback session | Very high |
 | Couch-first presentation | Working keyboard/D-pad implementation | High |
@@ -175,7 +176,7 @@ Estimated mode completion:
 
 ### 3. Library / On Demand
 
-**Status: backend/source-management foundation strong; consumer surface incomplete**
+**Status: backend/source-management foundation strong; consumer surface functional and expanding**
 
 Implemented:
 
@@ -194,25 +195,26 @@ Implemented:
 - local sidecar artwork and lazy video-thumbnail caching with a no-image fallback,
 - stable-asset On Demand launch,
 - On Demand play/pause/seek,
+- durable playhead checkpoints and restart-safe resume,
+- truthful Continue Watching shelf with progress and completion handling,
 - natural-EOF recovery,
 - successful handoff back to live television.
 
 Still needed for the intended consumer Library:
 
 - richer selected-title artwork/backdrop presentation,
-- Continue Watching,
 - Recently Added/categories,
 - richer title/media-type model,
 - Movies / Television / seasons / episodes,
 - metadata,
 - collections/favorites,
 - Library -> Add to Channel,
-- move source/storage management into a secondary surface.
+- richer filtering and organization.
 
 Estimated completion:
 
-- **Library backend/source lifecycle: 80-85%**
-- **consumer Library experience: 50-55%**
+- **Library backend/source lifecycle: 85-90%**
+- **consumer Library experience: 65-70%**
 
 ### 4. Broadcaster / Management
 
@@ -276,6 +278,13 @@ No decoder restart or HWND-rebind recovery loop is required for maximize/restore
 
 On Demand playback uses the same canonical media index but does not insert a Library asset into television scheduling. Television remains television; On Demand remains direct selection.
 
+On Demand resume state is persisted by stable asset ID and the current default
+viewer ID. It is deliberately stored separately from both Broadcast Clock and
+Viewer Clock state. Five-second checkpoints plus pause, seek, stop, and shutdown
+saves make resume robust without turning the 250 ms presentation refresh into
+constant database writes. The schema is ready for later per-profile rows; no
+profile experience is claimed yet.
+
 ### Decoder suspension during On Demand
 
 When On Demand temporarily owns the presentation surface, ChannelOS may stop the live decoder without stopping the channel's Broadcast Clock. Returning to television can therefore correctly reveal Viewer Clock lag.
@@ -284,14 +293,13 @@ When On Demand temporarily owns the presentation surface, ChannelOS may stop the
 
 ## Important remaining first-release work
 
-1. Continue Watching / persistent resume state.
-2. Library -> Add to Channel authoring flow.
-3. Controller/remote abstraction and Settings.
-4. Normal-user libVLC/runtime packaging.
-5. Windows installer / repeatable package.
-6. Linux and SteamOS validation.
-7. License and third-party notice review.
-8. Crash recovery, clean-machine testing, and ordinary-user hardening.
+1. Library -> Add to Channel authoring flow.
+2. Controller/remote abstraction and Settings.
+3. Normal-user libVLC/runtime packaging.
+4. Windows installer / repeatable package.
+5. Linux and SteamOS validation.
+6. License and third-party notice review.
+7. Crash recovery, clean-machine testing, and ordinary-user hardening.
 
 ---
 
@@ -335,4 +343,6 @@ And the second statement is now literal in the running product:
 
 > **The user is not merely the audience. The user is the broadcaster.**
 
-The largest visible gap before a focused beta is now the consumer-facing Library experience, not the television/runtime foundation.
+The largest visible feature gap before a focused beta is now Library-to-channel
+authoring. Packaging, input polish, settings, and release hardening remain the
+larger delivery risks.

@@ -104,11 +104,21 @@ class OnDemandSession:
         self._paused = False
         return self.state()
 
-    def play_media(self, media: IndexedMedia) -> OnDemandState:
+    def play_media(
+        self,
+        media: IndexedMedia,
+        *,
+        start_seconds: float = 0.0,
+    ) -> OnDemandState:
         backend = self._ensure_backend()
+        duration = float(media.asset.duration_seconds or 0.0)
+        target = max(0.0, float(start_seconds))
+        if duration > 0.0:
+            target = min(target, duration)
+
         backend.load(media.location.path)
         backend.play()
-        backend.seek(0.0)
+        backend.seek(target)
 
         self._current = media
         self._paused = False

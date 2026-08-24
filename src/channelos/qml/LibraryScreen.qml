@@ -30,7 +30,7 @@ Item {
     readonly property int shelfCount: shelves.length
     property int selectedShelf: 0
     property int selectedColumn: 0
-    property string expandedShelfId: "all"
+    property string expandedShelfId: ""
     property string query: ""
     property bool managerVisible: false
     property string clockText: ""
@@ -111,6 +111,33 @@ Item {
         return haystack.indexOf(needle) >= 0
     }
 
+    function continueItems(items) {
+        var result = []
+        for (var i = 0; i < items.length; ++i) {
+            if (Boolean(items[i].continueWatching))
+                result.push(items[i])
+        }
+        result.sort(function(a, b) {
+            return String(b.lastWatchedAt || "").localeCompare(
+                        String(a.lastWatchedAt || ""))
+        })
+        return result
+    }
+
+    function defaultShelfId() {
+        return continueItems(allItems).length ? "continue" : "all"
+    }
+
+    function remainingLabel(item) {
+        if (!Boolean(item.continueWatching))
+            return ""
+        var remaining = Math.max(
+                    0,
+                    Number(item.durationSeconds || 0)
+                    - Number(item.watchPositionSeconds || 0))
+        return formatDuration(remaining) + " left"
+    }
+
     function rebuildShelves() {
         var needle = String(query || "").trim().toLowerCase()
         var next = []
@@ -131,6 +158,17 @@ Item {
                 featured: true
             })
         } else if (owned.length) {
+            var continuing = continueItems(owned)
+            if (continuing.length) {
+                next.push({
+                    shelfId: "continue",
+                    title: "CONTINUE WATCHING",
+                    subtitle: "Resume your saved On Demand playhead",
+                    items: continuing,
+                    featured: true
+                })
+            }
+
             next.push({
                 shelfId: "all",
                 title: "ALL MEDIA",
@@ -189,6 +227,15 @@ Item {
         }
 
         shelves = next
+        var expandedStillExists = false
+        for (var shelfIndex = 0; shelfIndex < shelves.length; ++shelfIndex) {
+            if (String(shelves[shelfIndex].shelfId || "") === expandedShelfId) {
+                expandedStillExists = true
+                break
+            }
+        }
+        if (!expandedStillExists)
+            expandedShelfId = defaultShelfId()
         selectedShelf = Math.max(0, Math.min(selectedShelf, shelves.length - 1))
         var selectedItems = shelves.length ? (shelves[selectedShelf].items || []) : []
         selectedColumn = Math.max(0, Math.min(selectedColumn, selectedItems.length - 1))
@@ -321,7 +368,8 @@ Item {
     onQueryChanged: {
         selectedShelf = 0
         selectedColumn = 0
-        expandedShelfId = String(query || "").trim().length ? "search" : "all"
+        expandedShelfId = String(query || "").trim().length
+                          ? "search" : defaultShelfId()
         rebuildShelves()
     }
     onAllItemsChanged: rebuildShelves()
@@ -696,6 +744,9 @@ Item {
                     text: libraryRoot.formatDuration(selectedBanner.item.durationSeconds)
                           + "  •  " + libraryRoot.friendlyFormat(selectedBanner.item)
                           + "  •  " + String(selectedBanner.item.sourceName || "Owned Media")
+                          + (Boolean(selectedBanner.item.continueWatching)
+                             ? "  •  " + libraryRoot.remainingLabel(selectedBanner.item)
+                             : "")
                     color: textSecondary
                     font.pixelSize: 13
                     width: parent.width
@@ -710,7 +761,8 @@ Item {
                 anchors.rightMargin: 18
                 width: 172
                 height: 44
-                text: "Play On Demand"
+                text: Boolean(selectedBanner.item.continueWatching)
+                      ? "Resume On Demand" : "Play On Demand"
                 onClicked: libraryRoot.playSelected()
             }
         }
@@ -946,13 +998,42 @@ Item {
                                     elide: Text.ElideRight
                                 }
                                 Text {
-                                    text: libraryRoot.formatDuration(mediaCard.modelData.durationSeconds)
-                                          + "  •  " + String(mediaCard.modelData.sourceName || "Owned Media")
+                                    text: Boolean(mediaCard.modelData.continueWatching)
+                                          ? libraryRoot.remainingLabel(mediaCard.modelData)
+                                            + "  •  "
+                                            + String(mediaCard.modelData.sourceName || "Owned Media")
+                                          : libraryRoot.formatDuration(mediaCard.modelData.durationSeconds)
+                                            + "  •  "
+                                            + String(mediaCard.modelData.sourceName || "Owned Media")
                                     color: textSecondary
                                     font.pixelSize: 11
                                     width: parent.width
                                     elide: Text.ElideRight
                                 }
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            anchors.leftMargin: 11
+                            anchors.rightMargin: 11
+                            anchors.bottomMargin: 5
+                            height: 4
+                            radius: 2
+                            visible: Boolean(mediaCard.modelData.continueWatching)
+                            color: "#31465b"
+
+                            Rectangle {
+                                width: parent.width * Math.max(
+                                           0,
+                                           Math.min(
+                                               1,
+                                               Number(mediaCard.modelData.watchProgress || 0)))
+                                height: parent.height
+                                radius: 2
+                                color: accentBright
                             }
                         }
 

@@ -10,8 +10,9 @@ from pathlib import Path
 from .library import IndexedMedia
 from .resolve import ResolvedChannel
 
-RUNTIME_SCHEMA_VERSION = 1
+RUNTIME_SCHEMA_VERSION = 2
 SECONDS_PER_DAY = 86400.0
+DEFAULT_VIEWER_ID = "default"
 
 
 class _ClosingSQLiteConnection(sqlite3.Connection):
@@ -214,6 +215,66 @@ class PersistedChannelRuntime:
     epoch_utc: datetime
 
 
+@dataclass(frozen=True, slots=True)
+class OnDemandWatchState:
+    """One viewer's durable playhead for a stable owned-media asset."""
+
+    viewer_id: str
+    asset_id: str
+    position_seconds: float
+    duration_seconds: float
+    completed: bool
+    last_watched_at: datetime
+
+    @property
+    def progress_fraction(self) -> float:
+        if self.duration_seconds <= 0:
+            return 0.0
+        return min(
+            1.0,
+            max(0.0, self.position_seconds / self.duration_seconds),
+        )
+
+    @property
+    def resumable(self) -> bool:
+        return on_demand_watch_is_resumable(
+            self.position_seconds,
+            self.duration_seconds,
+            completed=self.completed,
+        )
+
+
+def on_demand_watch_is_complete(
+    position_seconds: float,
+    duration_seconds: float,
+) -> bool:
+    duration = max(0.0, float(duration_seconds))
+    position = max(0.0, float(position_seconds))
+    return duration > 0.0 and position >= duration * 0.95
+
+
+def on_demand_watch_is_resumable(
+    position_seconds: float,
+    duration_seconds: float,
+    *,
+    completed: bool = False,
+) -> bool:
+    if completed:
+        return False
+
+    position = max(0.0, float(position_seconds))
+    duration = max(0.0, float(duration_seconds))
+    minimum_position = min(
+        30.0,
+        max(10.0, duration * 0.02),
+    )
+    if position < minimum_position:
+        return False
+    if duration > 0.0 and position >= duration * 0.95:
+        return False
+    return True
+
+
 @dataclass(slots=True)
 class ViewerClock:
     """A viewer's personal position on a channel's schedule timeline."""
@@ -318,6 +379,19 @@ class RuntimeStore:
                     running INTEGER NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS on_demand_watch (
+                    viewer_id TEXT NOT NULL,
+                    asset_id TEXT NOT NULL,
+                    position_seconds REAL NOT NULL,
+                    duration_seconds REAL NOT NULL,
+                    completed INTEGER NOT NULL,
+                    last_watched_at TEXT NOT NULL,
+                    PRIMARY KEY(viewer_id, asset_id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_on_demand_watch_recent
+                    ON on_demand_watch(viewer_id, last_watched_at DESC);
                 """
             )
             connection.execute(
@@ -405,6 +479,112 @@ class RuntimeStore:
             observed_at_utc=datetime_from_text(str(row["observed_at_utc"])),
             running=bool(row["running"]),
         )
+
+    def save_on_demand_watch(
+        self,
+        asset_id: str,
+        position_seconds: float,
+        duration_seconds: float,
+        *,
+        completed: bool = False,
+        viewer_id: str = DEFAULT_VIEWER_ID,
+        now: datetime | None = None,
+    ) -> OnDemandWatchState:
+        watched_at = require_aware_utc(now or utc_now())
+        target_viewer = str(viewer_id).strip() or DEFAULT_VIEWER_ID
+        target_asset = str(asset_id).strip()
+        if not target_asset:
+            raise ValueError("On Demand watch state requires an asset ID")
+
+        position = max(0.0, float(position_seconds))
+        duration = max(0.0, float(duration_seconds))
+        if duration > 0.0:
+            position = min(position, duration)
+        finished = bool(completed) or on_demand_watch_is_complete(
+            position,
+            duration,
+        )
+
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO on_demand_watch(
+                    viewer_id,
+                    asset_id,
+                    position_seconds,
+                    duration_seconds,
+                    completed,
+                    last_watched_at
+                ) VALUES(?, ?, ?, ?, ?, ?)
+                ON CONFLICT(viewer_id, asset_id) DO UPDATE SET
+                    position_seconds = excluded.position_seconds,
+                    duration_seconds = excluded.duration_seconds,
+                    completed = excluded.completed,
+                    last_watched_at = excluded.last_watched_at
+                """,
+                (
+                    target_viewer,
+                    target_asset,
+                    position,
+                    duration,
+                    int(finished),
+                    datetime_to_text(watched_at),
+                ),
+            )
+
+        return OnDemandWatchState(
+            viewer_id=target_viewer,
+            asset_id=target_asset,
+            position_seconds=position,
+            duration_seconds=duration,
+            completed=finished,
+            last_watched_at=watched_at,
+        )
+
+    @staticmethod
+    def _watch_from_row(row: sqlite3.Row) -> OnDemandWatchState:
+        return OnDemandWatchState(
+            viewer_id=str(row["viewer_id"]),
+            asset_id=str(row["asset_id"]),
+            position_seconds=max(0.0, float(row["position_seconds"])),
+            duration_seconds=max(0.0, float(row["duration_seconds"])),
+            completed=bool(row["completed"]),
+            last_watched_at=datetime_from_text(str(row["last_watched_at"])),
+        )
+
+    def load_on_demand_watch(
+        self,
+        asset_id: str,
+        *,
+        viewer_id: str = DEFAULT_VIEWER_ID,
+    ) -> OnDemandWatchState | None:
+        target_viewer = str(viewer_id).strip() or DEFAULT_VIEWER_ID
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM on_demand_watch
+                WHERE viewer_id = ? AND asset_id = ?
+                """,
+                (target_viewer, str(asset_id)),
+            ).fetchone()
+        return None if row is None else self._watch_from_row(row)
+
+    def list_on_demand_watch(
+        self,
+        *,
+        viewer_id: str = DEFAULT_VIEWER_ID,
+    ) -> list[OnDemandWatchState]:
+        target_viewer = str(viewer_id).strip() or DEFAULT_VIEWER_ID
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM on_demand_watch
+                WHERE viewer_id = ?
+                ORDER BY last_watched_at DESC, asset_id
+                """,
+                (target_viewer,),
+            ).fetchall()
+        return [self._watch_from_row(row) for row in rows]
 
     def _set_meta(self, key: str, value: str | None) -> None:
         with self.connect() as connection:

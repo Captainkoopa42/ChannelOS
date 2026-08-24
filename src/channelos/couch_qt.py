@@ -3,6 +3,7 @@ from __future__ import annotations
 import queue
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -18,7 +19,13 @@ from .guide import GuideError, GuideService
 from .library import IndexedMedia, MediaLibrary
 from .on_demand import OnDemandSession, OnDemandState
 from .playback import NativeVideoSurface, PlaybackError
-from .runtime import ChannelRuntimeError, TelevisionRuntime, TuneDecision, utc_now
+from .runtime import (
+    ChannelRuntimeError,
+    OnDemandWatchState,
+    TelevisionRuntime,
+    TuneDecision,
+    utc_now,
+)
 from .scanner import MediaScanner, ScanProgress, ScanSummary
 from .television import TelevisionSession
 from .window_startup import NativeWindowSnapshot, NativeWindowStartupGate
@@ -43,6 +50,7 @@ class CouchController(QObject):
         super().__init__()
         self._service = service
         self._library = library
+        self._runtime_store = television.store
         self._artwork_cache = MediaArtworkCache(
             self._library.database_path.parent / "artwork"
         )
@@ -62,6 +70,12 @@ class CouchController(QObject):
         self.libraryArtworkResolved.connect(self._accept_library_artwork)
         self._actions = CouchActions(service, television)
         self._on_demand = OnDemandSession()
+        self._last_on_demand_saved_at = 0.0
+        self._last_on_demand_saved_signature: tuple[
+            str,
+            float,
+            bool,
+        ] | None = None
         self._library_media: list[IndexedMedia] = []
         self._library_snapshot = self._build_library_snapshot()
         self._on_demand_view: dict[str, object] = {"active": False}
@@ -91,9 +105,15 @@ class CouchController(QObject):
             for media in online
         }
 
+        watches = {
+            watch.asset_id: watch
+            for watch in self._runtime_store.list_on_demand_watch()
+        }
+
         items: list[dict[str, object]] = []
         for media in unique:
             path = media.location.path
+            watch = watches.get(media.asset.asset_id)
             container = (
                 media.asset.container_format
                 or path.suffix.lstrip(".")
@@ -119,6 +139,20 @@ class CouchController(QObject):
                     "artworkUrl": self._artwork_urls.get(
                         media.asset.asset_id,
                         "",
+                    ),
+                    "continueWatching": bool(
+                        watch is not None and watch.resumable
+                    ),
+                    "watchPositionSeconds": float(
+                        0.0 if watch is None else watch.position_seconds
+                    ),
+                    "watchProgress": float(
+                        0.0 if watch is None else watch.progress_fraction
+                    ),
+                    "lastWatchedAt": (
+                        ""
+                        if watch is None
+                        else watch.last_watched_at.isoformat()
                     ),
                 }
             )
@@ -275,10 +309,45 @@ class CouchController(QObject):
     def refreshOnDemand(self) -> None:
         if not self._on_demand.active:
             return
-        self._on_demand_view = self._on_demand_state_view(
-            self._on_demand.state()
-        )
+        state = self._on_demand.state()
+        self._persist_on_demand_state(state)
+        self._on_demand_view = self._on_demand_state_view(state)
         self.onDemandChanged.emit()
+
+    def _persist_on_demand_state(
+        self,
+        state: OnDemandState,
+        *,
+        force: bool = False,
+    ) -> OnDemandWatchState | None:
+        if not state.active or not state.asset_id:
+            return None
+
+        now_monotonic = time.monotonic()
+        signature = (
+            state.asset_id,
+            round(float(state.position_seconds), 1),
+            bool(state.ended),
+        )
+        if (
+            not force
+            and (
+                state.paused
+                or signature == self._last_on_demand_saved_signature
+                or now_monotonic - self._last_on_demand_saved_at < 5.0
+            )
+        ):
+            return None
+
+        saved = self._runtime_store.save_on_demand_watch(
+            state.asset_id,
+            state.position_seconds,
+            state.duration_seconds,
+            completed=state.ended,
+        )
+        self._last_on_demand_saved_at = now_monotonic
+        self._last_on_demand_saved_signature = signature
+        return saved
 
     def scan_media_folder(
         self,
@@ -502,9 +571,22 @@ class CouchController(QObject):
 
         try:
             self._actions.suspend_decoder()
-            state = self._on_demand.play_media(
-                self._library_media[selected]
+            media = self._library_media[selected]
+            watch = self._runtime_store.load_on_demand_watch(
+                media.asset.asset_id
             )
+            resume_seconds = (
+                watch.position_seconds
+                if watch is not None and watch.resumable
+                else 0.0
+            )
+            state = self._on_demand.play_media(
+                media,
+                start_seconds=resume_seconds,
+            )
+            self._last_on_demand_saved_at = 0.0
+            self._last_on_demand_saved_signature = None
+            self._persist_on_demand_state(state, force=True)
             self._on_demand.set_volume(self._volume)
             self._on_demand.set_muted(self._muted)
             self._on_demand_view = self._on_demand_state_view(state)
@@ -512,7 +594,11 @@ class CouchController(QObject):
 
             return {
                 "ok": True,
-                "message": f"On Demand - {state.title}",
+                "message": (
+                    f"Resuming {state.title} at {resume_seconds:.0f}s"
+                    if resume_seconds > 0.0
+                    else f"On Demand - {state.title}"
+                ),
                 "onDemand": self._on_demand_view,
             }
 
@@ -523,6 +609,7 @@ class CouchController(QObject):
     def toggleOnDemandPause(self) -> dict[str, object]:
         try:
             state = self._on_demand.toggle_pause()
+            self._persist_on_demand_state(state, force=True)
             self._on_demand_view = self._on_demand_state_view(state)
             self.onDemandChanged.emit()
 
@@ -542,6 +629,7 @@ class CouchController(QObject):
     def skipOnDemand(self, delta_seconds: float) -> dict[str, object]:
         try:
             state = self._on_demand.skip(float(delta_seconds))
+            self._persist_on_demand_state(state, force=True)
             self._on_demand_view = self._on_demand_state_view(state)
             self.onDemandChanged.emit()
 
@@ -555,9 +643,15 @@ class CouchController(QObject):
 
     @Slot(result="QVariantMap")
     def stopOnDemand(self) -> dict[str, object]:
+        if self._on_demand.active:
+            self._persist_on_demand_state(
+                self._on_demand.state(),
+                force=True,
+            )
         self._on_demand.stop()
         self._on_demand_view = {"active": False}
         self.onDemandChanged.emit()
+        self.refreshLibrary()
         return {"ok": True, "message": "On Demand stopped"}
 
     @Slot(result="QVariantMap")
@@ -694,6 +788,11 @@ class CouchController(QObject):
             return self._error(exc)
 
     def stop(self) -> None:
+        if self._on_demand.active:
+            self._persist_on_demand_state(
+                self._on_demand.state(),
+                force=True,
+            )
         self._on_demand.stop()
         self._actions.stop()
 

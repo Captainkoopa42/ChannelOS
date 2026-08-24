@@ -82,9 +82,12 @@ router. They must not duplicate channel, Guide, On Demand, or navigation rules.
 
 ## Next input work
 
-1. Wire every Home destination to a real surface using these intents.
-2. Add Settings and persistent binding/preferences storage.
-3. Choose a native gamepad adapter boundary without making it authoritative.
-4. Validate Xbox/Steam-style controller behavior on Windows and SteamOS.
-5. Expose the same intent vocabulary through a local, permission-aware IPC
+1. Choose a native gamepad adapter boundary without making it authoritative.
+2. Add user-editable bindings after a native adapter proves the required data model.
+3. Validate Xbox/Steam-style controller behavior on Windows and SteamOS.
+4. Expose the same intent vocabulary through a local, permission-aware IPC
    boundary for future phone and physical remotes.
+
+Home destinations, the lower Home quick-action row, and the first persistent
+Settings surface now consume this same intent router. Text fields continue to
+own ordinary `H` and `S` letters while focused.

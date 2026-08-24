@@ -43,7 +43,9 @@ The current Qt Quick / PySide6 couch application now includes:
 - independent On Demand playback,
 - On Demand pause/seek,
 - end-of-file replay/rewind recovery,
-- stable maximize/restore behavior during native Windows playback.
+- stable maximize/restore behavior during native Windows playback,
+- functional Home menu and quick-action cards,
+- persistent volume, mute, and skip-distance Settings.
 
 ## Approved visual direction
 
@@ -77,6 +79,13 @@ The Guide keeps **selection** separate from **tuning**. Opening the Guide anchor
 the cursor on the current tuned channel when possible, while a `WATCHING`
 indicator remains on that row even if the user browses elsewhere. Merely opening
 Home or Guide never retunes television state.
+
+All visible Home destinations now have behavior. The left menu opens Continue
+Watching/Live, Guide, Library, Channels, and Settings. Down from the last menu
+item enters the lower quick-action row; Left/Right browse Guide, Library, Last
+Channel, and Channels. Both groups also accept mouse clicks. The Last Channel
+card uses persisted television tuning state and stays on Home with an honest
+message when no previous channel exists.
 
 `Continue Watching` is now a real television intent rather than a placeholder.
 Its resolution order is current persisted Viewer Clock, previous channel with
@@ -207,6 +216,15 @@ Broadcast / Viewer Clock
 
 Both use the same owned-media index and the same ChannelOS presentation surface, but one does not rewrite the state of the other.
 
+### Settings
+
+The first Settings surface changes only real couch preferences: volume, mute,
+skip-back distance, and skip-forward distance. Current behavior remains the
+default (100%, sound on, 10 seconds back, 30 seconds forward). Changes save
+atomically to `.channelos/settings.json`, separately from the Library and
+runtime databases, and apply to both Live TV and On Demand. See
+[SETTINGS.md](SETTINGS.md).
+
 ## Real-machine validation
 
 The Windows development machine has validated:
@@ -237,7 +255,6 @@ Major remaining couch/release work includes:
 
 - richer Info behavior,
 - native controller/Steam Input adapter and real-machine validation,
-- Settings,
 - selected-title backdrop and richer artwork presentation polish,
 - Library -> Add to Channel authoring flow,
 - normal-user playback-runtime packaging,

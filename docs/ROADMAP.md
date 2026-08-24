@@ -101,6 +101,8 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 - [x] Minimal Now/Next overlay
 - [x] Guide UI
 - [ ] Home / Back / Info navigation — Home and Back work; dedicated Info behavior remains incomplete
+- [x] Functional Home destinations and controller/mouse-accessible quick-action cards
+- [x] Persistent couch Settings for volume, mute, and Live/On Demand skip distances
 - [x] Large, television-readable focus states and targets
 - [x] Default dark navy/charcoal + cool-blue ChannelOS visual language
 - [ ] SteamOS/controller compatibility validation
@@ -117,7 +119,7 @@ Additional Phase 3 work already validated:
 - [x] Broadcast vs. Viewer Clock presentation
 - [x] Readable short-form Guide aggregation without modifying schedule truth
 
-**Current state:** ordinary viewing already behaves like television on the Windows development machine. The remaining Phase 3 work is increasingly input, packaging, settings, and release hardening rather than proof that the core experience functions.
+**Current state:** ordinary viewing already behaves like television on the Windows development machine. The remaining Phase 3 work is increasingly native-controller input, packaging, and release hardening rather than proof that the core experience functions.
 
 **Exit target:** A keyboard and mouse are optional for ordinary viewing, while pause/seek/volume controls remain under the viewer's command. The same couch UI works as a normal desktop application and as a Steam/SteamOS-launched application.
 

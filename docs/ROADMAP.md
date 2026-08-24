@@ -87,12 +87,14 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 **Goal:** Make the computer disappear during ordinary viewing while preserving direct control.
 
 - [x] Full-screen live view
-- [ ] Remote/controller input abstraction — keyboard/D-pad interaction path is working; dedicated controller/remote mapping remains
+- [x] Remote/controller input abstraction — transport-neutral commands and the
+  Qt keyboard/media/consumer-key adapter are implemented; native gamepad and
+  SteamOS validation remain
 - [ ] Open ChannelOS control-intent protocol / IPC boundary
-- [ ] Numeric direct tuning in the couch UI
+- [x] Numeric direct tuning in the couch UI
 - [x] Channel up/down
-- [ ] Previous Channel couch binding
-- [ ] Volume / mute integration
+- [x] Previous Channel couch binding
+- [x] Volume / mute integration
 - [x] Play / pause
 - [x] Rewind / fast-forward / skip
 - [x] LIVE button behavior

@@ -256,6 +256,30 @@ STATUS
 
 This vocabulary is intentionally aligned with the future open ChannelOS remote/control-intent protocol.
 
+## Couch control-intent boundary
+
+The couch shell now normalizes physical keys into transport-neutral
+`ControlCommand` values before applying any screen or playback behavior:
+
+```text
+keyboard / media key / consumer remote key
+                  |
+                  v
+        ControlIntent + optional value
+                  |
+                  v
+      screen-aware ChannelOS intent router
+                  |
+                  v
+       controller / television runtime
+```
+
+The vocabulary and validation are UI-toolkit independent in `control.py`. The
+first Qt adapter recognizes the existing keyboard controls plus multimedia and
+consumer-electronics keys. Native controller, SteamOS, and external remote
+transports remain adapters to this same boundary rather than alternate business
+logic paths. See [CONTROL_INPUT.md](CONTROL_INPUT.md).
+
 ## Phase 2 Guide / television service boundary
 
 The next architectural boundary sits between the runtime and presentation layers.

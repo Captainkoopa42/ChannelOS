@@ -13,6 +13,7 @@ from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
 
 from .artwork import MediaArtworkCache
+from .control import ControlCommand, ControlIntent
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
 from .guide import GuideError, GuideService
@@ -848,12 +849,12 @@ class CouchKeyFilter(QObject):
 
         QTimer.singleShot(2200, hide)
 
-    def _handle_audio_key(self, key: int) -> bool:
-        if key in {Qt.Key.Key_Plus, Qt.Key.Key_Equal}:
+    def _handle_audio_intent(self, intent: ControlIntent) -> bool:
+        if intent is ControlIntent.VOLUME_UP:
             result = self._controller.changeVolume(5)
-        elif key == Qt.Key.Key_Minus:
+        elif intent is ControlIntent.VOLUME_DOWN:
             result = self._controller.changeVolume(-5)
-        elif key == Qt.Key.Key_M:
+        elif intent is ControlIntent.MUTE:
             result = self._controller.toggleMute()
         else:
             return False
@@ -863,20 +864,74 @@ class CouchKeyFilter(QObject):
         return True
 
     @staticmethod
-    def _digit_for_key(key: int) -> str | None:
-        keys = {
-            Qt.Key.Key_0: "0",
-            Qt.Key.Key_1: "1",
-            Qt.Key.Key_2: "2",
-            Qt.Key.Key_3: "3",
-            Qt.Key.Key_4: "4",
-            Qt.Key.Key_5: "5",
-            Qt.Key.Key_6: "6",
-            Qt.Key.Key_7: "7",
-            Qt.Key.Key_8: "8",
-            Qt.Key.Key_9: "9",
+    def command_for_key(key: int) -> ControlCommand | None:
+        """Translate one Qt keyboard/media key without applying UI behavior."""
+
+        digits = {
+            Qt.Key.Key_0: 0,
+            Qt.Key.Key_1: 1,
+            Qt.Key.Key_2: 2,
+            Qt.Key.Key_3: 3,
+            Qt.Key.Key_4: 4,
+            Qt.Key.Key_5: 5,
+            Qt.Key.Key_6: 6,
+            Qt.Key.Key_7: 7,
+            Qt.Key.Key_8: 8,
+            Qt.Key.Key_9: 9,
         }
-        return keys.get(key)
+        if key in digits:
+            return ControlCommand.digit(digits[key])
+
+        bindings = {
+            Qt.Key.Key_Plus: ControlIntent.VOLUME_UP,
+            Qt.Key.Key_Equal: ControlIntent.VOLUME_UP,
+            Qt.Key.Key_VolumeUp: ControlIntent.VOLUME_UP,
+            Qt.Key.Key_Minus: ControlIntent.VOLUME_DOWN,
+            Qt.Key.Key_VolumeDown: ControlIntent.VOLUME_DOWN,
+            Qt.Key.Key_M: ControlIntent.MUTE,
+            Qt.Key.Key_VolumeMute: ControlIntent.MUTE,
+            Qt.Key.Key_MediaPlay: ControlIntent.PLAY,
+            Qt.Key.Key_MediaPause: ControlIntent.PAUSE,
+            Qt.Key.Key_MediaTogglePlayPause: ControlIntent.PLAY_PAUSE,
+            Qt.Key.Key_G: ControlIntent.GUIDE,
+            Qt.Key.Key_H: ControlIntent.HOME,
+            Qt.Key.Key_Escape: ControlIntent.BACK,
+            Qt.Key.Key_Backspace: ControlIntent.BACK,
+            Qt.Key.Key_Back: ControlIntent.BACK,
+            Qt.Key.Key_Up: ControlIntent.UP,
+            Qt.Key.Key_Down: ControlIntent.DOWN,
+            Qt.Key.Key_Left: ControlIntent.LEFT,
+            Qt.Key.Key_Right: ControlIntent.RIGHT,
+            Qt.Key.Key_Return: ControlIntent.SELECT,
+            Qt.Key.Key_Enter: ControlIntent.SELECT,
+            Qt.Key.Key_Space: ControlIntent.SELECT,
+            Qt.Key.Key_Home: ControlIntent.GUIDE_NOW,
+            Qt.Key.Key_L: ControlIntent.GO_LIVE,
+            Qt.Key.Key_P: ControlIntent.PREVIOUS_CHANNEL,
+            Qt.Key.Key_A: ControlIntent.ADD_MEDIA_SOURCE,
+            Qt.Key.Key_B: ControlIntent.CHANNELS,
+            Qt.Key.Key_I: ControlIntent.INFO,
+            Qt.Key.Key_S: ControlIntent.SETTINGS,
+        }
+        optional_consumer_bindings = {
+            "Key_ChannelUp": ControlIntent.CHANNEL_UP,
+            "Key_ChannelDown": ControlIntent.CHANNEL_DOWN,
+            "Key_Guide": ControlIntent.GUIDE,
+            "Key_Info": ControlIntent.INFO,
+            "Key_Settings": ControlIntent.SETTINGS,
+            "Key_Select": ControlIntent.SELECT,
+            "Key_Exit": ControlIntent.BACK,
+            "Key_MediaPrevious": ControlIntent.SKIP_BACK,
+            "Key_MediaNext": ControlIntent.SKIP_FORWARD,
+            "Key_PowerOff": ControlIntent.POWER,
+            "Key_HomePage": ControlIntent.HOME,
+        }
+        for attribute, consumer_intent in optional_consumer_bindings.items():
+            consumer_key = getattr(Qt.Key, attribute, None)
+            if consumer_key is not None:
+                bindings[consumer_key] = consumer_intent
+        intent = bindings.get(key)
+        return None if intent is None else ControlCommand(intent)
 
     def _commit_channel_entry(self) -> None:
         digits = self._channel_digits
@@ -1066,42 +1121,102 @@ class CouchKeyFilter(QObject):
             }
         )
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if event.type() != QEvent.Type.KeyPress:
-            return False
+    def _open_guide(self) -> bool:
+        if str(self._window.property("screen")) == "ondemand":
+            self._controller.stopOnDemand()
+        self._controller.refresh()
+        self._window.setProperty("screen", "guide")
+        self._select_guide_anchor()
+        return True
 
-        key = event.key()
+    def _open_library(self) -> bool:
+        if str(self._window.property("screen")) == "ondemand":
+            self._controller.stopOnDemand()
+        self._controller.refreshLibrary()
+        self._window.setProperty("screen", "library")
+        self._select_library(
+            int(self._window.property("selectedLibrary"))
+        )
+        return True
+
+    def _go_home(self) -> bool:
+        if str(self._window.property("screen")) == "ondemand":
+            self._controller.stopOnDemand()
+        self._window.setProperty("screen", "home")
+        QApplication.processEvents()
+        return True
+
+    @staticmethod
+    def _transport_should_toggle(
+        intent: ControlIntent,
+        *,
+        paused: bool,
+    ) -> bool:
+        if intent in {ControlIntent.SELECT, ControlIntent.PLAY_PAUSE}:
+            return True
+        if intent is ControlIntent.PLAY:
+            return paused
+        if intent is ControlIntent.PAUSE:
+            return not paused
+        return False
+
+    def dispatch_command(self, command: ControlCommand) -> bool:
+        """Interpret a transport-neutral intent in the current UI context."""
+
+        intent = command.intent
         screen = str(self._window.property("screen"))
 
-        if screen == "home":
-            if key == Qt.Key.Key_G:
+        if intent is ControlIntent.POWER:
+            QGuiApplication.quit()
+            return True
+
+        if intent is ControlIntent.HOME:
+            return self._go_home()
+
+        if intent is ControlIntent.GUIDE:
+            if screen == "guide":
                 self._controller.refresh()
-                self._window.setProperty("screen", "guide")
-                self._select_guide_anchor()
+                self._select_row(
+                    int(self._window.property("selectedRow"))
+                )
                 return True
-            if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
+            return self._open_guide()
+
+        if intent is ControlIntent.LIBRARY:
+            return self._open_library()
+
+        if intent is ControlIntent.TUNE:
+            if screen == "ondemand":
+                self._controller.stopOnDemand()
+            self._window.setProperty("screen", "live")
+            QApplication.processEvents()
+            result = self._controller.tuneChannel(int(command.value or 0))
+            self._notify(result)
+            if bool(result.get("ok")):
+                self._show_live_hud()
+            return True
+
+        if screen in {"live", "ondemand"} and self._handle_audio_intent(intent):
+            return True
+
+        if screen == "home":
+            if intent is ControlIntent.BACK:
                 QGuiApplication.quit()
                 return True
-            if key == Qt.Key.Key_Up:
+            if intent is ControlIntent.UP:
                 current = int(self._window.property("homeSelection"))
                 self._window.setProperty("homeSelection", max(0, current - 1))
                 return True
-            if key == Qt.Key.Key_Down:
+            if intent is ControlIntent.DOWN:
                 current = int(self._window.property("homeSelection"))
                 self._window.setProperty("homeSelection", min(4, current + 1))
                 return True
-            if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+            if intent is ControlIntent.SELECT:
                 selection = int(self._window.property("homeSelection"))
                 if selection == 1:
-                    self._controller.refresh()
-                    self._window.setProperty("screen", "guide")
-                    self._select_guide_anchor()
+                    return self._open_guide()
                 elif selection == 2:
-                    self._controller.refreshLibrary()
-                    self._window.setProperty("screen", "library")
-                    self._select_library(
-                        int(self._window.property("selectedLibrary"))
-                    )
+                    return self._open_library()
                 elif selection == 0:
                     home = self._controller.homeTelevision
                     if str(home.get("mode", "static")) == "static":
@@ -1122,36 +1237,52 @@ class CouchKeyFilter(QObject):
                             self._show_live_hud()
                         else:
                             self._window.setProperty("screen", "home")
+                elif selection == 3:
+                    if self.dispatch_command(
+                        ControlCommand(ControlIntent.CHANNELS)
+                    ):
+                        return True
+                    self._notify(
+                        {"message": "Channel management is unavailable in this launcher"}
+                    )
+                elif selection == 4:
+                    if self.dispatch_command(
+                        ControlCommand(ControlIntent.SETTINGS)
+                    ):
+                        return True
+                    self._notify(
+                        {"message": "Settings are coming in the next couch UI slice"}
+                    )
                 else:
                     self._notify({"message": "This section is reserved for a later couch UI slice"})
                 return True
             return False
 
         if screen == "library":
-            if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
+            if intent is ControlIntent.BACK:
                 self._window.setProperty("screen", "home")
                 return True
 
-            if key == Qt.Key.Key_A:
+            if intent is ControlIntent.ADD_MEDIA_SOURCE:
                 self._choose_and_scan_media_folder()
                 self._select_library(
                     int(self._window.property("selectedLibrary"))
                 )
                 return True
 
-            if key == Qt.Key.Key_Up:
+            if intent is ControlIntent.UP:
                 self._select_library(
                     int(self._window.property("selectedLibrary")) - 1
                 )
                 return True
 
-            if key == Qt.Key.Key_Down:
+            if intent is ControlIntent.DOWN:
                 self._select_library(
                     int(self._window.property("selectedLibrary")) + 1
                 )
                 return True
 
-            if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter}:
+            if intent is ControlIntent.SELECT:
                 if not self._library_items():
                     self._notify(
                         {
@@ -1179,30 +1310,26 @@ class CouchKeyFilter(QObject):
             return False
 
         if screen == "guide":
-            if key == Qt.Key.Key_G:
-                self._controller.refresh()
-                self._select_row(int(self._window.property("selectedRow")))
-                return True
-            if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
+            if intent is ControlIntent.BACK:
                 self._window.setProperty("screen", "home")
                 return True
-            if key == Qt.Key.Key_Up:
+            if intent is ControlIntent.UP:
                 self._select_row(int(self._window.property("selectedRow")) - 1)
                 return True
-            if key == Qt.Key.Key_Down:
+            if intent is ControlIntent.DOWN:
                 self._select_row(int(self._window.property("selectedRow")) + 1)
                 return True
-            if key == Qt.Key.Key_Left:
+            if intent is ControlIntent.LEFT:
                 self._select_program_delta(-1)
                 return True
-            if key == Qt.Key.Key_Right:
+            if intent is ControlIntent.RIGHT:
                 self._select_program_delta(1)
                 return True
-            if key == Qt.Key.Key_Home:
+            if intent is ControlIntent.GUIDE_NOW:
                 row_index = int(self._window.property("selectedRow"))
                 self._window.setProperty("selectedProgram", self._current_program_index(row_index))
                 return True
-            if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+            if intent is ControlIntent.SELECT:
                 rows = self._rows()
                 row_index = int(self._window.property("selectedRow"))
                 if (
@@ -1237,22 +1364,28 @@ class CouchKeyFilter(QObject):
             return False
 
         if screen == "ondemand":
-            digit = self._digit_for_key(key)
-            if digit is not None:
-                self._queue_channel_digit(digit)
+            if intent is ControlIntent.DIGIT:
+                self._queue_channel_digit(str(int(command.value or 0)))
                 return True
 
-            if (
-                self._channel_digits
-                and key in {Qt.Key.Key_Return, Qt.Key.Key_Enter}
-            ):
+            if self._channel_digits and intent is ControlIntent.SELECT:
                 self._commit_channel_entry()
                 return True
 
-            if self._handle_audio_key(key):
+            if intent in {ControlIntent.CHANNEL_UP, ControlIntent.CHANNEL_DOWN}:
+                self._controller.stopOnDemand()
+                self._window.setProperty("screen", "live")
+                QApplication.processEvents()
+                delta = 1 if intent is ControlIntent.CHANNEL_UP else -1
+                result = self._controller.changeChannel(delta)
+                self._notify(result)
+                if bool(result.get("ok")):
+                    self._show_live_hud()
+                else:
+                    self._window.setProperty("screen", "library")
                 return True
 
-            if key == Qt.Key.Key_P:
+            if intent is ControlIntent.PREVIOUS_CHANNEL:
                 self._controller.stopOnDemand()
                 self._window.setProperty("screen", "live")
                 QApplication.processEvents()
@@ -1266,24 +1399,36 @@ class CouchKeyFilter(QObject):
                     self._window.setProperty("screen", "library")
                 return True
 
-            if key in {Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
+            if intent is ControlIntent.BACK:
                 self._controller.stopOnDemand()
                 self._window.setProperty("screen", "library")
                 return True
 
-            if key == Qt.Key.Key_Space:
+            if intent in {
+                ControlIntent.SELECT,
+                ControlIntent.PLAY,
+                ControlIntent.PAUSE,
+                ControlIntent.PLAY_PAUSE,
+            }:
+                paused = bool(self._controller.onDemand.get("paused", False))
+                if not self._transport_should_toggle(intent, paused=paused):
+                    return True
                 self._notify(
                     self._controller.toggleOnDemandPause()
                 )
                 return True
 
-            if key == Qt.Key.Key_Left:
+            if intent in {ControlIntent.LEFT, ControlIntent.REWIND, ControlIntent.SKIP_BACK}:
                 self._notify(
                     self._controller.skipOnDemand(-10.0)
                 )
                 return True
 
-            if key == Qt.Key.Key_Right:
+            if intent in {
+                ControlIntent.RIGHT,
+                ControlIntent.FAST_FORWARD,
+                ControlIntent.SKIP_FORWARD,
+            }:
                 self._notify(
                     self._controller.skipOnDemand(30.0)
                 )
@@ -1294,55 +1439,68 @@ class CouchKeyFilter(QObject):
         if screen != "live":
             return False
 
-        digit = self._digit_for_key(key)
-        if digit is not None:
-            self._queue_channel_digit(digit)
+        if intent is ControlIntent.DIGIT:
+            self._queue_channel_digit(str(int(command.value or 0)))
             return True
 
-        if (
-            self._channel_digits
-            and key in {Qt.Key.Key_Return, Qt.Key.Key_Enter}
-        ):
+        if self._channel_digits and intent is ControlIntent.SELECT:
             self._commit_channel_entry()
             return True
 
-        if self._handle_audio_key(key):
-            return True
-
-        if key in {Qt.Key.Key_G, Qt.Key.Key_Escape, Qt.Key.Key_Backspace}:
-            self._controller.refresh()
-            self._window.setProperty("screen", "guide")
-            self._select_guide_anchor()
-            return True
-        if key in {Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space}:
+        if intent is ControlIntent.BACK:
+            return self._open_guide()
+        if intent in {
+            ControlIntent.SELECT,
+            ControlIntent.PLAY,
+            ControlIntent.PAUSE,
+            ControlIntent.PLAY_PAUSE,
+        }:
+            paused = bool(self._controller.playback.get("paused", False))
+            if not self._transport_should_toggle(intent, paused=paused):
+                return True
             self._notify(self._controller.togglePause())
             self._show_live_hud()
             return True
-        if key == Qt.Key.Key_Left:
+        if intent in {ControlIntent.LEFT, ControlIntent.REWIND, ControlIntent.SKIP_BACK}:
             self._notify(self._controller.skip(-10.0))
             self._show_live_hud()
             return True
-        if key == Qt.Key.Key_Right:
+        if intent in {
+            ControlIntent.RIGHT,
+            ControlIntent.FAST_FORWARD,
+            ControlIntent.SKIP_FORWARD,
+        }:
             self._notify(self._controller.skip(30.0))
             self._show_live_hud()
             return True
-        if key == Qt.Key.Key_Up:
+        if intent in {ControlIntent.UP, ControlIntent.CHANNEL_UP}:
             self._notify(self._controller.changeChannel(1))
             self._show_live_hud()
             return True
-        if key == Qt.Key.Key_Down:
+        if intent in {ControlIntent.DOWN, ControlIntent.CHANNEL_DOWN}:
             self._notify(self._controller.changeChannel(-1))
             self._show_live_hud()
             return True
-        if key == Qt.Key.Key_L:
+        if intent is ControlIntent.GO_LIVE:
             self._notify(self._controller.goLive())
             self._show_live_hud()
             return True
-        if key == Qt.Key.Key_P:
+        if intent is ControlIntent.PREVIOUS_CHANNEL:
             self._notify(self._controller.previousChannel())
             self._show_live_hud()
             return True
+        if intent is ControlIntent.INFO:
+            self._show_live_hud()
+            return True
         return False
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if event.type() != QEvent.Type.KeyPress:
+            return False
+        command = self.command_for_key(event.key())
+        if command is None:
+            return False
+        return self.dispatch_command(command)
 
 
 def _native_video_platform() -> str:

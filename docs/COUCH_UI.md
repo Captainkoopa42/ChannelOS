@@ -218,12 +218,17 @@ Both use the same owned-media index and the same ChannelOS presentation surface,
 
 ### Settings
 
-The first Settings surface changes only real couch preferences: volume, mute,
-skip-back distance, and skip-forward distance. Current behavior remains the
-default (100%, sound on, 10 seconds back, 30 seconds forward). Changes save
-atomically to `.channelos/settings.json`, separately from the Library and
-runtime databases, and apply to both Live TV and On Demand. See
-[SETTINGS.md](SETTINGS.md).
+Settings exposes real couch preferences plus Standard, Lightweight, and Custom
+machine-performance profiles. Standard preserves existing behavior. Lightweight
+reduces optional FFmpeg artwork work, caps generated artwork at 256 MB, avoids
+generation during playback, and removes Library shelf/artwork fades. It does not
+change video quality, scheduling, or media. Sidecar artwork, cached artwork, and
+the format-card fallback remain available in every profile.
+
+The scrollable surface also reports and safely clears only ChannelOS-generated
+artwork. Volume, mute, skip distances, and performance choices save atomically
+to `.channelos/settings.json`, separately from the Library and runtime
+databases. See [SETTINGS.md](SETTINGS.md).
 
 ## Real-machine validation
 

@@ -24,6 +24,9 @@ Item {
     property var snapshot: channelOS
                            ? (channelOS.librarySnapshot || ({}))
                            : ({})
+    readonly property var preferences: channelOS ? channelOS.settings : ({})
+    readonly property bool reducedMotion: Boolean(preferences.reducedMotion)
+    readonly property int artworkWidth: Number(preferences.thumbnailWidth || 640)
     property var allItems: snapshot.items || []
     property var sources: snapshot.sources || []
     property var shelves: []
@@ -795,7 +798,10 @@ Item {
                 property alias cardListView: cardList
 
                 Behavior on height {
-                    NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
+                    NumberAnimation {
+                        duration: libraryRoot.reducedMotion ? 0 : 150
+                        easing.type: Easing.OutCubic
+                    }
                 }
 
                 Rectangle {
@@ -929,14 +935,16 @@ Item {
                                 id: artworkImage
                                 anchors.fill: parent
                                 source: mediaCard.artworkUrl
-                                sourceSize.width: 640
+                                sourceSize.width: libraryRoot.artworkWidth
                                 fillMode: Image.PreserveAspectCrop
                                 asynchronous: true
                                 autoTransform: true
                                 opacity: status === Image.Ready ? 1.0 : 0.0
 
                                 Behavior on opacity {
-                                    NumberAnimation { duration: 180 }
+                                    NumberAnimation {
+                                        duration: libraryRoot.reducedMotion ? 0 : 180
+                                    }
                                 }
                             }
 

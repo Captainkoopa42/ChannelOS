@@ -103,6 +103,9 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 - [ ] Home / Back / Info navigation — Home and Back work; dedicated Info behavior remains incomplete
 - [x] Functional Home destinations and controller/mouse-accessible quick-action cards
 - [x] Persistent couch Settings for volume, mute, and Live/On Demand skip distances
+- [ ] Standard/Lightweight/Custom machine-performance profiles, generated-art
+  cache controls, and reduced motion — implemented and automated-test covered;
+  Windows feature-branch validation pending
 - [x] Large, television-readable focus states and targets
 - [x] Default dark navy/charcoal + cool-blue ChannelOS visual language
 - [ ] SteamOS/controller compatibility validation
@@ -270,8 +273,9 @@ Steam may provide installation, updates, discovery, controller-friendly launchin
 
 Before public distribution, including Steam:
 
-- [ ] Select and add the intended open-source license
-- [ ] Audit third-party runtime licenses/notices
+- [x] Select and add the intended MPL-2.0 open-source license
+- [x] Establish the development dependency inventory and distribution policy
+- [ ] Freeze and audit the exact packaged third-party runtime bill of materials
 - [ ] Verify packaged libVLC distribution compliance
 - [ ] Produce repeatable Windows/Linux packages
 - [ ] Validate SteamOS couch/controller behavior

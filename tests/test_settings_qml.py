@@ -33,6 +33,15 @@ class FakeSettingsController(QObject):
             "muted": False,
             "skipBackSeconds": 10,
             "skipForwardSeconds": 30,
+            "performanceProfile": "standard",
+            "generateVideoThumbnails": True,
+            "artworkCacheLimitMb": 0,
+            "backgroundArtworkDuringPlayback": True,
+            "reducedMotion": False,
+            "thumbnailWidth": 640,
+            "ffmpegThreads": 0,
+            "artworkCacheBytes": 0,
+            "artworkCacheFiles": 0,
         }
 
     @Property("QVariantMap", notify=settingsChanged)
@@ -54,6 +63,16 @@ class FakeSettingsController(QObject):
             "message": "reset",
             "volume": 100,
             "muted": False,
+            "settings": self._settings,
+        }
+
+    @Slot(result="QVariantMap")
+    def clearArtworkCache(self):
+        return {
+            "ok": True,
+            "message": "cleared",
+            "removedFiles": 0,
+            "removedBytes": 0,
             "settings": self._settings,
         }
 
@@ -124,4 +143,11 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
     assert "preferences.muted" in text
     assert "preferences.skipBackSeconds" in text
     assert "preferences.skipForwardSeconds" in text
+    assert "preferences.performanceProfile" in text
+    assert "preferences.generateVideoThumbnails" in text
+    assert "preferences.artworkCacheLimitMb" in text
+    assert "preferences.backgroundArtworkDuringPlayback" in text
+    assert "preferences.reducedMotion" in text
+    assert "preferences.artworkCacheBytes" in text
+    assert "channelOS.clearArtworkCache()" in text
     assert "channelOS.resetSettings()" in text

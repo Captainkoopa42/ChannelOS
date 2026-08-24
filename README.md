@@ -262,7 +262,14 @@ Every major feature should answer five questions:
 
 ## License
 
-ChannelOS is intended to be released as open-source software, but **an open-source license has not been selected yet**. Until one is deliberately chosen and added, normal copyright restrictions apply. Selecting an appropriate license and completing third-party dependency/license review are release gates before public distribution, including Steam.
+ChannelOS is open-source software licensed under the [Mozilla Public License
+2.0](LICENSE.md). Copyright (c) 2026 William Robert Adams.
+
+Third-party components keep their own licenses. See
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the current development
+inventory, [`ACKNOWLEDGMENTS.md`](ACKNOWLEDGMENTS.md) for thanks, and
+[`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) for the rules and remaining audit
+required before publishing a packaged release.
 
 ---
 

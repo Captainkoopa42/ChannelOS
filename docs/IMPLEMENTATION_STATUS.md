@@ -42,11 +42,12 @@ A real Windows machine can now:
 - create and edit portable channel definitions through the Broadcaster,
 - reload created/edited channels immediately into runtime and Guide state.
 
-The current Home/Settings branch additionally wires every visible Home
-destination, makes the lower quick-action row controller/mouse accessible, and
-adds persistent volume, mute, and seek-distance preferences. That slice is
-implemented and automated-test covered but remains explicitly pending Windows
-real-machine validation before merge.
+Home now wires every visible destination, makes the lower quick-action row
+controller/mouse accessible, and provides persistent volume, mute, and
+seek-distance preferences. The follow-up Settings branch adds Standard,
+Lightweight, and Custom machine-performance profiles, generated-art cache
+controls, and reduced motion. That follow-up is automated-test covered but
+remains explicitly pending Windows real-machine validation before merge.
 
 The largest remaining first-release work is now product experience and release hardening rather than proving the television model.
 
@@ -58,7 +59,7 @@ The largest remaining first-release work is now product experience and release h
 
 Estimated completion:
 
-**approximately 80-82%**
+**approximately 82-84%**
 
 This is the focused first-release experience: local ownership/indexing, persistent channels, Guide, live playback, television controls, Library / On Demand, minimum broadcaster/channel management, normal-user packaging, controller/remote polish, settings, and release hardening.
 
@@ -112,8 +113,8 @@ This is a design-audit estimate, not a mathematical quality score. Implementatio
 | Library and channels share one media index | Implemented | Very high |
 | On Demand does not contaminate channel scheduling | Implemented with separate playback session | Very high |
 | Couch-first presentation | Working keyboard/D-pad implementation | High |
-| Functional Home destinations | Implemented; Windows validation pending | High |
-| Persistent basic Settings | Implemented in separate local JSON; Windows validation pending | High |
+| Functional Home destinations | Implemented and real-machine tested | High |
+| Persistent Settings | Basic controls merged; performance profiles/cache controls pending feature-branch Windows validation | High |
 | User is broadcaster | Safe Channel Builder MVP implemented | High |
 | Rich metadata/artwork | Not yet | Low |
 | Advanced scheduling/programming tools | Foundation only | Partial |
@@ -142,6 +143,8 @@ Implemented:
 - volume/mute,
 - functional Home menu and lower quick-action navigation,
 - persistent volume, mute, and skip-distance Settings,
+- Standard/Lightweight/Custom performance settings with safe generated-art
+  cache controls (feature-branch Windows validation pending),
 - transport-neutral couch control intents with keyboard, multimedia-key, and
   consumer-remote-key translation,
 - pause / resume,
@@ -305,13 +308,20 @@ When On Demand temporarily owns the presentation surface, ChannelOS may stop the
 
 ## Important remaining first-release work
 
-1. Library -> Add to Channel authoring flow.
-2. Native controller/Steam Input adapter and real-machine validation.
-3. Normal-user libVLC/runtime packaging.
-4. Windows installer / repeatable package.
-5. Linux and SteamOS validation.
-6. License and third-party notice review.
-7. Crash recovery, clean-machine testing, and ordinary-user hardening.
+1. Windows validation and merge of expanded Settings / Lightweight mode.
+2. Fuller Info behavior.
+3. Native controller/Steam Input adapter and real-machine validation.
+4. Normal-user libVLC/runtime packaging.
+5. Windows installer / repeatable package.
+6. Linux and SteamOS validation.
+7. Frozen packaged-dependency bill of materials and compliance verification
+   under `docs/DISTRIBUTION.md` (the MPL-2.0 source license and development
+   notices are complete).
+8. Crash recovery, clean-machine testing, and ordinary-user hardening.
+
+Library -> Add to Channel remains defined by the Channel Studio concept and is
+intentionally queued behind the current Settings, Info, and input work so its
+authoring behavior can be designed deliberately.
 
 ---
 
@@ -355,6 +365,6 @@ And the second statement is now literal in the running product:
 
 > **The user is not merely the audience. The user is the broadcaster.**
 
-The largest visible feature gap before a focused beta is now Library-to-channel
-authoring. Packaging, input polish, settings, and release hardening remain the
-larger delivery risks.
+The largest visible feature gap before a focused beta remains
+Library-to-channel authoring. Packaging, input polish, Info behavior, and
+release hardening remain the larger delivery risks.

@@ -214,6 +214,19 @@ def test_transport_actions_reuse_the_same_session(tmp_path: Path) -> None:
     assert backend.events.count("load") == 1
 
 
+def test_reuse_current_playback_does_not_touch_decoder_or_clock(tmp_path: Path) -> None:
+    epoch = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
+    actions, _, backend = make_actions(tmp_path, epoch)
+
+    decision = actions.continue_watching(at=epoch + timedelta(seconds=5), default_channel=7)
+    backend.events.clear()
+
+    reused = actions.reuse_current_playback()
+
+    assert reused is decision
+    assert backend.events == []
+
+
 def test_stale_schedule_identity_is_rejected(tmp_path: Path) -> None:
     epoch = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
     actions, _, _ = make_actions(tmp_path, epoch)

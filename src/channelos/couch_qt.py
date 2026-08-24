@@ -18,6 +18,7 @@ from .playback import NativeVideoSurface, PlaybackError
 from .runtime import ChannelRuntimeError, TelevisionRuntime, TuneDecision, utc_now
 from .scanner import MediaScanner, ScanProgress, ScanSummary
 from .television import TelevisionSession
+from .window_startup import NativeWindowSnapshot, NativeWindowStartupGate
 
 
 class CouchController(QObject):
@@ -520,6 +521,31 @@ class CouchController(QObject):
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
             return self._error(exc)
 
+    @Slot(result="QVariantMap")
+    def enterLiveFromHome(self) -> dict[str, object]:
+        """Expand an already-playing Home feed without restarting or seeking it."""
+
+        if not self._surface_ready:
+            return {"ok": False, "message": self._surface_error}
+
+        decision = self._actions.reuse_current_playback()
+        if (
+            bool(self._playback.get("active"))
+            and not bool(self._playback.get("paused"))
+            and not self._on_demand.active
+            and decision is not None
+        ):
+            return {
+                "ok": True,
+                "message": "",
+                "playback": self._playback,
+                "reused": True,
+            }
+
+        # Preserve Continue Watching semantics when Home does not already have
+        # a running live-TV feed (including resuming a paused Viewer Clock).
+        return self.continueWatching()
+
     def _apply_audio_state(self) -> None:
         if self._on_demand.active:
             self._on_demand.set_volume(self._volume)
@@ -888,7 +914,7 @@ class CouchKeyFilter(QObject):
                     else:
                         self._window.setProperty("screen", "live")
                         QApplication.processEvents()
-                        result = self._controller.continueWatching()
+                        result = self._controller.enterLiveFromHome()
                         self._notify(result)
                         if bool(result.get("ok")):
                             self._show_live_hud()
@@ -1130,6 +1156,61 @@ def _native_video_platform() -> str:
     )
 
 
+def _start_home_video_when_ready(
+    controller: CouchController,
+    window: QWindow,
+    video_window: QWindow,
+) -> NativeWindowStartupGate:
+    """Attach and start Home video after Qt realizes the native child window."""
+
+    home_video_required = controller.homeTelevision.get("mode") != "static"
+
+    def report_startup(message: str) -> None:
+        # Use stdout so Windows PowerShell can capture diagnostics without
+        # wrapping each line in a misleading NativeCommandError record.
+        print(f"[ChannelOS Home video] {message}", flush=True)
+
+    def sample_native_windows() -> NativeWindowSnapshot:
+        return NativeWindowSnapshot(
+            host_visible=bool(window.isVisible()),
+            host_exposed=bool(window.isExposed()),
+            video_visible=bool(video_window.isVisible()),
+            video_exposed=bool(video_window.isExposed()),
+            video_width=int(video_window.width()),
+            video_height=int(video_window.height()),
+            video_required=home_video_required,
+        )
+
+    def attach_surface_and_start_home() -> None:
+        # Delay winId() until the QML WindowContainer has been shown and given
+        # Qt/Windows an opportunity to realize the native child. Forcing the
+        # handle before the host window was visible was part of the boot race.
+        try:
+            surface = NativeVideoSurface(
+                _native_video_platform(),
+                int(video_window.winId()),
+            )
+            controller.attach_video_surface(surface)
+        except (RuntimeError, ValueError) as exc:
+            controller.set_video_surface_error(str(exc))
+            report_startup(f"surface attachment failed: {exc}")
+            return
+
+        report_startup(
+            f"attached native surface {surface.window_id}; requesting Home playback"
+        )
+        controller.startHomePlayback()
+
+    startup_gate = NativeWindowStartupGate(
+        sample=sample_native_windows,
+        schedule=QTimer.singleShot,
+        start=attach_surface_and_start_home,
+        report=report_startup,
+    )
+    startup_gate.begin()
+    return startup_gate
+
+
 
 def run_qt(
     service: GuideService,
@@ -1166,18 +1247,6 @@ def run_qt(
 
     window = roots[0]
 
-    # Main.qml already contains the WindowContainer. At this point Qt has
-    # attached video_window to the Quick scene, so expose its native handle
-    # directly to the playback backend.
-    try:
-        surface = NativeVideoSurface(
-            _native_video_platform(),
-            int(video_window.winId()),
-        )
-        controller.attach_video_surface(surface)
-    except (RuntimeError, ValueError) as exc:
-        controller.set_video_surface_error(str(exc))
-
     key_filter = CouchKeyFilter(controller, window)
     app.installEventFilter(key_filter)
 
@@ -1202,10 +1271,11 @@ def run_qt(
     else:
         window.showFullScreen()
 
-    # Do not start libVLC against a hidden native child. Let Qt realize the
-    # Home layout first, then resume the remembered Viewer Clock (or real
-    # default CH001) into the already-visible preview surface.
-    QTimer.singleShot(0, controller.startHomePlayback)
+    window._channelos_home_startup_gate = _start_home_video_when_ready(
+        controller,
+        window,
+        video_window,
+    )
 
     if not owns_application:
         return 0

@@ -197,7 +197,8 @@ def test_couch_qml_asset_is_present() -> None:
     assert "id: liveVideoHost" not in text
     assert "anchors.right: guidePreviewPanel.left" in text
     assert 'root.screen === "guide" && Boolean(root.playback.active)' in text
-    assert 'root.screen === "home" && Boolean(root.playback.active)' in text
+    assert 'root.homeTelevision.mode !== "static"' in text
+    assert 'root.screen === "home"' in text
     assert "readonly property bool showHomePreview" in text
     assert "readonly property bool showGuidePreview" in text
     assert "anchors.fill: parent" in text
@@ -252,8 +253,16 @@ def test_couch_qml_asset_is_present() -> None:
     assert '"mode": "static"' in couch_qt
     assert '"mode"] = "previous"' in couch_qt
     assert "def continueWatching" in couch_qt
+    assert "def enterLiveFromHome" in couch_qt
+    assert "self._controller.enterLiveFromHome()" in couch_qt
+    assert '"reused": True' in couch_qt
     assert "def startHomePlayback" in couch_qt
-    assert "QTimer.singleShot(0, controller.startHomePlayback)" in couch_qt
+    assert "NativeWindowStartupGate" in couch_qt
+    assert "def _start_home_video_when_ready" in couch_qt
+    assert "sample_native_windows" in couch_qt
+    assert "attach_surface_and_start_home" in couch_qt
+    assert "int(video_window.winId())" in couch_qt
+    assert "QTimer.singleShot(500, controller.startHomePlayback)" not in couch_qt
     assert "not self._surface_ready" in couch_qt
     assert "continue_watching(default_channel=1)" in couch_qt
     assert "Continue Watching will connect" not in couch_qt
@@ -268,3 +277,20 @@ def test_couch_qml_asset_is_present() -> None:
     assert "RESERVED_DEFAULT_CHANNEL = 1" in couch_model
     assert "channelos:unassigned:001" in couch_model
     assert "_unassigned_default_row" in couch_model
+
+
+def test_active_couch_launcher_uses_home_video_startup_gate() -> None:
+    root = Path(__file__).resolve().parents[1]
+    couch_entrypoint = (root / "src" / "channelos" / "couch.py").read_text(
+        encoding="utf-8"
+    )
+    broadcaster_qt = (
+        root / "src" / "channelos" / "broadcaster_qt.py"
+    ).read_text(encoding="utf-8")
+
+    assert "from .broadcaster_qt import run_qt" in couch_entrypoint
+    assert "_start_home_video_when_ready" in broadcaster_qt
+    assert "window._channelos_home_startup_gate" in broadcaster_qt
+    assert broadcaster_qt.index("window.showFullScreen()") < broadcaster_qt.index(
+        "window._channelos_home_startup_gate"
+    )

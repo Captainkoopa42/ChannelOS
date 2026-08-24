@@ -256,13 +256,16 @@ ApplicationWindow {
         id: liveVideoContainer
 
         // Keep the Guide geometry on the path already validated on Windows.
-        // Home uses the same root-coordinate idea, but derives its position
-        // directly from the stable split-layout dimensions so repeated visits
-        // cannot accumulate nested-position drift.
+        // Home uses the same root-coordinate idea, but its native surface is
+        // made visible from remembered/default television state before libVLC
+        // starts. Decoder activity must not be the thing that makes its target
+        // HWND visible; otherwise Windows can create D3D11 output against a
+        // hidden child and leave the Home picture blank on boot.
         readonly property bool fullPresentation:
             root.screen === "live" || root.screen === "ondemand"
         readonly property bool showHomePreview:
-            root.screen === "home" && Boolean(root.playback.active)
+            root.screen === "home"
+            && root.homeTelevision.mode !== "static"
         readonly property bool showGuidePreview:
             root.screen === "guide" && Boolean(root.playback.active)
 

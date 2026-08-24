@@ -760,8 +760,10 @@ Item {
 
                                     Text {
                                         width: parent.width
-                                        text: broadcasterRoot.selectedChannel().path
-                                              || snapshot.managedDirectory
+                                        text: String(
+                                                  broadcasterRoot.selectedChannel().path
+                                                  || snapshot.managedDirectory
+                                                  || "")
                                         color: broadcasterRoot.textPrimary
                                         font.pixelSize: 13
                                         wrapMode: Text.WrapAnywhere

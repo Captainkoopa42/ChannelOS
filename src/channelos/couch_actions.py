@@ -39,6 +39,13 @@ class CouchActions:
     def paused(self) -> bool:
         return bool(self._session and self._session.paused)
 
+    def reuse_current_playback(self) -> TuneDecision | None:
+        """Return the active decision without issuing decoder or clock commands."""
+
+        if self._session is None:
+            return None
+        return self._last_decision
+
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         """Remember the UI's native video target and attach it to an active backend."""
 

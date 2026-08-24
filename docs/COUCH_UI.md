@@ -168,9 +168,10 @@ the current ChannelOS presentation model and covers:
 - On Demand progress and the underlying owned file.
 
 `INFO` toggles the drawer and `BACK` closes it before performing normal screen
-navigation. Ordinary QML screens use a dimmed in-scene drawer. Live and On
-Demand use a bounded top-level side drawer so the proven native libVLC child is
-not covered by a new full-screen transparent native surface.
+navigation. Library uses a dimmed in-scene drawer. Home, Guide, Live, and On
+Demand use a bounded top-level side drawer because each can contain the native
+libVLC child. This keeps the drawer above video without introducing a new
+full-screen transparent native surface.
 
 ### Library / On Demand
 

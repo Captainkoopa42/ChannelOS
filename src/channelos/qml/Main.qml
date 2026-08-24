@@ -519,9 +519,7 @@ ApplicationWindow {
         id: infoSceneOverlay
         anchors.fill: parent
         z: 120
-        visible: root.infoVisible
-                 && root.screen !== "live"
-                 && root.screen !== "ondemand"
+        visible: root.infoVisible && root.screen === "library"
 
         Rectangle {
             anchors.fill: parent
@@ -543,8 +541,10 @@ ApplicationWindow {
     }
 
     // The native libVLC child can sit above ordinary QML items on Windows.
-    // Keep video Info in a bounded top-level drawer, following the proven HUD
-    // composition rule without recreating a full-screen transparent sibling.
+    // Home and Guide can also contain that native preview, so all screens that
+    // may present video use this bounded top-level drawer. This follows the
+    // proven HUD composition rule without recreating a full-screen transparent
+    // sibling.
     Window {
         id: infoOverlay
         transientParent: root
@@ -560,7 +560,10 @@ ApplicationWindow {
         visible: root.visible
                  && root.visibility !== Window.Minimized
                  && root.infoVisible
-                 && (root.screen === "live" || root.screen === "ondemand")
+                 && (root.screen === "home"
+                     || root.screen === "guide"
+                     || root.screen === "live"
+                     || root.screen === "ondemand")
 
         Loader {
             anchors.fill: parent

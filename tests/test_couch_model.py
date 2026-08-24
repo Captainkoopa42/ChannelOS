@@ -241,6 +241,9 @@ def test_couch_qml_asset_is_present() -> None:
     assert "infoPanelComponent" in text
     assert "infoSceneOverlay" in text
     assert "infoOverlay" in text
+    assert 'root.infoVisible && root.screen === "library"' in text
+    assert 'root.screen === "home"' in text
+    assert 'root.screen === "guide"' in text
     assert "WHY THIS IS HERE" in text
     assert "Indexed in place" in text
 

@@ -255,6 +255,7 @@ def test_couch_qml_asset_is_present() -> None:
     assert "def continueWatching" in couch_qt
     assert "def startHomePlayback" in couch_qt
     assert "NativeWindowStartupGate" in couch_qt
+    assert "def _start_home_video_when_ready" in couch_qt
     assert "sample_native_windows" in couch_qt
     assert "attach_surface_and_start_home" in couch_qt
     assert "int(video_window.winId())" in couch_qt
@@ -273,3 +274,20 @@ def test_couch_qml_asset_is_present() -> None:
     assert "RESERVED_DEFAULT_CHANNEL = 1" in couch_model
     assert "channelos:unassigned:001" in couch_model
     assert "_unassigned_default_row" in couch_model
+
+
+def test_active_couch_launcher_uses_home_video_startup_gate() -> None:
+    root = Path(__file__).resolve().parents[1]
+    couch_entrypoint = (root / "src" / "channelos" / "couch.py").read_text(
+        encoding="utf-8"
+    )
+    broadcaster_qt = (
+        root / "src" / "channelos" / "broadcaster_qt.py"
+    ).read_text(encoding="utf-8")
+
+    assert "from .broadcaster_qt import run_qt" in couch_entrypoint
+    assert "_start_home_video_when_ready" in broadcaster_qt
+    assert "window._channelos_home_startup_gate" in broadcaster_qt
+    assert broadcaster_qt.index("window.showFullScreen()") < broadcaster_qt.index(
+        "window._channelos_home_startup_gate"
+    )

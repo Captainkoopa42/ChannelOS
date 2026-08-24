@@ -25,7 +25,11 @@ from PySide6.QtWidgets import QApplication, QFileDialog
 from .broadcaster import BroadcasterError, BroadcasterService
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
-from .couch_qt import CouchController, CouchKeyFilter, _native_video_platform
+from .couch_qt import (
+    CouchController,
+    CouchKeyFilter,
+    _start_home_video_when_ready,
+)
 from .guide import GuideService
 from .library import MediaLibrary, normalize_path
 from .models import ChannelValidationError
@@ -691,15 +695,6 @@ def run_qt(
 
     window = roots[0]
 
-    try:
-        surface = NativeVideoSurface(
-            _native_video_platform(),
-            int(video_window.winId()),
-        )
-        controller.attach_video_surface(surface)
-    except (RuntimeError, ValueError) as exc:
-        controller.set_video_surface_error(str(exc))
-
     library_item = _attach_overlay(
         engine,
         window,
@@ -735,6 +730,15 @@ def run_qt(
         window.showNormal()
     else:
         window.showFullScreen()
+
+    # channelos.couch launches this Broadcaster-integrated Qt path. Keep Home
+    # startup on the same native-surface gate as the narrower couch launcher so
+    # a future integration cannot silently omit the playback request again.
+    window._channelos_home_startup_gate = _start_home_video_when_ready(
+        controller,
+        window,
+        video_window,
+    )
 
     if not owns_application:
         return 0

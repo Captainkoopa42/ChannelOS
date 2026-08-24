@@ -44,6 +44,20 @@ The fixed 500 ms delay was useful as an isolation step, but it still guessed whe
 
 The PowerShell output carries `[ChannelOS Home video]` messages so the exact startup state can be reported from the Windows test machine.
 
+## First Windows readiness-gate test
+
+The first real-machine run still showed stale desktop/backbuffer contents and no
+`[ChannelOS Home video]` diagnostics. That combination exposed the actual
+integration gap: `channelos.couch` launches `broadcaster_qt.run_qt()`, while the
+startup experiment had only been installed in the narrower
+`couch_qt.run_qt()` path.
+
+The active Broadcaster-integrated launcher attached the native surface before
+showing the host window and never called `startHomePlayback()` at application
+startup. The readiness implementation is now a shared helper invoked by both Qt
+launch paths, and a regression test follows the real `channelos.couch` import to
+verify that the active launcher retains the gate.
+
 This is a presentation/startup timing experiment, not a redesign of the television runtime.
 
 ## Architecture that must remain intact

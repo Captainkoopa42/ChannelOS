@@ -1131,6 +1131,61 @@ def _native_video_platform() -> str:
     )
 
 
+def _start_home_video_when_ready(
+    controller: CouchController,
+    window: QWindow,
+    video_window: QWindow,
+) -> NativeWindowStartupGate:
+    """Attach and start Home video after Qt realizes the native child window."""
+
+    home_video_required = controller.homeTelevision.get("mode") != "static"
+
+    def report_startup(message: str) -> None:
+        # Use stdout so Windows PowerShell can capture diagnostics without
+        # wrapping each line in a misleading NativeCommandError record.
+        print(f"[ChannelOS Home video] {message}", flush=True)
+
+    def sample_native_windows() -> NativeWindowSnapshot:
+        return NativeWindowSnapshot(
+            host_visible=bool(window.isVisible()),
+            host_exposed=bool(window.isExposed()),
+            video_visible=bool(video_window.isVisible()),
+            video_exposed=bool(video_window.isExposed()),
+            video_width=int(video_window.width()),
+            video_height=int(video_window.height()),
+            video_required=home_video_required,
+        )
+
+    def attach_surface_and_start_home() -> None:
+        # Delay winId() until the QML WindowContainer has been shown and given
+        # Qt/Windows an opportunity to realize the native child. Forcing the
+        # handle before the host window was visible was part of the boot race.
+        try:
+            surface = NativeVideoSurface(
+                _native_video_platform(),
+                int(video_window.winId()),
+            )
+            controller.attach_video_surface(surface)
+        except (RuntimeError, ValueError) as exc:
+            controller.set_video_surface_error(str(exc))
+            report_startup(f"surface attachment failed: {exc}")
+            return
+
+        report_startup(
+            f"attached native surface {surface.window_id}; requesting Home playback"
+        )
+        controller.startHomePlayback()
+
+    startup_gate = NativeWindowStartupGate(
+        sample=sample_native_windows,
+        schedule=QTimer.singleShot,
+        start=attach_surface_and_start_home,
+        report=report_startup,
+    )
+    startup_gate.begin()
+    return startup_gate
+
+
 
 def run_qt(
     service: GuideService,
@@ -1191,50 +1246,11 @@ def run_qt(
     else:
         window.showFullScreen()
 
-    home_video_required = controller.homeTelevision.get("mode") != "static"
-
-    def report_startup(message: str) -> None:
-        print(f"[ChannelOS Home video] {message}", file=sys.stderr, flush=True)
-
-    def sample_native_windows() -> NativeWindowSnapshot:
-        return NativeWindowSnapshot(
-            host_visible=bool(window.isVisible()),
-            host_exposed=bool(window.isExposed()),
-            video_visible=bool(video_window.isVisible()),
-            video_exposed=bool(video_window.isExposed()),
-            video_width=int(video_window.width()),
-            video_height=int(video_window.height()),
-            video_required=home_video_required,
-        )
-
-    def attach_surface_and_start_home() -> None:
-        # Delay winId() until the QML WindowContainer has been shown and given
-        # Qt/Windows an opportunity to realize the native child. Forcing the
-        # handle before the host window was visible was part of the boot race.
-        try:
-            surface = NativeVideoSurface(
-                _native_video_platform(),
-                int(video_window.winId()),
-            )
-            controller.attach_video_surface(surface)
-        except (RuntimeError, ValueError) as exc:
-            controller.set_video_surface_error(str(exc))
-            report_startup(f"surface attachment failed: {exc}")
-            return
-
-        report_startup(
-            f"attached native surface {surface.window_id}; requesting Home playback"
-        )
-        controller.startHomePlayback()
-
-    startup_gate = NativeWindowStartupGate(
-        sample=sample_native_windows,
-        schedule=QTimer.singleShot,
-        start=attach_surface_and_start_home,
-        report=report_startup,
+    window._channelos_home_startup_gate = _start_home_video_when_ready(
+        controller,
+        window,
+        video_window,
     )
-    window._channelos_home_startup_gate = startup_gate
-    startup_gate.begin()
 
     if not owns_application:
         return 0

@@ -1,6 +1,6 @@
 # ChannelOS Implementation Status
 
-**Snapshot:** August 23, 2026
+**Snapshot:** August 24, 2026
 **Status:** Working local alpha  
 **Active implementation:** Library 2.0 / first-release couch experience  
 **Canonical product definition:** [MASTER_DESIGN.md](MASTER_DESIGN.md)
@@ -42,6 +42,12 @@ A real Windows machine can now:
 - create and edit portable channel definitions through the Broadcaster,
 - reload created/edited channels immediately into runtime and Guide state.
 
+The current Home/Settings branch additionally wires every visible Home
+destination, makes the lower quick-action row controller/mouse accessible, and
+adds persistent volume, mute, and seek-distance preferences. That slice is
+implemented and automated-test covered but remains explicitly pending Windows
+real-machine validation before merge.
+
 The largest remaining first-release work is now product experience and release hardening rather than proving the television model.
 
 ---
@@ -52,7 +58,7 @@ The largest remaining first-release work is now product experience and release h
 
 Estimated completion:
 
-**approximately 78-80%**
+**approximately 80-82%**
 
 This is the focused first-release experience: local ownership/indexing, persistent channels, Guide, live playback, television controls, Library / On Demand, minimum broadcaster/channel management, normal-user packaging, controller/remote polish, settings, and release hardening.
 
@@ -106,6 +112,8 @@ This is a design-audit estimate, not a mathematical quality score. Implementatio
 | Library and channels share one media index | Implemented | Very high |
 | On Demand does not contaminate channel scheduling | Implemented with separate playback session | Very high |
 | Couch-first presentation | Working keyboard/D-pad implementation | High |
+| Functional Home destinations | Implemented; Windows validation pending | High |
+| Persistent basic Settings | Implemented in separate local JSON; Windows validation pending | High |
 | User is broadcaster | Safe Channel Builder MVP implemented | High |
 | Rich metadata/artwork | Not yet | Low |
 | Advanced scheduling/programming tools | Foundation only | Partial |
@@ -132,6 +140,8 @@ Implemented:
 - numeric direct tuning,
 - Previous Channel,
 - volume/mute,
+- functional Home menu and lower quick-action navigation,
+- persistent volume, mute, and skip-distance Settings,
 - transport-neutral couch control intents with keyboard, multimedia-key, and
   consumer-remote-key translation,
 - pause / resume,
@@ -296,7 +306,7 @@ When On Demand temporarily owns the presentation surface, ChannelOS may stop the
 ## Important remaining first-release work
 
 1. Library -> Add to Channel authoring flow.
-2. Controller/remote abstraction and Settings.
+2. Native controller/Steam Input adapter and real-machine validation.
 3. Normal-user libVLC/runtime packaging.
 4. Windows installer / repeatable package.
 5. Linux and SteamOS validation.

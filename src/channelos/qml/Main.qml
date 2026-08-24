@@ -25,6 +25,9 @@ ApplicationWindow {
 
     property string screen: "home"
     property int homeSelection: 0
+    property int homeFocusArea: 0
+    property int homeCardSelection: 0
+    property int settingsSelection: 0
     property int selectedRow: 0
     property int selectedProgram: 0
     property int selectedLibrary: 0
@@ -34,6 +37,9 @@ ApplicationWindow {
     property int volumePercent: 100
     property bool muted: false
     property bool audioHudVisible: false
+
+    signal homeMenuActivated(int index)
+    signal homeCardActivated(int index)
 
     // One authoritative lower-third mode. This prevents the bounded HUD from
     // momentarily rendering Live and then On Demand (or vice versa) while the
@@ -816,29 +822,38 @@ ApplicationWindow {
                         "Settings"
                     ]
                     delegate: Rectangle {
+                        readonly property bool selected:
+                            root.homeFocusArea === 0
+                            && index === root.homeSelection
                         width: parent.width
                         height: 54
                         radius: 6
-                        color: index === root.homeSelection ? "#12396a" : "transparent"
-                        border.color: index === root.homeSelection ? root.accentBright : "transparent"
-                        border.width: index === root.homeSelection ? 2 : 0
+                        color: selected ? "#12396a" : "transparent"
+                        border.color: selected ? root.accentBright : "transparent"
+                        border.width: selected ? 2 : 0
 
                         Text {
                             anchors.left: parent.left
                             anchors.leftMargin: 22
                             anchors.verticalCenter: parent.verticalCenter
                             text: modelData
-                            color: index === root.homeSelection ? root.textPrimary : root.textSecondary
+                            color: selected ? root.textPrimary : root.textSecondary
                             font.pixelSize: 20
-                            font.weight: index === root.homeSelection ? Font.DemiBold : Font.Normal
+                            font.weight: selected ? Font.DemiBold : Font.Normal
                         }
                         Text {
                             anchors.right: parent.right
                             anchors.rightMargin: 18
                             anchors.verticalCenter: parent.verticalCenter
                             text: "›"
-                            color: index === root.homeSelection ? root.accentBright : root.textSecondary
+                            color: selected ? root.accentBright : root.textSecondary
                             font.pixelSize: 28
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.homeMenuActivated(index)
                         }
                     }
                 }
@@ -1006,15 +1021,18 @@ ApplicationWindow {
                         { title: "Guide", subtitle: "See what's on now and next." },
                         { title: "Library", subtitle: "Browse your owned media." },
                         { title: "Last Channel", subtitle: "Return to your recent channel." },
-                        { title: "Channel Browser", subtitle: "Explore the active lineup." }
+                        { title: "Channels", subtitle: "Browse and manage the active lineup." }
                     ]
                     delegate: Rectangle {
+                        readonly property bool selected:
+                            root.homeFocusArea === 1
+                            && index === root.homeCardSelection
                         width: (homeCards.width - 56 - 54) / 4
                         height: parent.height
                         radius: 10
-                        color: index === 0 ? "#102b50" : "#0b1b2e"
-                        border.color: index === 0 ? root.accentBright : "#17324a"
-                        border.width: index === 0 ? 2 : 1
+                        color: selected ? "#102b50" : "#0b1b2e"
+                        border.color: selected ? root.accentBright : "#17324a"
+                        border.width: selected ? 2 : 1
 
                         Column {
                             anchors.left: parent.left
@@ -1024,6 +1042,12 @@ ApplicationWindow {
                             spacing: 10
                             Text { text: modelData.title; color: root.textPrimary; font.pixelSize: 24; font.weight: Font.DemiBold }
                             Text { text: modelData.subtitle; color: root.textSecondary; font.pixelSize: 16; wrapMode: Text.WordWrap; width: parent.width }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: root.homeCardActivated(index)
                         }
                     }
                 }
@@ -1943,4 +1967,3 @@ ApplicationWindow {
         }
     }
 }
-

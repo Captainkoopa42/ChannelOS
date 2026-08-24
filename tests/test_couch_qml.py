@@ -80,6 +80,9 @@ def test_main_qml_instantiates_headlessly() -> None:
     roots = engine.rootObjects()
     assert roots, "Main.qml failed to instantiate"
     assert roots[0].property("screen") == "home"
+    assert roots[0].property("homeFocusArea") == 0
+    assert roots[0].property("homeCardSelection") == 0
+    assert roots[0].property("settingsSelection") == 0
     assert roots[0].property("channelEntry") == ""
     roots[0].setProperty("screen", "ondemand")
     roots[0].setProperty("channelEntry", "007")
@@ -130,6 +133,9 @@ def test_normalized_navigation_intent_moves_home_selection() -> None:
     window = QWindow()
     window.setProperty("screen", "home")
     window.setProperty("homeSelection", 0)
+    window.setProperty("homeFocusArea", 0)
+    window.setProperty("homeCardSelection", 0)
+    window.setProperty("settingsSelection", 0)
 
     router = CouchKeyFilter(controller, window)  # type: ignore[arg-type]
 
@@ -137,6 +143,20 @@ def test_normalized_navigation_intent_moves_home_selection() -> None:
     assert window.property("homeSelection") == 1
     assert router.dispatch_command(ControlCommand(ControlIntent.UP))
     assert window.property("homeSelection") == 0
+
+    window.setProperty("homeSelection", 4)
+    assert router.dispatch_command(ControlCommand(ControlIntent.DOWN))
+    assert window.property("homeFocusArea") == 1
+    assert router.dispatch_command(ControlCommand(ControlIntent.RIGHT))
+    assert window.property("homeCardSelection") == 1
+    assert router.dispatch_command(ControlCommand(ControlIntent.UP))
+    assert window.property("homeFocusArea") == 0
+    assert window.property("homeSelection") == 4
+
+    assert router.dispatch_command(ControlCommand(ControlIntent.SETTINGS))
+    assert window.property("screen") == "settings"
+    assert router.dispatch_command(ControlCommand(ControlIntent.BACK))
+    assert window.property("screen") == "home"
 
     window.setProperty("screen", "guide")
     assert router.dispatch_command(ControlCommand(ControlIntent.HOME))

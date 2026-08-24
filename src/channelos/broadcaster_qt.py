@@ -631,7 +631,8 @@ class BroadcasterKeyFilter(CouchKeyFilter):
             command = self.command_for_key(event.key())
             if (
                 command is not None
-                and command.intent is ControlIntent.HOME
+                and command.intent
+                in {ControlIntent.HOME, ControlIntent.SETTINGS}
                 and (
                     not event.text()
                     or not self._text_entry_has_focus()
@@ -640,8 +641,9 @@ class BroadcasterKeyFilter(CouchKeyFilter):
                 return self.dispatch_command(command)
             # These management overlays own their keyboard/focus model. In
             # particular, Library search must be allowed to receive ordinary A-Z
-            # keypresses instead of global couch shortcuts. H remains ordinary
-            # text while an editor has focus, but is HOME during couch navigation.
+            # keypresses instead of global couch shortcuts. H/S remain ordinary
+            # text while an editor has focus, but act as Home/Settings during
+            # couch navigation.
             return False
         return super().eventFilter(watched, event)
 
@@ -729,14 +731,23 @@ def run_qt(
         "BroadcasterScreen.qml",
         z=90,
     )
+    settings_item = _attach_overlay(
+        engine,
+        window,
+        "SettingsScreen.qml",
+        z=95,
+    )
 
     key_filter = BroadcasterKeyFilter(controller, window)
     app.installEventFilter(key_filter)
+    window.homeMenuActivated.connect(key_filter.activateHomeMenu)
+    window.homeCardActivated.connect(key_filter.activateHomeCard)
 
     window._channelos_key_filter = key_filter
     window._channelos_video_window = video_window
     window._channelos_library_item = library_item
     window._channelos_broadcaster_item = broadcaster_item
+    window._channelos_settings_item = settings_item
     window._channelos_component_engine = engine
 
     playback_timer = QTimer(window)

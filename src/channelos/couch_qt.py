@@ -4,12 +4,14 @@ import queue
 import sys
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QGuiApplication, QWindow
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
 
 from .artwork import MediaArtworkCache
@@ -28,6 +30,12 @@ from .runtime import (
     utc_now,
 )
 from .scanner import MediaScanner, ScanProgress, ScanSummary
+from .settings import (
+    SKIP_BACK_CHOICES,
+    SKIP_FORWARD_CHOICES,
+    CouchSettings,
+    SettingsStore,
+)
 from .television import TelevisionSession
 from .window_startup import NativeWindowSnapshot, NativeWindowStartupGate
 
@@ -41,6 +49,7 @@ class CouchController(QObject):
     libraryChanged = Signal()
     libraryArtworkResolved = Signal(str, str)
     onDemandChanged = Signal()
+    settingsChanged = Signal()
 
     def __init__(
         self,
@@ -85,8 +94,12 @@ class CouchController(QObject):
         self._home_television = self._build_home_television_view()
         self._surface_ready = False
         self._surface_error = "embedded video surface has not been created"
-        self._volume = 100
-        self._muted = False
+        self._settings_store = SettingsStore(
+            self._runtime_store.database_path.with_name("settings.json")
+        )
+        self._settings = self._settings_store.load()
+        self._volume = self._settings.volume_percent
+        self._muted = self._settings.muted
 
     def _build_library_snapshot(self) -> dict[str, object]:
         online = self._library.list_online_media()
@@ -199,6 +212,15 @@ class CouchController(QObject):
     @Property("QVariantMap", notify=onDemandChanged)
     def onDemand(self) -> dict[str, object]:
         return self._on_demand_view
+
+    @Property("QVariantMap", notify=settingsChanged)
+    def settings(self) -> dict[str, object]:
+        return {
+            "volumePercent": self._settings.volume_percent,
+            "muted": self._settings.muted,
+            "skipBackSeconds": self._settings.skip_back_seconds,
+            "skipForwardSeconds": self._settings.skip_forward_seconds,
+        }
 
     @Slot()
     def refresh(self) -> None:
@@ -752,28 +774,53 @@ class CouchController(QObject):
             self._actions.set_volume(self._volume)
             self._actions.set_muted(self._muted)
 
+    def _save_settings(self, settings: CouchSettings) -> None:
+        self._settings_store.save(settings)
+        self._settings = settings
+        self._volume = settings.volume_percent
+        self._muted = settings.muted
+        self.settingsChanged.emit()
+
+    @staticmethod
+    def _cycle_choice(
+        current: int,
+        choices: tuple[int, ...],
+        direction: int,
+    ) -> int:
+        index = choices.index(current)
+        return choices[(index + (1 if direction > 0 else -1)) % len(choices)]
+
     @Slot(int, result="QVariantMap")
     def changeVolume(self, delta: int) -> dict[str, object]:
         try:
-            self._volume = max(
+            volume = max(
                 0,
                 min(100, self._volume + int(delta)),
             )
-            self._muted = False
+            self._save_settings(
+                replace(
+                    self._settings,
+                    volume_percent=volume,
+                    muted=False,
+                )
+            )
             self._apply_audio_state()
             return {
                 "ok": True,
                 "message": f"Volume {self._volume}%",
                 "volume": self._volume,
                 "muted": self._muted,
+                "settings": self.settings,
             }
-        except (PlaybackError, ValueError) as exc:
+        except (OSError, PlaybackError, ValueError) as exc:
             return self._error(exc)
 
     @Slot(result="QVariantMap")
     def toggleMute(self) -> dict[str, object]:
         try:
-            self._muted = not self._muted
+            self._save_settings(
+                replace(self._settings, muted=not self._muted)
+            )
             self._apply_audio_state()
             return {
                 "ok": True,
@@ -784,8 +831,67 @@ class CouchController(QObject):
                 ),
                 "volume": self._volume,
                 "muted": self._muted,
+                "settings": self.settings,
             }
-        except (PlaybackError, ValueError) as exc:
+        except (OSError, PlaybackError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(str, int, result="QVariantMap")
+    def adjustSetting(self, name: str, direction: int) -> dict[str, object]:
+        step = 1 if int(direction) >= 0 else -1
+        if name == "volume":
+            return self.changeVolume(step * 5)
+        if name == "muted":
+            return self.toggleMute()
+
+        try:
+            if name == "skipBack":
+                value = self._cycle_choice(
+                    self._settings.skip_back_seconds,
+                    SKIP_BACK_CHOICES,
+                    step,
+                )
+                settings = replace(
+                    self._settings,
+                    skip_back_seconds=value,
+                )
+                message = f"Skip back {value} seconds"
+            elif name == "skipForward":
+                value = self._cycle_choice(
+                    self._settings.skip_forward_seconds,
+                    SKIP_FORWARD_CHOICES,
+                    step,
+                )
+                settings = replace(
+                    self._settings,
+                    skip_forward_seconds=value,
+                )
+                message = f"Skip forward {value} seconds"
+            else:
+                raise ValueError(f"unknown setting: {name}")
+
+            self._save_settings(settings)
+            return {
+                "ok": True,
+                "message": message,
+                "settings": self.settings,
+            }
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(result="QVariantMap")
+    def resetSettings(self) -> dict[str, object]:
+        try:
+            self._save_settings(CouchSettings())
+            self._apply_audio_state()
+            return {
+                "ok": True,
+                "message": "Settings restored to ChannelOS defaults",
+                "volume": self._volume,
+                "muted": self._muted,
+                "settings": self.settings,
+            }
+        except (OSError, PlaybackError) as exc:
             return self._error(exc)
 
     def stop(self) -> None:
@@ -1139,6 +1245,100 @@ class CouchKeyFilter(QObject):
         )
         return True
 
+    def _open_settings(self) -> bool:
+        if str(self._window.property("screen")) == "ondemand":
+            self._controller.stopOnDemand()
+        self._window.setProperty("screen", "settings")
+        return True
+
+    def _open_previous_channel_from_home(self) -> bool:
+        self._window.setProperty("screen", "live")
+        QApplication.processEvents()
+        result = self._controller.previousChannel()
+        self._notify(result)
+        if bool(result.get("ok")):
+            self._show_live_hud()
+        else:
+            self._go_home()
+        return True
+
+    def _activate_home_menu_selection(self, selection: int) -> bool:
+        if selection == 1:
+            return self._open_guide()
+        if selection == 2:
+            return self._open_library()
+        if selection == 0:
+            home = self._controller.homeTelevision
+            if str(home.get("mode", "static")) == "static":
+                self._notify(
+                    {
+                        "message": (
+                            "Channel 001 is unassigned - create "
+                            "Channel 001 in Broadcaster to start watching"
+                        )
+                    }
+                )
+                return True
+
+            self._window.setProperty("screen", "live")
+            QApplication.processEvents()
+            result = self._controller.enterLiveFromHome()
+            self._notify(result)
+            if bool(result.get("ok")):
+                self._show_live_hud()
+            else:
+                self._window.setProperty("screen", "home")
+            return True
+        if selection == 3:
+            if self.dispatch_command(ControlCommand(ControlIntent.CHANNELS)):
+                return True
+            self._notify(
+                {"message": "Channel management is unavailable in this launcher"}
+            )
+            return True
+        if selection == 4:
+            return self._open_settings()
+        return False
+
+    @Slot(int)
+    def activateHomeMenu(self, selection: int) -> None:
+        selected = max(0, min(4, int(selection)))
+        self._window.setProperty("homeFocusArea", 0)
+        self._window.setProperty("homeSelection", selected)
+        self._activate_home_menu_selection(selected)
+
+    @Slot(int)
+    def activateHomeCard(self, selection: int) -> None:
+        selected = max(0, min(3, int(selection)))
+        self._window.setProperty("homeFocusArea", 1)
+        self._window.setProperty("homeCardSelection", selected)
+        if selected == 0:
+            self._open_guide()
+        elif selected == 1:
+            self._open_library()
+        elif selected == 2:
+            self._open_previous_channel_from_home()
+        else:
+            self.dispatch_command(ControlCommand(ControlIntent.CHANNELS))
+
+    def _adjust_selected_setting(self, direction: int) -> bool:
+        selection = int(self._window.property("settingsSelection"))
+        names = ("volume", "muted", "skipBack", "skipForward")
+        if not 0 <= selection < len(names):
+            return False
+        result = self._controller.adjustSetting(names[selection], direction)
+        self._notify(result)
+        if "volume" in result:
+            self._window.setProperty(
+                "volumePercent",
+                int(result.get("volume", 100)),
+            )
+            self._window.setProperty(
+                "muted",
+                bool(result.get("muted", False)),
+            )
+        return True
+
     def _go_home(self) -> bool:
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
@@ -1185,6 +1385,9 @@ class CouchKeyFilter(QObject):
         if intent is ControlIntent.LIBRARY:
             return self._open_library()
 
+        if intent is ControlIntent.SETTINGS:
+            return self._open_settings()
+
         if intent is ControlIntent.TUNE:
             if screen == "ondemand":
                 self._controller.stopOnDemand()
@@ -1204,58 +1407,86 @@ class CouchKeyFilter(QObject):
                 QGuiApplication.quit()
                 return True
             if intent is ControlIntent.UP:
+                if int(self._window.property("homeFocusArea")) == 1:
+                    self._window.setProperty("homeFocusArea", 0)
+                    self._window.setProperty("homeSelection", 4)
+                    return True
                 current = int(self._window.property("homeSelection"))
                 self._window.setProperty("homeSelection", max(0, current - 1))
                 return True
             if intent is ControlIntent.DOWN:
+                if int(self._window.property("homeFocusArea")) == 1:
+                    return True
                 current = int(self._window.property("homeSelection"))
-                self._window.setProperty("homeSelection", min(4, current + 1))
-                return True
-            if intent is ControlIntent.SELECT:
-                selection = int(self._window.property("homeSelection"))
-                if selection == 1:
-                    return self._open_guide()
-                elif selection == 2:
-                    return self._open_library()
-                elif selection == 0:
-                    home = self._controller.homeTelevision
-                    if str(home.get("mode", "static")) == "static":
-                        self._notify(
-                            {
-                                "message": (
-                                    "Channel 001 is unassigned - create "
-                                    "Channel 001 in Broadcaster to start watching"
-                                )
-                            }
-                        )
-                    else:
-                        self._window.setProperty("screen", "live")
-                        QApplication.processEvents()
-                        result = self._controller.enterLiveFromHome()
-                        self._notify(result)
-                        if bool(result.get("ok")):
-                            self._show_live_hud()
-                        else:
-                            self._window.setProperty("screen", "home")
-                elif selection == 3:
-                    if self.dispatch_command(
-                        ControlCommand(ControlIntent.CHANNELS)
-                    ):
-                        return True
-                    self._notify(
-                        {"message": "Channel management is unavailable in this launcher"}
-                    )
-                elif selection == 4:
-                    if self.dispatch_command(
-                        ControlCommand(ControlIntent.SETTINGS)
-                    ):
-                        return True
-                    self._notify(
-                        {"message": "Settings are coming in the next couch UI slice"}
-                    )
+                if current >= 4:
+                    self._window.setProperty("homeFocusArea", 1)
                 else:
-                    self._notify({"message": "This section is reserved for a later couch UI slice"})
+                    self._window.setProperty("homeSelection", current + 1)
                 return True
+            if intent is ControlIntent.LEFT:
+                if int(self._window.property("homeFocusArea")) == 1:
+                    current = int(self._window.property("homeCardSelection"))
+                    self._window.setProperty(
+                        "homeCardSelection",
+                        max(0, current - 1),
+                    )
+                    return True
+                return False
+            if intent is ControlIntent.RIGHT:
+                if int(self._window.property("homeFocusArea")) == 1:
+                    current = int(self._window.property("homeCardSelection"))
+                    self._window.setProperty(
+                        "homeCardSelection",
+                        min(3, current + 1),
+                    )
+                    return True
+                return False
+            if intent is ControlIntent.SELECT:
+                if int(self._window.property("homeFocusArea")) == 1:
+                    self.activateHomeCard(
+                        int(self._window.property("homeCardSelection"))
+                    )
+                    return True
+                return self._activate_home_menu_selection(
+                    int(self._window.property("homeSelection"))
+                )
+            return False
+
+        if screen == "settings":
+            if intent is ControlIntent.BACK:
+                return self._go_home()
+            if intent is ControlIntent.UP:
+                current = int(self._window.property("settingsSelection"))
+                self._window.setProperty(
+                    "settingsSelection",
+                    max(0, current - 1),
+                )
+                return True
+            if intent is ControlIntent.DOWN:
+                current = int(self._window.property("settingsSelection"))
+                self._window.setProperty(
+                    "settingsSelection",
+                    min(4, current + 1),
+                )
+                return True
+            if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
+                direction = -1 if intent is ControlIntent.LEFT else 1
+                return self._adjust_selected_setting(direction)
+            if intent is ControlIntent.SELECT:
+                selection = int(self._window.property("settingsSelection"))
+                if selection == 4:
+                    result = self._controller.resetSettings()
+                    self._notify(result)
+                    self._window.setProperty(
+                        "volumePercent",
+                        int(result.get("volume", 100)),
+                    )
+                    self._window.setProperty(
+                        "muted",
+                        bool(result.get("muted", False)),
+                    )
+                    return True
+                return self._adjust_selected_setting(1)
             return False
 
         if screen == "library":
@@ -1420,7 +1651,14 @@ class CouchKeyFilter(QObject):
 
             if intent in {ControlIntent.LEFT, ControlIntent.REWIND, ControlIntent.SKIP_BACK}:
                 self._notify(
-                    self._controller.skipOnDemand(-10.0)
+                    self._controller.skipOnDemand(
+                        -float(
+                            self._controller.settings.get(
+                                "skipBackSeconds",
+                                10,
+                            )
+                        )
+                    )
                 )
                 return True
 
@@ -1430,7 +1668,14 @@ class CouchKeyFilter(QObject):
                 ControlIntent.SKIP_FORWARD,
             }:
                 self._notify(
-                    self._controller.skipOnDemand(30.0)
+                    self._controller.skipOnDemand(
+                        float(
+                            self._controller.settings.get(
+                                "skipForwardSeconds",
+                                30,
+                            )
+                        )
+                    )
                 )
                 return True
 
@@ -1462,7 +1707,16 @@ class CouchKeyFilter(QObject):
             self._show_live_hud()
             return True
         if intent in {ControlIntent.LEFT, ControlIntent.REWIND, ControlIntent.SKIP_BACK}:
-            self._notify(self._controller.skip(-10.0))
+            self._notify(
+                self._controller.skip(
+                    -float(
+                        self._controller.settings.get(
+                            "skipBackSeconds",
+                            10,
+                        )
+                    )
+                )
+            )
             self._show_live_hud()
             return True
         if intent in {
@@ -1470,7 +1724,16 @@ class CouchKeyFilter(QObject):
             ControlIntent.FAST_FORWARD,
             ControlIntent.SKIP_FORWARD,
         }:
-            self._notify(self._controller.skip(30.0))
+            self._notify(
+                self._controller.skip(
+                    float(
+                        self._controller.settings.get(
+                            "skipForwardSeconds",
+                            30,
+                        )
+                    )
+                )
+            )
             self._show_live_hud()
             return True
         if intent in {ControlIntent.UP, ControlIntent.CHANNEL_UP}:
@@ -1571,6 +1834,28 @@ def _start_home_video_when_ready(
     return startup_gate
 
 
+def _attach_settings_overlay(
+    engine: QQmlApplicationEngine,
+    window: QObject,
+) -> QQuickItem:
+    component = QQmlComponent(engine)
+    qml_path = Path(__file__).resolve().parent / "qml" / "SettingsScreen.qml"
+    component.loadUrl(QUrl.fromLocalFile(str(qml_path)))
+    if component.isError():
+        messages = "; ".join(error.toString() for error in component.errors())
+        raise RuntimeError(f"SettingsScreen.qml could not be loaded: {messages}")
+    item = component.create(engine.rootContext())
+    if not isinstance(item, QQuickItem):
+        if item is not None:
+            item.deleteLater()
+        raise RuntimeError("SettingsScreen.qml could not be created")
+    item.setProperty("hostWindow", window)
+    item.setParent(window)
+    item.setParentItem(window.contentItem())
+    item.setZ(95)
+    return item
+
+
 
 def run_qt(
     service: GuideService,
@@ -1607,12 +1892,17 @@ def run_qt(
 
     window = roots[0]
 
+    settings_item = _attach_settings_overlay(engine, window)
+
     key_filter = CouchKeyFilter(controller, window)
     app.installEventFilter(key_filter)
+    window.homeMenuActivated.connect(key_filter.activateHomeMenu)
+    window.homeCardActivated.connect(key_filter.activateHomeCard)
 
     # Keep Python-owned Qt wrappers alive for the duration of the QML window.
     window._channelos_key_filter = key_filter
     window._channelos_video_window = video_window
+    window._channelos_settings_item = settings_item
 
     # The channel continues broadcasting independently of UI input.
     # Poll the Viewer Clock often enough that short-form captures hand off

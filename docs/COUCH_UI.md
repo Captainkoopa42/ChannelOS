@@ -155,6 +155,24 @@ is the explicit development override. On Windows this is the borderless
 fullscreen presentation path rather than an exclusive decoder-owned fullscreen
 mode.
 
+### Contextual Info
+
+`INFO` (keyboard `I`, or a translated remote Info key) opens a stable contextual
+drawer instead of merely retriggering the transient Live HUD. The drawer reads
+the current ChannelOS presentation model and covers:
+
+- Home television and its next program,
+- the exact selected Guide occurrence and why it is scheduled,
+- the selected owned Library file and its index-in-place details,
+- Live channel, clock, airtime, and Now/Next state,
+- On Demand progress and the underlying owned file.
+
+`INFO` toggles the drawer and `BACK` closes it before performing normal screen
+navigation. Library uses a dimmed in-scene drawer. Home, Guide, Live, and On
+Demand use a bounded top-level side drawer because each can contain the native
+libVLC child. This keeps the drawer above video without introducing a new
+full-screen transparent native surface.
+
 ### Library / On Demand
 
 Library reads the canonical ChannelOS media index and now has an explicit source-management foundation.
@@ -258,7 +276,6 @@ The Windows development machine has validated:
 
 Major remaining couch/release work includes:
 
-- richer Info behavior,
 - native controller/Steam Input adapter and real-machine validation,
 - selected-title backdrop and richer artwork presentation polish,
 - Library -> Add to Channel authoring flow,

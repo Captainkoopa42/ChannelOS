@@ -21,12 +21,20 @@ from channelos.couch_qt import CouchKeyFilter
 class FakeChannelOS(QObject):
     snapshotChanged = Signal()
     playbackChanged = Signal()
+    homeTelevisionChanged = Signal()
     libraryChanged = Signal()
     onDemandChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
         self._playback = {"active": False}
+        self._home_television = {
+            "mode": "static",
+            "isUnassigned": True,
+            "displayNumber": "001",
+            "channelName": "ChannelOS",
+            "title": "NO PROGRAMMING",
+        }
         self._on_demand = {"active": False}
         self._library_snapshot = {
             "count": 0,
@@ -48,6 +56,10 @@ class FakeChannelOS(QObject):
     @Property("QVariantMap", notify=playbackChanged)
     def playback(self):
         return self._playback
+
+    @Property("QVariantMap", notify=homeTelevisionChanged)
+    def homeTelevision(self):
+        return self._home_television
 
     @Property("QVariantMap", notify=libraryChanged)
     def librarySnapshot(self):
@@ -83,6 +95,7 @@ def test_main_qml_instantiates_headlessly() -> None:
     assert roots[0].property("homeFocusArea") == 0
     assert roots[0].property("homeCardSelection") == 0
     assert roots[0].property("settingsSelection") == 0
+    assert roots[0].property("infoVisible") is False
     assert roots[0].property("channelEntry") == ""
     roots[0].setProperty("screen", "ondemand")
     roots[0].setProperty("channelEntry", "007")
@@ -91,6 +104,9 @@ def test_main_qml_instantiates_headlessly() -> None:
     roots[0].setProperty("screen", "home")
     assert roots[0].property("volumePercent") == 100
     assert roots[0].property("muted") is False
+    roots[0].setProperty("infoVisible", True)
+    assert roots[0].property("infoVisible") is True
+    roots[0].setProperty("infoVisible", False)
     roots[0].close()
     app.processEvents()
 
@@ -103,6 +119,7 @@ def test_main_qml_instantiates_headlessly() -> None:
         (Qt.Key.Key_Return, ControlCommand(ControlIntent.SELECT)),
         (Qt.Key.Key_G, ControlCommand(ControlIntent.GUIDE)),
         (Qt.Key.Key_H, ControlCommand(ControlIntent.HOME)),
+        (Qt.Key.Key_I, ControlCommand(ControlIntent.INFO)),
         (Qt.Key.Key_VolumeUp, ControlCommand(ControlIntent.VOLUME_UP)),
         (
             Qt.Key.Key_MediaTogglePlayPause,
@@ -191,3 +208,35 @@ def test_transport_intents_keep_toggle_and_idempotent_semantics() -> None:
         ControlIntent.PAUSE,
         paused=True,
     )
+
+
+def test_info_intent_toggles_context_drawer_and_back_closes_it() -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    window = QWindow()
+    window.setProperty("screen", "guide")
+    window.setProperty("infoVisible", False)
+    window.setProperty("liveHudVisible", True)
+
+    router = CouchKeyFilter(controller, window)  # type: ignore[arg-type]
+
+    assert router.dispatch_command(ControlCommand(ControlIntent.INFO))
+    assert window.property("infoVisible") is True
+
+    # Info owns the couch surface, so browsing cannot move content behind it.
+    assert router.dispatch_command(ControlCommand(ControlIntent.RIGHT))
+    assert window.property("infoVisible") is True
+
+    assert router.dispatch_command(ControlCommand(ControlIntent.BACK))
+    assert window.property("infoVisible") is False
+
+    window.setProperty("screen", "live")
+    window.setProperty("liveHudVisible", True)
+    assert router.dispatch_command(ControlCommand(ControlIntent.INFO))
+    assert window.property("infoVisible") is True
+    assert window.property("liveHudVisible") is False
+    assert router.dispatch_command(ControlCommand(ControlIntent.INFO))
+    assert window.property("infoVisible") is False
+
+    window.close()
+    app.processEvents()

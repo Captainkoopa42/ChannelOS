@@ -1444,6 +1444,7 @@ class CouchKeyFilter(QObject):
     def _open_guide(self) -> bool:
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
+        self._window.setProperty("infoVisible", False)
         self._controller.refresh()
         self._window.setProperty("screen", "guide")
         self._select_guide_anchor()
@@ -1452,6 +1453,7 @@ class CouchKeyFilter(QObject):
     def _open_library(self) -> bool:
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
+        self._window.setProperty("infoVisible", False)
         self._controller.refreshLibrary()
         self._window.setProperty("screen", "library")
         self._select_library(
@@ -1462,10 +1464,12 @@ class CouchKeyFilter(QObject):
     def _open_settings(self) -> bool:
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
+        self._window.setProperty("infoVisible", False)
         self._window.setProperty("screen", "settings")
         return True
 
     def _open_previous_channel_from_home(self) -> bool:
+        self._window.setProperty("infoVisible", False)
         self._window.setProperty("screen", "live")
         QApplication.processEvents()
         result = self._controller.previousChannel()
@@ -1566,6 +1570,7 @@ class CouchKeyFilter(QObject):
     def _go_home(self) -> bool:
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
+        self._window.setProperty("infoVisible", False)
         self._window.setProperty("screen", "home")
         QApplication.processEvents()
         return True
@@ -1594,6 +1599,30 @@ class CouchKeyFilter(QObject):
             QGuiApplication.quit()
             return True
 
+        info_screens = {"home", "guide", "library", "live", "ondemand"}
+        if intent is ControlIntent.INFO and screen in info_screens:
+            opening = not bool(self._window.property("infoVisible"))
+            self._window.setProperty("infoVisible", opening)
+            if opening and screen == "live":
+                self._window.setProperty("liveHudVisible", False)
+            return True
+
+        if bool(self._window.property("infoVisible")):
+            if intent is ControlIntent.BACK:
+                self._window.setProperty("infoVisible", False)
+                return True
+            if screen in {"live", "ondemand"} and self._handle_audio_intent(intent):
+                return True
+            if intent not in {
+                ControlIntent.HOME,
+                ControlIntent.GUIDE,
+                ControlIntent.LIBRARY,
+                ControlIntent.SETTINGS,
+                ControlIntent.TUNE,
+            }:
+                return True
+            self._window.setProperty("infoVisible", False)
+
         if intent is ControlIntent.HOME:
             return self._go_home()
 
@@ -1615,6 +1644,7 @@ class CouchKeyFilter(QObject):
         if intent is ControlIntent.TUNE:
             if screen == "ondemand":
                 self._controller.stopOnDemand()
+            self._window.setProperty("infoVisible", False)
             self._window.setProperty("screen", "live")
             QApplication.processEvents()
             result = self._controller.tuneChannel(int(command.value or 0))
@@ -1978,9 +2008,6 @@ class CouchKeyFilter(QObject):
             return True
         if intent is ControlIntent.PREVIOUS_CHANNEL:
             self._notify(self._controller.previousChannel())
-            self._show_live_hud()
-            return True
-        if intent is ControlIntent.INFO:
             self._show_live_hud()
             return True
         return False

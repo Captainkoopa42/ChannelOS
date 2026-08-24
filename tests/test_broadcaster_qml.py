@@ -9,11 +9,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QEvent, QObject, Property, QUrl, Signal, Slot, Qt
+from PySide6.QtGui import QGuiApplication, QKeyEvent, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 
 import channelos
+from channelos.broadcaster_qt import BroadcasterKeyFilter
 
 
 class FakeHost(QObject):
@@ -157,3 +158,48 @@ def test_broadcaster_paths_always_bind_as_strings() -> None:
     text = qml_path.read_text(encoding="utf-8")
 
     assert "snapshot.managedDirectory\n                                                  || \"\"" in text
+
+
+def test_home_shortcut_escapes_library_navigation() -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    window = QWindow()
+    window.setProperty("screen", "library")
+    router = BroadcasterKeyFilter(controller, window)  # type: ignore[arg-type]
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_H,
+        Qt.KeyboardModifier.NoModifier,
+        "h",
+    )
+
+    assert router.eventFilter(window, event)
+    assert window.property("screen") == "home"
+
+    window.close()
+    app.processEvents()
+
+
+def test_home_letter_remains_text_while_an_editor_has_focus(monkeypatch) -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    window = QWindow()
+    window.setProperty("screen", "library")
+    router = BroadcasterKeyFilter(controller, window)  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        BroadcasterKeyFilter,
+        "_text_entry_has_focus",
+        staticmethod(lambda: True),
+    )
+    event = QKeyEvent(
+        QEvent.Type.KeyPress,
+        Qt.Key.Key_H,
+        Qt.KeyboardModifier.NoModifier,
+        "h",
+    )
+
+    assert not router.eventFilter(window, event)
+    assert window.property("screen") == "library"
+
+    window.close()
+    app.processEvents()

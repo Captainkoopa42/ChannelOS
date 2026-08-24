@@ -16,7 +16,7 @@ from PySide6.QtCore import (
     Slot,
     Qt,
 )
-from PySide6.QtGui import QColor, QPalette, QWindow
+from PySide6.QtGui import QColor, QGuiApplication, QPalette, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -604,14 +604,44 @@ class BroadcasterKeyFilter(CouchKeyFilter):
             return True
         return super().dispatch_command(command)
 
+    @staticmethod
+    def _text_entry_has_focus() -> bool:
+        focus = QGuiApplication.focusObject()
+        if focus is None:
+            return False
+        class_name = focus.metaObject().className().lower()
+        return any(
+            marker in class_name
+            for marker in (
+                "textinput",
+                "textfield",
+                "textedit",
+                "textarea",
+                "lineedit",
+                "spinbox",
+                "combobox",
+            )
+        )
+
     def eventFilter(self, watched, event) -> bool:
         if (
             event.type() == QEvent.Type.KeyPress
             and str(self._window.property("screen")) in {"broadcaster", "library"}
         ):
+            command = self.command_for_key(event.key())
+            if (
+                command is not None
+                and command.intent is ControlIntent.HOME
+                and (
+                    not event.text()
+                    or not self._text_entry_has_focus()
+                )
+            ):
+                return self.dispatch_command(command)
             # These management overlays own their keyboard/focus model. In
             # particular, Library search must be allowed to receive ordinary A-Z
-            # keypresses instead of global couch shortcuts.
+            # keypresses instead of global couch shortcuts. H remains ordinary
+            # text while an editor has focus, but is HOME during couch navigation.
             return False
         return super().eventFilter(watched, event)
 

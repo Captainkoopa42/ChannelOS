@@ -138,6 +138,10 @@ def test_normalized_navigation_intent_moves_home_selection() -> None:
     assert router.dispatch_command(ControlCommand(ControlIntent.UP))
     assert window.property("homeSelection") == 0
 
+    window.setProperty("screen", "guide")
+    assert router.dispatch_command(ControlCommand(ControlIntent.HOME))
+    assert window.property("screen") == "home"
+
     window.close()
     app.processEvents()
 

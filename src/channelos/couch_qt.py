@@ -924,6 +924,7 @@ class CouchKeyFilter(QObject):
             "Key_MediaPrevious": ControlIntent.SKIP_BACK,
             "Key_MediaNext": ControlIntent.SKIP_FORWARD,
             "Key_PowerOff": ControlIntent.POWER,
+            "Key_HomePage": ControlIntent.HOME,
         }
         for attribute, consumer_intent in optional_consumer_bindings.items():
             consumer_key = getattr(Qt.Key, attribute, None)
@@ -1142,6 +1143,7 @@ class CouchKeyFilter(QObject):
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
         self._window.setProperty("screen", "home")
+        QApplication.processEvents()
         return True
 
     @staticmethod

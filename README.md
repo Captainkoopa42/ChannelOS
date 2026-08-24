@@ -30,10 +30,11 @@ Real-machine validation currently includes:
 - end-of-file replay/rewind recovery,
 - return from On Demand to television without destroying channel clock state.
 
-The feature branch also contains optional native Xbox-compatible controller
-input for Windows, including hot-plug and Steam Input's XInput-emulation path.
-That adapter is implemented behind the existing control-intent boundary and is
-waiting on its real-controller Windows test before it is described as validated.
+Optional native Xbox-compatible controller input is implemented and validated
+on Windows with an 8BitDo Ultimate controller in Xbox/XInput mode, including
+hot-plug behavior and settings-driven control hints. Steam Input can expose
+other controllers through its normal gamepad/XInput emulation path; native
+SteamOS validation remains a separate gate.
 
 The key runtime rule remains:
 
@@ -172,6 +173,13 @@ Channel Runtime -> PlaybackBackend -> LibVLCBackend -> packaged libVLC
 ```
 
 Any bundled third-party runtime must be distributed in compliance with its license.
+
+The active packaging foundation builds an audited Windows x64 portable folder
+and ZIP with visible, replaceable Qt and libVLC sidecars. It pins the LGPL-only
+VideoLAN runtime by version and hash and emits a complete `PACKAGE-BOM.json`.
+See **[Distribution policy](docs/DISTRIBUTION.md)** for the exact boundary. The
+Windows package is still a preview until it passes the real-machine package
+gate; first-run setup and an installer follow afterward.
 
 ## Visual direction
 

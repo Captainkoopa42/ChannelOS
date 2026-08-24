@@ -144,3 +144,35 @@ Packaging CI should inventory and hash the staged runtime, compare it with the
 approved bill of materials, and fail if unexpected native files or plugins are
 present. A clean Windows machine must then verify installation, launch,
 playback, replacement-friendly sidecar discovery, upgrade, and uninstall.
+
+## 8. Current Windows packaging foundation
+
+The development packaging lane produces a portable Windows x64 folder and ZIP,
+not an installer and not a one-file executable. Its inputs and controls are:
+
+- Python 3.12 in the CI release lane and the versions frozen in
+  `packaging/windows/requirements-build.txt`; the local helper may seed its
+  isolated package environment from an existing supported ChannelOS `.venv`,
+  and the exact interpreter is always recorded in the BOM;
+- PyInstaller one-folder mode, with Qt/PySide6 beneath the visible `_internal/`
+  sidecar tree;
+- `VideoLAN.LibVLC.Windows` 3.0.23.1, pinned by URL and SHA-256 in
+  `packaging/windows/runtime-lock.json`;
+- extraction of only `libvlc.dll`, `libvlccore.dll`, and `plugins/` from the
+  audited x64 native tree;
+- a frozen-executable startup probe plus an explicit inventory check for the
+  QtQuick, Controls, Layouts, and QtQml module files ChannelOS imports;
+- a full package file inventory and SHA-256 values in `PACKAGE-BOM.json`; and
+- CI validation that rejects unexpected files, import libraries, hash changes,
+  incomplete notices, or a GPL companion package.
+
+`tools/windows/build-package.cmd` is the ordinary local build entry point. It
+starts the checked-in PowerShell build with a process-only execution-policy
+override, so it does not change the user's system policy. The underlying
+`build-package.ps1` stops immediately if environment setup, tests, packaging,
+or auditing fails. The `windows-package` GitHub Actions workflow performs the
+same build on Windows and uploads the audited ZIP for testing.
+
+The portable build is a packaging preview. First-run setup, installer creation,
+upgrade, and uninstall remain separate gates. Until first-run setup exists, the
+packaged launcher reports a clear diagnostic when no indexed channel exists.

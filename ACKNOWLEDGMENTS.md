@@ -18,6 +18,8 @@ In particular, ChannelOS is built and tested with help from:
 - **SQLite**, whose small, dependable local database engine supports the media
   library and persistent television clocks.
 - **pytest**, which gives the project a practical safety net while it changes.
+- **PyInstaller**, which provides the inspectable one-folder Windows packaging
+  foundation used by the development release lane.
 - **Mozilla and the MPL community**, for stewarding a practical file-level
   copyleft license for open collaboration.
 - **Git, GitHub, and GitHub Actions**, which make the project's history,

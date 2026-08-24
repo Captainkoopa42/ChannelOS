@@ -146,3 +146,14 @@ def test_broadcaster_qml_instantiates_headlessly() -> None:
 
     item.deleteLater()
     app.processEvents()
+
+
+def test_broadcaster_paths_always_bind_as_strings() -> None:
+    qml_path = (
+        Path(channelos.__file__).resolve().parent
+        / "qml"
+        / "BroadcasterScreen.qml"
+    )
+    text = qml_path.read_text(encoding="utf-8")
+
+    assert "snapshot.managedDirectory\n                                                  || \"\"" in text

@@ -7,8 +7,23 @@ Write-Host "Preparing the isolated ChannelOS packaging environment..."
 
 $PackagingPython = Join-Path $Repository ".package-venv\Scripts\python.exe"
 if (-not (Test-Path $PackagingPython)) {
-    py -3.12 -m venv .package-venv
+    $ExistingPython = Join-Path $Repository ".venv\Scripts\python.exe"
+    if (Test-Path $ExistingPython) {
+        Write-Host "Using the existing ChannelOS Python to create the package environment."
+        & $ExistingPython -m venv .package-venv
+    }
+    else {
+        Write-Host "No existing ChannelOS environment was found; using Python 3.12."
+        py -3.12 -m venv .package-venv
+    }
 }
+
+if (-not (Test-Path $PackagingPython)) {
+    throw "The packaging environment could not be created. Install Python 3.12 or restore .venv, then try again."
+}
+
+Write-Host "Packaging Python:"
+& $PackagingPython --version
 
 & $PackagingPython -m pip install --upgrade pip
 & $PackagingPython -m pip install -r .\packaging\windows\requirements-build.txt

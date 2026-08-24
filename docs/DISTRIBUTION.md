@@ -150,8 +150,10 @@ playback, replacement-friendly sidecar discovery, upgrade, and uninstall.
 The development packaging lane produces a portable Windows x64 folder and ZIP,
 not an installer and not a one-file executable. Its inputs and controls are:
 
-- Python 3.12 and the versions frozen in
-  `packaging/windows/requirements-build.txt`;
+- Python 3.12 in the CI release lane and the versions frozen in
+  `packaging/windows/requirements-build.txt`; the local helper may seed its
+  isolated package environment from an existing supported ChannelOS `.venv`,
+  and the exact interpreter is always recorded in the BOM;
 - PyInstaller one-folder mode, with Qt/PySide6 beneath the visible `_internal/`
   sidecar tree;
 - `VideoLAN.LibVLC.Windows` 3.0.23.1, pinned by URL and SHA-256 in

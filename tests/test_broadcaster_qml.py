@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QEvent, QObject, Property, QUrl, Signal, Slot, Qt
+from PySide6.QtCore import Q_ARG, QEvent, QMetaObject, QObject, Property, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QGuiApplication, QKeyEvent, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 
@@ -138,6 +138,15 @@ def test_broadcaster_qml_instantiates_headlessly() -> None:
     app.processEvents()
 
     assert item.property("editorMode") == "list"
+
+    invoked = QMetaObject.invokeMethod(
+        item,
+        "handleControllerIntent",
+        Qt.ConnectionType.DirectConnection,
+        Q_ARG(str, "SELECT"),
+    )
+    assert invoked
+    assert item.property("editorMode") == "edit"
     assert item.property("selectedChannelIndex") == 0
     assert item.property("feedbackMessage") == ""
 

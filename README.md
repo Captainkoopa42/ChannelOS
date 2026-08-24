@@ -30,6 +30,11 @@ Real-machine validation currently includes:
 - end-of-file replay/rewind recovery,
 - return from On Demand to television without destroying channel clock state.
 
+The feature branch also contains optional native Xbox-compatible controller
+input for Windows, including hot-plug and Steam Input's XInput-emulation path.
+That adapter is implemented behind the existing control-intent boundary and is
+waiting on its real-controller Windows test before it is described as validated.
+
 The key runtime rule remains:
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**
@@ -183,6 +188,14 @@ python -m pip install -e ".[dev]"
 channelos validate examples/channels/sci-fi.yaml
 pytest
 ```
+
+On Windows, the couch UI automatically discovers an Xbox-compatible XInput
+controller; no extra Python package is required. Steam Input can expose other
+supported controllers through its normal gamepad/XInput emulation. Keyboard
+controls remain available, and controller discovery can be disabled for
+diagnosis with `CHANNELOS_DISABLE_CONTROLLER=1`. See
+**[Controller input](docs/CONTROL_INPUT.md)** for the complete layout and honest
+platform limits.
 
 Scan a real local folder without moving its files:
 

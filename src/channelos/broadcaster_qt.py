@@ -8,7 +8,9 @@ from typing import Any
 from PySide6.QtCore import (
     QObject,
     Property,
+    Q_ARG,
     QEvent,
+    QMetaObject,
     QThread,
     QTimer,
     QUrl,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog
 
 from .broadcaster import BroadcasterError, BroadcasterService
 from .control import ControlCommand, ControlIntent
+from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
 from .couch_qt import (
@@ -597,12 +600,53 @@ class BroadcasterCouchController(CouchController):
 class BroadcasterKeyFilter(CouchKeyFilter):
     """Add management navigation without stealing editor/search text input."""
 
+    def __init__(self, controller, window) -> None:
+        super().__init__(controller, window)
+        self._library_item: QQuickItem | None = None
+        self._broadcaster_item: QQuickItem | None = None
+
+    def bind_management_overlays(
+        self,
+        *,
+        library_item: QQuickItem,
+        broadcaster_item: QQuickItem,
+    ) -> None:
+        self._library_item = library_item
+        self._broadcaster_item = broadcaster_item
+
+    @staticmethod
+    def _invoke_overlay(item: QQuickItem | None, intent: ControlIntent) -> bool:
+        if item is None:
+            return False
+        return bool(
+            QMetaObject.invokeMethod(
+                item,
+                "handleControllerIntent",
+                Qt.ConnectionType.DirectConnection,
+                Q_ARG(str, intent.value),
+            )
+        )
+
     def dispatch_command(self, command: ControlCommand) -> bool:
         if command.intent is ControlIntent.CHANNELS:
             self._window.setProperty("infoVisible", False)
             self._controller.refreshBroadcaster()
             self._window.setProperty("screen", "broadcaster")
             return True
+        screen = str(self._window.property("screen"))
+        overlay_intents = {
+            ControlIntent.UP,
+            ControlIntent.DOWN,
+            ControlIntent.LEFT,
+            ControlIntent.RIGHT,
+            ControlIntent.SELECT,
+            ControlIntent.BACK,
+            ControlIntent.ADD_MEDIA_SOURCE,
+        }
+        if screen == "library" and command.intent in overlay_intents:
+            return self._invoke_overlay(self._library_item, command.intent)
+        if screen == "broadcaster" and command.intent in overlay_intents:
+            return self._invoke_overlay(self._broadcaster_item, command.intent)
         return super().dispatch_command(command)
 
     @staticmethod
@@ -752,6 +796,10 @@ def run_qt(
     )
 
     key_filter = BroadcasterKeyFilter(controller, window)
+    key_filter.bind_management_overlays(
+        library_item=library_item,
+        broadcaster_item=broadcaster_item,
+    )
     app.installEventFilter(key_filter)
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
@@ -763,6 +811,9 @@ def run_qt(
     window._channelos_settings_item = settings_item
     window._channelos_component_engine = engine
 
+    controller_input = QtControllerInput(window, key_filter.dispatch_command)
+    window._channelos_controller_input = controller_input
+
     playback_timer = QTimer(window)
     playback_timer.setInterval(250)
     playback_timer.timeout.connect(controller.refreshPlayback)
@@ -771,11 +822,14 @@ def run_qt(
     window._channelos_playback_timer = playback_timer
 
     app.aboutToQuit.connect(controller.stop)
+    app.aboutToQuit.connect(controller_input.stop)
 
     if windowed:
         window.showNormal()
     else:
         window.showFullScreen()
+
+    controller_input.start()
 
     # channelos.couch launches this Broadcaster-integrated Qt path. Keep Home
     # startup on the same native-surface gate as the narrower couch launcher so

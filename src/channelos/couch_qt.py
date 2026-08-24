@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
 
 from .artwork import MediaArtworkCache
 from .control import ControlCommand, ControlIntent
+from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
 from .guide import GuideError, GuideService
@@ -2159,6 +2160,9 @@ def run_qt(
     window._channelos_video_window = video_window
     window._channelos_settings_item = settings_item
 
+    controller_input = QtControllerInput(window, key_filter.dispatch_command)
+    window._channelos_controller_input = controller_input
+
     # The channel continues broadcasting independently of UI input.
     # Poll the Viewer Clock often enough that short-form captures hand off
     # cleanly at their scheduled boundaries.
@@ -2170,11 +2174,14 @@ def run_qt(
     window._channelos_playback_timer = playback_timer
 
     app.aboutToQuit.connect(controller.stop)
+    app.aboutToQuit.connect(controller_input.stop)
 
     if windowed:
         window.showNormal()
     else:
         window.showFullScreen()
+
+    controller_input.start()
 
     window._channelos_home_startup_gate = _start_home_video_when_ready(
         controller,

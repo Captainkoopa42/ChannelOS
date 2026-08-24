@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QObject, Property, QUrl, Signal, Slot
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Property, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 
@@ -178,6 +178,17 @@ def test_library_qml_instantiates_headlessly() -> None:
     item = component.create(engine.rootContext())
     assert item is not None, errors
     item.setProperty("hostWindow", host)
+    app.processEvents()
+
+    item.setProperty("managerVisible", True)
+    invoked = QMetaObject.invokeMethod(
+        item,
+        "handleControllerIntent",
+        Qt.ConnectionType.DirectConnection,
+        Q_ARG(str, "BACK"),
+    )
+    assert invoked
+    assert item.property("managerVisible") is False
     app.processEvents()
 
     assert item.property("selectedShelf") == 0

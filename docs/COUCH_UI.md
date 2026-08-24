@@ -19,7 +19,7 @@ The current Qt Quick / PySide6 couch application now includes:
 - ChannelOS startup/home presentation,
 - deliberate Channel 001 unassigned/static state,
 - real multi-channel Guide,
-- keyboard/D-pad-style navigation,
+- keyboard/D-pad-style navigation plus optional native Windows XInput,
 - authoritative selected-program detail,
 - current Broadcast Clock marker,
 - adaptive short-form Guide presentation,
@@ -147,6 +147,13 @@ shows the lower-third and clock, and ten seconds without another qualifying Live
 interaction hides them again. Repeated Live interaction restarts the timer.
 Compact volume/mute and numeric-channel-entry overlays keep their own shorter
 timers.
+
+The lower-third control legend follows the active input and effective Settings.
+It shows Xbox-style button names while an XInput controller is connected and
+keyboard names otherwise. Skip Back/Forward labels are never hard-coded: both
+Live and On Demand show the same persisted distances that their actual seek
+commands consume. Volume and mute presentation is likewise synchronized from
+the current Settings snapshot, including at startup and after Reset Defaults.
 
 The libVLC target remains a native child window. The Windows-safe HUD presentation deliberately avoids a second full-screen transparent native child above it. Small bounded overlays use native child windows where appropriate, while the translucent lower-third is a bounded transient top-level window so Windows can alpha-compose it without obscuring the video during maximize/restore.
 
@@ -276,7 +283,7 @@ The Windows development machine has validated:
 
 Major remaining couch/release work includes:
 
-- native controller/Steam Input adapter and real-machine validation,
+- native controller/Steam Input real-machine validation,
 - selected-title backdrop and richer artwork presentation polish,
 - Library -> Add to Channel authoring flow,
 - normal-user playback-runtime packaging,

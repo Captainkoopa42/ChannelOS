@@ -60,6 +60,21 @@ verify that the active launcher retains the gate.
 
 This is a presentation/startup timing experiment, not a redesign of the television runtime.
 
+## Successful Windows validation and Home-to-Live handoff
+
+The corrected active launcher was validated on Windows. The readiness log
+advanced from an unexposed `0x0` video window to a stable exposed
+`1219x553` native surface, then attached libVLC and painted the remembered
+television feed on Home. Home-to-Guide navigation remained smooth because it
+only moves the persistent native surface.
+
+The first successful run also revealed a smaller transition hitch when opening
+the already-playing Home feed with Continue Watching. That path redundantly
+issued `play` and `seek` to the decoder. Home-to-Live now reuses the active,
+unpaused television decision and surface without touching the decoder or Viewer
+Clock. If no feed is active, or the Viewer Clock is paused, it falls back to the
+normal Continue Watching behavior.
+
 ## Architecture that must remain intact
 
 - One authoritative television runtime.

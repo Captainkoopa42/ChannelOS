@@ -521,6 +521,31 @@ class CouchController(QObject):
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
             return self._error(exc)
 
+    @Slot(result="QVariantMap")
+    def enterLiveFromHome(self) -> dict[str, object]:
+        """Expand an already-playing Home feed without restarting or seeking it."""
+
+        if not self._surface_ready:
+            return {"ok": False, "message": self._surface_error}
+
+        decision = self._actions.reuse_current_playback()
+        if (
+            bool(self._playback.get("active"))
+            and not bool(self._playback.get("paused"))
+            and not self._on_demand.active
+            and decision is not None
+        ):
+            return {
+                "ok": True,
+                "message": "",
+                "playback": self._playback,
+                "reused": True,
+            }
+
+        # Preserve Continue Watching semantics when Home does not already have
+        # a running live-TV feed (including resuming a paused Viewer Clock).
+        return self.continueWatching()
+
     def _apply_audio_state(self) -> None:
         if self._on_demand.active:
             self._on_demand.set_volume(self._volume)
@@ -889,7 +914,7 @@ class CouchKeyFilter(QObject):
                     else:
                         self._window.setProperty("screen", "live")
                         QApplication.processEvents()
-                        result = self._controller.continueWatching()
+                        result = self._controller.enterLiveFromHome()
                         self._notify(result)
                         if bool(result.get("ok")):
                             self._show_live_hud()

@@ -253,6 +253,9 @@ def test_couch_qml_asset_is_present() -> None:
     assert '"mode": "static"' in couch_qt
     assert '"mode"] = "previous"' in couch_qt
     assert "def continueWatching" in couch_qt
+    assert "def enterLiveFromHome" in couch_qt
+    assert "self._controller.enterLiveFromHome()" in couch_qt
+    assert '"reused": True' in couch_qt
     assert "def startHomePlayback" in couch_qt
     assert "NativeWindowStartupGate" in couch_qt
     assert "def _start_home_video_when_ready" in couch_qt

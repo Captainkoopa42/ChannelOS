@@ -5,6 +5,7 @@ import QtQuick
 Item {
     id: settingsRoot
     property var hostWindow: null
+    property bool startupModeApplied: false
     readonly property var preferences:
         channelOS ? channelOS.settings : ({
             volumePercent: 100,
@@ -19,8 +20,11 @@ Item {
             artworkCacheBytes: 0,
             artworkCacheFiles: 0
         })
+    readonly property string displayMode:
+        channelOS ? String(channelOS.displayMode || "fullscreen") : "fullscreen"
     readonly property var settingsRows: [
         { title: "Performance Profile", detail: "Standard preserves full artwork behavior. Lightweight reduces optional background work." },
+        { title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
         { title: "Volume", detail: "The volume ChannelOS uses now and on its next launch." },
         { title: "Muted", detail: "Remember whether ChannelOS should start muted." },
         { title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
@@ -30,7 +34,7 @@ Item {
         { title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
         { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
         { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
-        { title: "Reset Defaults", detail: "Restore Standard mode, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
+        { title: "Reset Defaults", detail: "Restore Fullscreen, Standard mode, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
     ]
 
     anchors.fill: parent
@@ -39,6 +43,10 @@ Item {
     function profileLabel() {
         var profile = String(preferences.performanceProfile || "standard")
         return profile.charAt(0).toUpperCase() + profile.slice(1)
+    }
+
+    function displayModeLabel() {
+        return displayMode === "windowed" ? "Windowed" : "Fullscreen"
     }
 
     function cacheLimitLabel() {
@@ -55,42 +63,76 @@ Item {
         return files + (files === 1 ? " thumbnail • " : " thumbnails • ") + size
     }
 
+    function applyDisplayMode() {
+        if (hostWindow === null)
+            return
+        if (displayMode === "windowed")
+            hostWindow.showNormal()
+        else
+            hostWindow.showFullScreen()
+    }
+
+    function applyStartupDisplayMode() {
+        if (hostWindow === null)
+            return
+        if (!startupModeApplied) {
+            startupModeApplied = true
+            // A launcher-level --windowed request is an explicit developer
+            // override. Preserve it for this run even when the saved preference
+            // still says fullscreen.
+            if (hostWindow.visibility === Window.Windowed
+                    && displayMode === "fullscreen")
+                return
+        }
+        applyDisplayMode()
+    }
+
+    function changeDisplayMode(direction) {
+        if (!channelOS)
+            return
+        showResult(channelOS.changeDisplayMode(direction))
+        applyDisplayMode()
+    }
+
     function valueFor(index) {
         if (index === 0)
             return profileLabel()
         if (index === 1)
-            return (preferences.volumePercent || 0) + "%"
+            return displayModeLabel()
         if (index === 2)
-            return preferences.muted ? "On" : "Off"
+            return (preferences.volumePercent || 0) + "%"
         if (index === 3)
-            return (preferences.skipBackSeconds || 10) + " seconds"
+            return preferences.muted ? "On" : "Off"
         if (index === 4)
-            return (preferences.skipForwardSeconds || 30) + " seconds"
+            return (preferences.skipBackSeconds || 10) + " seconds"
         if (index === 5)
-            return preferences.generateVideoThumbnails ? "On" : "Off"
+            return (preferences.skipForwardSeconds || 30) + " seconds"
         if (index === 6)
-            return cacheLimitLabel()
+            return preferences.generateVideoThumbnails ? "On" : "Off"
         if (index === 7)
-            return preferences.backgroundArtworkDuringPlayback ? "On" : "Off"
+            return cacheLimitLabel()
         if (index === 8)
-            return preferences.reducedMotion ? "On" : "Off"
+            return preferences.backgroundArtworkDuringPlayback ? "On" : "Off"
         if (index === 9)
+            return preferences.reducedMotion ? "On" : "Off"
+        if (index === 10)
             return cacheUsageLabel()
         return "Standard"
     }
 
     function settingName(index) {
-        return [
-            "performanceProfile",
-            "volume",
-            "muted",
-            "skipBack",
-            "skipForward",
-            "generateVideoThumbnails",
-            "artworkCacheLimit",
-            "backgroundArtworkDuringPlayback",
-            "reducedMotion"
-        ][index]
+        var names = ({
+            0: "performanceProfile",
+            2: "volume",
+            3: "muted",
+            4: "skipBack",
+            5: "skipForward",
+            6: "generateVideoThumbnails",
+            7: "artworkCacheLimit",
+            8: "backgroundArtworkDuringPlayback",
+            9: "reducedMotion"
+        })
+        return names[index]
     }
 
     function showResult(result) {
@@ -106,16 +148,59 @@ Item {
     }
 
     function adjust(index, direction) {
-        if (index < 0 || index > 8)
+        if (index < 0 || index > 9)
             return
-        showResult(channelOS.adjustSetting(settingName(index), direction))
+        if (index === 1) {
+            changeDisplayMode(direction)
+            return
+        }
+        var name = settingName(index)
+        if (typeof name === "undefined")
+            return
+        showResult(channelOS.adjustSetting(name, direction))
     }
 
     function activateAction(index) {
-        if (index === 9)
+        if (index === 10) {
             showResult(channelOS.clearArtworkCache())
-        else if (index === 10)
+        } else if (index === 11) {
             showResult(channelOS.resetSettings())
+            Qt.callLater(applyDisplayMode)
+        }
+    }
+
+    function handleControllerIntent(intent: string): void {
+        if (!hostWindow || hostWindow.screen !== "settings")
+            return
+        if (intent === "BACK" || intent === "HOME") {
+            hostWindow.screen = "home"
+            return
+        }
+        if (intent === "UP") {
+            hostWindow.settingsSelection = Math.max(
+                        0, hostWindow.settingsSelection - 1)
+            return
+        }
+        if (intent === "DOWN") {
+            hostWindow.settingsSelection = Math.min(
+                        settingsRows.length - 1,
+                        hostWindow.settingsSelection + 1)
+            return
+        }
+        if (intent === "LEFT") {
+            adjust(hostWindow.settingsSelection, -1)
+            return
+        }
+        if (intent === "RIGHT") {
+            adjust(hostWindow.settingsSelection, 1)
+            return
+        }
+        if (intent === "SELECT") {
+            if (hostWindow.settingsSelection < 10)
+                adjust(hostWindow.settingsSelection, 1)
+            else
+                activateAction(hostWindow.settingsSelection)
+        }
     }
 
     Rectangle {
@@ -220,7 +305,7 @@ Item {
             }
             Text {
                 width: parent.width
-                text: "Settings are local. Lightweight changes optional artwork work and motion—not playback quality, schedules, media, or channels."
+                text: "Settings are local. Display mode is independent of performance; Lightweight changes optional artwork work and motion—not playback quality, schedules, media, or channels."
                 color: "#9fb0c2"
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
@@ -327,7 +412,7 @@ Item {
                     anchors.rightMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
-                    visible: settingRow.index < 9
+                    visible: settingRow.index < 10
 
                     Rectangle {
                         width: 38
@@ -386,12 +471,12 @@ Item {
                     width: 236
                     height: 42
                     radius: 6
-                    visible: settingRow.index >= 9
+                    visible: settingRow.index >= 10
                     color: actionMouse.containsMouse ? "#1a4d82" : "#10283f"
                     border.color: "#1a91ff"
                     Text {
                         anchors.centerIn: parent
-                        text: settingRow.index === 9
+                        text: settingRow.index === 10
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
                               : "Restore Standard Defaults"
                         color: "#f4f7fb"
@@ -416,6 +501,22 @@ Item {
         }
     }
 
+    Connections {
+        target: channelOS
+        function onSettingsChanged() {
+            if (settingsRoot.startupModeApplied)
+                Qt.callLater(settingsRoot.applyDisplayMode)
+        }
+    }
+
+    Shortcut {
+        sequence: "F11"
+        context: Qt.ApplicationShortcut
+        onActivated: settingsRoot.changeDisplayMode(1)
+    }
+
+    Component.onCompleted: Qt.callLater(applyStartupDisplayMode)
+
     Rectangle {
         id: settingsFooter
         anchors.left: settingsSidebar.right
@@ -429,7 +530,7 @@ Item {
             anchors.left: parent.left
             anchors.leftMargin: 30
             anchors.verticalCenter: parent.verticalCenter
-            text: "ARROWS  Navigate / Change     ENTER  Select     ESC / H  Home"
+            text: "ARROWS  Navigate / Change     ENTER  Select     F11  Display Mode     ESC / H  Home"
             color: "#9fb0c2"
             font.pixelSize: 13
         }

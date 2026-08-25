@@ -18,7 +18,7 @@ from PySide6.QtCore import (
     Slot,
     Qt,
 )
-from PySide6.QtGui import QColor, QGuiApplication, QPalette, QWindow
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPalette, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -755,6 +755,11 @@ def run_qt(
         app = QApplication(sys.argv[:1])
     app.setApplicationName("ChannelOS")
     app.setOrganizationName("ChannelOS")
+
+    icon_path = Path(__file__).resolve().parent / "assets" / "ChannelOS.png"
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
     _apply_channelos_control_theme(app)
 
     controller = BroadcasterCouchController(
@@ -779,6 +784,9 @@ def run_qt(
         return 7
 
     window = roots[0]
+
+    if not app.windowIcon().isNull():
+        window.setIcon(app.windowIcon())
 
     library_item = _attach_overlay(
         engine,

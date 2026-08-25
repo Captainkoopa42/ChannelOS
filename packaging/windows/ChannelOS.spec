@@ -7,6 +7,7 @@ from PyInstaller.utils.hooks import collect_data_files
 
 PROJECT_ROOT = Path(SPECPATH).parents[1]
 SOURCE_ROOT = PROJECT_ROOT / "src"
+ICON_PATH = PROJECT_ROOT / "packaging" / "windows" / "ChannelOS.ico"
 
 analysis = Analysis(
     [str(PROJECT_ROOT / "packaging" / "windows" / "entrypoint.py")],
@@ -48,6 +49,7 @@ executable = EXE(
     codesign_identity=None,
     entitlements_file=None,
     contents_directory="_internal",
+    icon=str(ICON_PATH),
 )
 
 bundle = COLLECT(

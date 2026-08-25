@@ -60,5 +60,6 @@ jobs:
           tests/test_controller_qt.py
           tests/test_couch_qml.py
           tests/test_library_qml.py
+          tests/test_library_add_to_channel_qml.py
           tests/test_broadcaster_qml.py
           tests/test_settings_qml.py

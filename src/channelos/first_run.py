@@ -98,6 +98,7 @@ def run_first_run_setup(data_directory: str | Path) -> int:
     """Run the small packaged Windows setup UI in a helper process."""
 
     from PySide6.QtCore import Qt
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import (
         QApplication,
         QFileDialog,
@@ -108,6 +109,10 @@ def run_first_run_setup(data_directory: str | Path) -> int:
     app = QApplication.instance() or QApplication([])
     app.setApplicationName("ChannelOS")
     app.setOrganizationName("ChannelOS")
+
+    icon_path = Path(__file__).resolve().parent / "assets" / "ChannelOS.png"
+    if icon_path.is_file():
+        app.setWindowIcon(QIcon(str(icon_path)))
 
     QMessageBox.information(
         None,

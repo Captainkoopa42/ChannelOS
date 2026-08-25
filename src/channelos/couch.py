@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 from .broadcaster import BroadcasterError, BroadcasterService
-from .display_mode import install_display_mode_support
 from .guide import GuideError, GuideService
 from .library import MediaLibrary
 from .loader import load_channel
@@ -82,6 +81,7 @@ def run_couch(
 
     try:
         from . import broadcaster_qt
+        from .display_mode import install_display_mode_support
     except (ImportError, OSError) as exc:
         raise CouchUIError(
             "ChannelOS couch UI requires the optional Qt package. "

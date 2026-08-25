@@ -39,7 +39,7 @@ class FakeSettingsHost(QObject):
         self._status_message = ""
         self._volume_percent = 100
         self._muted = False
-        self._visibility = int(QWindow.Visibility.FullScreen)
+        self._visibility = QWindow.Visibility.FullScreen.value
 
     @Property(str, notify=screenChanged)
     def screen(self) -> str:
@@ -93,12 +93,12 @@ class FakeSettingsHost(QObject):
 
     @Slot()
     def showNormal(self) -> None:
-        self._visibility = int(QWindow.Visibility.Windowed)
+        self._visibility = QWindow.Visibility.Windowed.value
         self.visibilityChanged.emit()
 
     @Slot()
     def showFullScreen(self) -> None:
-        self._visibility = int(QWindow.Visibility.FullScreen)
+        self._visibility = QWindow.Visibility.FullScreen.value
         self.visibilityChanged.emit()
 
 

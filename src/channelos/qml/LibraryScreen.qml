@@ -37,6 +37,12 @@ Item {
     property string query: ""
     property bool managerVisible: false
     property string clockText: ""
+    property bool addToChannelVisible: false
+    property int addToChannelSelection: 0
+    property var addToChannelChannels: []
+    property string addToChannelMessage: ""
+    property bool addToChannelError: false
+    readonly property int addToChannelChannelCount: addToChannelChannels.length
 
     function formatDuration(seconds) {
         var total = Math.max(0, Math.floor(Number(seconds) || 0))
@@ -255,6 +261,125 @@ Item {
         return items[selectedColumn]
     }
 
+    function comparablePath(value) {
+        var text = String(value || "").replace(/\\/g, "/")
+        while (text.length > 1 && text.charAt(text.length - 1) === "/")
+            text = text.substring(0, text.length - 1)
+        if (Qt.platform.os === "windows")
+            text = text.toLowerCase()
+        return text
+    }
+
+    function sourceContainsPath(sourcePath, targetPath) {
+        var source = comparablePath(sourcePath)
+        var target = comparablePath(targetPath)
+        if (!source.length || !target.length)
+            return false
+        if (source === "/")
+            return target.charAt(0) === "/"
+        return target === source || target.indexOf(source + "/") === 0
+    }
+
+    function openAddToChannel() {
+        var item = selectedItem()
+        if (!item.assetId || !item.path)
+            return
+        channelOS.refreshBroadcaster()
+        var broadcaster = channelOS.broadcasterSnapshot || ({})
+        var channels = broadcaster.channels || []
+        addToChannelChannels = channels.slice(0)
+        addToChannelSelection = Math.max(
+                    0,
+                    Math.min(addToChannelSelection, addToChannelChannels.length - 1))
+        addToChannelError = addToChannelChannels.length === 0
+        addToChannelMessage = addToChannelChannels.length
+                ? "Choose the channel that should include this media item."
+                : "No channels exist yet. Press Select to open Channels and create one."
+        addToChannelVisible = true
+        forceActiveFocus()
+    }
+
+    function closeAddToChannel() {
+        addToChannelVisible = false
+        addToChannelError = false
+        addToChannelMessage = ""
+        forceActiveFocus()
+    }
+
+    function moveAddToChannelSelection(delta) {
+        if (!addToChannelChannels.length)
+            return
+        addToChannelSelection = Math.max(
+                    0,
+                    Math.min(
+                        addToChannelChannels.length - 1,
+                        addToChannelSelection + delta))
+        addChannelList.positionViewAtIndex(addToChannelSelection, ListView.Contain)
+    }
+
+    function addSelectedToChannel() {
+        if (!addToChannelChannels.length) {
+            closeAddToChannel()
+            channelOS.refreshBroadcaster()
+            if (hostWindow)
+                hostWindow.screen = "broadcaster"
+            return
+        }
+
+        var item = selectedItem()
+        if (!item.assetId || !item.path) {
+            addToChannelError = true
+            addToChannelMessage = "The selected Library item is no longer available."
+            return
+        }
+
+        var channel = addToChannelChannels[addToChannelSelection]
+        var existingSources = channel.sources || []
+        var targetPath = String(item.path || "")
+        for (var sourceIndex = 0; sourceIndex < existingSources.length; ++sourceIndex) {
+            if (sourceContainsPath(existingSources[sourceIndex], targetPath)) {
+                addToChannelError = false
+                addToChannelMessage = "Channel "
+                        + String(channel.displayNumber || channel.channelNumber || "")
+                        + " already includes " + normalizedTitle(item) + "."
+                return
+            }
+        }
+
+        var updatedSources = existingSources.slice(0)
+        updatedSources.push(targetPath)
+        var editor = {
+            channel: channel.channelNumber,
+            name: String(channel.name || ""),
+            description: String(channel.description || ""),
+            sources: updatedSources,
+            mode: String(channel.mode || "sequential"),
+            preserveEpisodeOrder: Boolean(channel.preserveEpisodeOrder),
+            avoidRepeatDays: channel.avoidRepeatDays || 0,
+            numberWidth: channel.numberWidth || 3
+        }
+        var result = channelOS.updateChannel(channel.channelNumber, editor)
+        if (!result || !result.ok) {
+            addToChannelError = true
+            addToChannelMessage = result && result.message
+                    ? String(result.message)
+                    : "ChannelOS could not update that channel."
+            return
+        }
+
+        channelOS.refreshBroadcaster()
+        var refreshed = channelOS.broadcasterSnapshot || ({})
+        addToChannelChannels = (refreshed.channels || addToChannelChannels).slice(0)
+        addToChannelSelection = Math.max(
+                    0,
+                    Math.min(addToChannelSelection, addToChannelChannels.length - 1))
+        addToChannelError = false
+        addToChannelMessage = "Added " + normalizedTitle(item)
+                + " to Channel "
+                + String(channel.displayNumber || channel.channelNumber || "")
+                + " - " + String(channel.name || "") + "."
+    }
+
     function publishInfoSelection() {
         if (hostWindow)
             hostWindow.libraryInfoItem = selectedItem()
@@ -334,7 +459,9 @@ Item {
     }
 
     function handleBack() {
-        if (managerVisible) {
+        if (addToChannelVisible) {
+            closeAddToChannel()
+        } else if (managerVisible) {
             returnFromManager()
         } else if (searchField.activeFocus) {
             searchField.focus = false
@@ -349,6 +476,17 @@ Item {
     function handleControllerIntent(intent: string): void {
         if (!hostWindow || hostWindow.screen !== "library")
             return
+        if (addToChannelVisible) {
+            if (intent === "BACK")
+                closeAddToChannel()
+            else if (intent === "UP")
+                moveAddToChannelSelection(-1)
+            else if (intent === "DOWN")
+                moveAddToChannelSelection(1)
+            else if (intent === "SELECT")
+                addSelectedToChannel()
+            return
+        }
         if (intent === "BACK") {
             handleBack()
             return
@@ -365,6 +503,8 @@ Item {
             moveShelf(1)
         else if (intent === "SELECT")
             activateSelection()
+        else if (intent === "PLAY_PAUSE")
+            openAddToChannel()
         else if (intent === "ADD_MEDIA_SOURCE")
             openManager()
     }
@@ -457,48 +597,83 @@ Item {
 
     Shortcut {
         sequence: "Left"
-        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible && !searchField.activeFocus
         onActivated: libraryRoot.moveColumn(-1)
     }
     Shortcut {
         sequence: "Right"
-        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible && !searchField.activeFocus
         onActivated: libraryRoot.moveColumn(1)
     }
     Shortcut {
         sequence: "Up"
-        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible && !searchField.activeFocus
         onActivated: libraryRoot.moveShelf(-1)
     }
     Shortcut {
         sequence: "Down"
-        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible && !searchField.activeFocus
         onActivated: libraryRoot.moveShelf(1)
     }
     Shortcut {
         sequence: "Return"
-        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible && !searchField.activeFocus
         onActivated: libraryRoot.activateSelection()
     }
     Shortcut {
         sequence: "Space"
-        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible && !searchField.activeFocus
         onActivated: libraryRoot.activateSelection()
+    }
+    Shortcut {
+        sequence: "Up"
+        enabled: libraryRoot.visible && libraryRoot.addToChannelVisible
+        onActivated: libraryRoot.moveAddToChannelSelection(-1)
+    }
+    Shortcut {
+        sequence: "Down"
+        enabled: libraryRoot.visible && libraryRoot.addToChannelVisible
+        onActivated: libraryRoot.moveAddToChannelSelection(1)
+    }
+    Shortcut {
+        sequence: "Return"
+        enabled: libraryRoot.visible && libraryRoot.addToChannelVisible
+        onActivated: libraryRoot.addSelectedToChannel()
+    }
+    Shortcut {
+        sequence: "Space"
+        enabled: libraryRoot.visible && libraryRoot.addToChannelVisible
+        onActivated: libraryRoot.addSelectedToChannel()
     }
     Shortcut {
         sequence: "Ctrl+F"
         enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible
         onActivated: searchField.forceActiveFocus()
     }
     Shortcut {
         sequence: "M"
-        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible && !searchField.activeFocus
         onActivated: libraryRoot.openManager()
     }
     Shortcut {
         sequence: "A"
-        enabled: libraryRoot.visible && !libraryRoot.managerVisible && !searchField.activeFocus
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible && !searchField.activeFocus
         onActivated: libraryRoot.openManager()
+    }
+    Shortcut {
+        sequence: "C"
+        enabled: libraryRoot.visible && !libraryRoot.managerVisible
+                 && !libraryRoot.addToChannelVisible && !searchField.activeFocus
+        onActivated: libraryRoot.openAddToChannel()
     }
     Shortcut {
         sequence: "Escape"
@@ -769,7 +944,7 @@ Item {
 
             Column {
                 anchors.left: parent.left
-                anchors.right: playButton.left
+                anchors.right: addChannelButton.left
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 24
                 anchors.rightMargin: 20
@@ -794,6 +969,17 @@ Item {
                     width: parent.width
                     elide: Text.ElideRight
                 }
+            }
+
+            Button {
+                id: addChannelButton
+                anchors.right: playButton.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 10
+                width: 154
+                height: 44
+                text: "Add to Channel"
+                onClicked: libraryRoot.openAddToChannel()
             }
 
             Button {
@@ -1141,13 +1327,208 @@ Item {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 30
-                spacing: 24
+                spacing: 20
                 Text { text: "ARROWS  Browse"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "ENTER  Open / Play"; color: textSecondary; font.pixelSize: 12 }
+                Text { text: "C / X  Add to Channel"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "I  Info"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "CTRL+F  Search"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "M  Manage Sources"; color: textSecondary; font.pixelSize: 12 }
                 Text { text: "ESC  Home"; color: textSecondary; font.pixelSize: 12 }
+            }
+        }
+    }
+
+    Rectangle {
+        id: addToChannelOverlay
+        anchors.fill: parent
+        z: 110
+        visible: libraryRoot.addToChannelVisible
+        color: "#c8050a11"
+
+        MouseArea {
+            anchors.fill: parent
+            // Swallow clicks outside the panel so an authoring action cannot
+            // accidentally activate the Library underneath it.
+            onClicked: function(mouse) { mouse.accepted = true }
+        }
+
+        Rectangle {
+            id: addToChannelPanel
+            anchors.centerIn: parent
+            width: Math.min(760, parent.width - 120)
+            height: Math.min(620, parent.height - 100)
+            radius: 12
+            color: panel
+            border.color: accentBright
+            border.width: 1
+
+            Text {
+                id: addTitle
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: 28
+                anchors.rightMargin: 28
+                anchors.topMargin: 24
+                text: "ADD TO CHANNEL"
+                color: textPrimary
+                font.pixelSize: 25
+                font.weight: Font.DemiBold
+            }
+
+            Text {
+                id: addMediaTitle
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: addTitle.bottom
+                anchors.leftMargin: 28
+                anchors.rightMargin: 28
+                anchors.topMargin: 7
+                text: libraryRoot.normalizedTitle(libraryRoot.selectedItem())
+                color: accentBright
+                font.pixelSize: 16
+                elide: Text.ElideRight
+            }
+
+            Text {
+                id: addInstruction
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: addMediaTitle.bottom
+                anchors.leftMargin: 28
+                anchors.rightMargin: 28
+                anchors.topMargin: 8
+                text: "Add this exact owned-media item to an existing channel. ChannelOS will validate and reload the channel before saving it."
+                color: textSecondary
+                font.pixelSize: 13
+                wrapMode: Text.WordWrap
+            }
+
+            ListView {
+                id: addChannelList
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: addInstruction.bottom
+                anchors.bottom: addFeedback.top
+                anchors.leftMargin: 28
+                anchors.rightMargin: 28
+                anchors.topMargin: 18
+                anchors.bottomMargin: 14
+                clip: true
+                spacing: 8
+                model: libraryRoot.addToChannelChannels
+                currentIndex: libraryRoot.addToChannelSelection
+                boundsBehavior: Flickable.StopAtBounds
+
+                delegate: Rectangle {
+                    id: addChannelDelegate
+                    required property int index
+                    required property var modelData
+                    width: addChannelList.width
+                    height: 72
+                    radius: 8
+                    color: index === libraryRoot.addToChannelSelection
+                           ? "#103568" : panelRaised
+                    border.color: index === libraryRoot.addToChannelSelection
+                                  ? accentBright : line
+                    border.width: index === libraryRoot.addToChannelSelection ? 2 : 1
+
+                    Text {
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 18
+                        width: 72
+                        text: String(addChannelDelegate.modelData.displayNumber
+                                     || addChannelDelegate.modelData.channelNumber || "")
+                        color: accentBright
+                        font.pixelSize: 21
+                        font.weight: Font.Bold
+                    }
+
+                    Column {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.leftMargin: 96
+                        anchors.rightMargin: 16
+                        spacing: 4
+                        Text {
+                            width: parent.width
+                            text: String(addChannelDelegate.modelData.name || "Unnamed Channel")
+                            color: textPrimary
+                            font.pixelSize: 16
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            text: addChannelDelegate.modelData.nowTitle
+                                  ? "Now: " + String(addChannelDelegate.modelData.nowTitle)
+                                  : String(addChannelDelegate.modelData.mode || "sequential").toUpperCase()
+                            color: textSecondary
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        onClicked: {
+                            libraryRoot.addToChannelSelection = addChannelDelegate.index
+                            libraryRoot.forceActiveFocus()
+                        }
+                        onDoubleClicked: {
+                            libraryRoot.addToChannelSelection = addChannelDelegate.index
+                            libraryRoot.addSelectedToChannel()
+                        }
+                    }
+                }
+            }
+
+            Text {
+                anchors.centerIn: addChannelList
+                visible: libraryRoot.addToChannelChannels.length === 0
+                text: "No channels yet. Select to open the Channels screen."
+                color: textSecondary
+                font.pixelSize: 15
+            }
+
+            Rectangle {
+                id: addFeedback
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: addControls.top
+                anchors.leftMargin: 28
+                anchors.rightMargin: 28
+                anchors.bottomMargin: 14
+                height: 66
+                radius: 7
+                color: libraryRoot.addToChannelError ? "#35131a" : "#0b2031"
+                border.color: libraryRoot.addToChannelError ? "#b95769" : line
+
+                Text {
+                    anchors.fill: parent
+                    anchors.margins: 13
+                    text: libraryRoot.addToChannelMessage
+                    color: libraryRoot.addToChannelError ? "#ffd8df" : textSecondary
+                    font.pixelSize: 13
+                    wrapMode: Text.WordWrap
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+
+            Row {
+                id: addControls
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: 28
+                anchors.bottomMargin: 20
+                spacing: 26
+                Text { text: "UP / DOWN  Choose channel"; color: textSecondary; font.pixelSize: 12 }
+                Text { text: "ENTER / A  Add"; color: textSecondary; font.pixelSize: 12 }
+                Text { text: "ESC / B  Back"; color: textSecondary; font.pixelSize: 12 }
             }
         }
     }

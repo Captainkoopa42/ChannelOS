@@ -260,7 +260,9 @@ def make_library_item(controller: FakeChannelOS, host: FakeHost):
     assert item is not None, errors
     item.setProperty("hostWindow", host)
     app.processEvents()
-    return app, engine, item
+    # Keep the QQmlComponent alive for as long as the object it created. PySide
+    # may otherwise collect the component at helper return and delete the item.
+    return app, engine, component, item
 
 
 def invoke(item, intent: str) -> None:
@@ -276,7 +278,7 @@ def invoke(item, intent: str) -> None:
 def test_controller_x_opens_add_to_channel_and_select_updates_existing_channel() -> None:
     controller = FakeChannelOS()
     host = FakeHost()
-    app, engine, item = make_library_item(controller, host)
+    app, engine, component, item = make_library_item(controller, host)
 
     window = QWindow()
     window.setProperty("screen", "library")
@@ -314,14 +316,15 @@ def test_controller_x_opens_add_to_channel_and_select_updates_existing_channel()
 
     window.close()
     item.deleteLater()
-    del engine
     app.processEvents()
+    del component
+    del engine
 
 
 def test_add_to_channel_does_not_duplicate_media_already_covered_by_parent_source() -> None:
     controller = FakeChannelOS(selected_already_covered=True)
     host = FakeHost()
-    app, engine, item = make_library_item(controller, host)
+    app, engine, component, item = make_library_item(controller, host)
 
     invoke(item, "PLAY_PAUSE")
     assert item.property("addToChannelVisible") is True
@@ -333,5 +336,6 @@ def test_add_to_channel_does_not_duplicate_media_already_covered_by_parent_sourc
     assert "already includes Owned Clip" in str(item.property("addToChannelMessage"))
 
     item.deleteLater()
-    del engine
     app.processEvents()
+    del component
+    del engine

@@ -80,13 +80,18 @@ def run_couch(
     television = TelevisionRuntime(runtimes, store)
 
     try:
+        from . import broadcaster_qt
         from .broadcaster_qt import run_qt
+        from .display_mode import install_display_mode_support
+        from .vlc_probe import install_packaged_media_scan_support
     except (ImportError, OSError) as exc:
         raise CouchUIError(
             "ChannelOS couch UI requires the optional Qt package. "
             "Install it with: python -m pip install -e \".[ui]\""
         ) from exc
 
+    install_display_mode_support(broadcaster_qt)
+    install_packaged_media_scan_support(broadcaster_qt)
     return run_qt(
         service,
         television,

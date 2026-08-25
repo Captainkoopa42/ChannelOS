@@ -1,14 +1,28 @@
-ChannelOS Windows x64 preview
-=============================
+ChannelOS Windows x64 alpha
+===========================
 
 START
 -----
 Keep the entire ChannelOS folder together. Double-click ChannelOS.exe.
 ChannelOS does not require a separate Python, Qt, or VLC installation.
 
-This preview still requires at least one indexed channel. If no channel exists,
-ChannelOS shows an error and writes a diagnostic log instead of silently failing.
-The first-run channel/setup experience is a later product milestone.
+On a fresh ChannelOS data directory, the first launch asks you to choose one
+folder containing media you own. ChannelOS indexes those files in place and
+creates an initial sequential channel so the television can start without
+PowerShell, hand-written YAML, or a pre-existing database. Your media files are
+not moved, renamed, or copied into ChannelOS.
+
+Large folders can take time on their first scan because ChannelOS establishes
+stable media identity and inspects each file for scheduling information. If you
+cancel the folder chooser, no channel is created; double-click ChannelOS.exe
+again whenever you want to retry setup.
+
+DISPLAY MODE
+------------
+ChannelOS is fullscreen by default for couch/TV use. Settings > Display Mode can
+switch between Fullscreen and Windowed mode, and the choice is saved locally.
+F11 is the quick keyboard toggle. The --windowed command-line flag remains an
+explicit development/startup override.
 
 USER DATA AND LOGS
 ------------------
@@ -16,9 +30,9 @@ ChannelOS stores its normal writable data in:
 
     %LOCALAPPDATA%\ChannelOS
 
-This includes library.db, runtime.db, managed channel definitions, and logs.
-Set CHANNELOS_DATA_DIR before launch only when you deliberately want another
-data directory.
+This includes library.db, runtime.db, settings.json, managed channel definitions,
+artwork cache data, and logs. Set CHANNELOS_DATA_DIR before launch only when you
+deliberately want another data directory, such as a clean test environment.
 
 REPLACEABLE THIRD-PARTY LIBRARIES
 ---------------------------------

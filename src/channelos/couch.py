@@ -81,6 +81,7 @@ def run_couch(
 
     try:
         from . import broadcaster_qt
+        from .broadcaster_qt import run_qt
         from .display_mode import install_display_mode_support
     except (ImportError, OSError) as exc:
         raise CouchUIError(
@@ -89,7 +90,7 @@ def run_couch(
         ) from exc
 
     install_display_mode_support(broadcaster_qt)
-    return broadcaster_qt.run_qt(
+    return run_qt(
         service,
         television,
         library,

@@ -634,6 +634,10 @@ class BroadcasterKeyFilter(CouchKeyFilter):
             self._window.setProperty("screen", "broadcaster")
             return True
         screen = str(self._window.property("screen"))
+        if screen == "library" and command.intent is ControlIntent.PLAY_PAUSE:
+            # X/West is the Library's secondary couch action. Playback screens
+            # still receive PLAY_PAUSE through the normal couch dispatcher.
+            return self._invoke_overlay(self._library_item, command.intent)
         overlay_intents = {
             ControlIntent.UP,
             ControlIntent.DOWN,

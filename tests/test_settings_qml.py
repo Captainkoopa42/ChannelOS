@@ -17,7 +17,7 @@ from PySide6.QtCore import (
     Slot,
     qInstallMessageHandler,
 )
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickWindow
 
@@ -30,6 +30,7 @@ class FakeSettingsHost(QObject):
     statusMessageChanged = Signal()
     volumePercentChanged = Signal()
     mutedChanged = Signal()
+    visibilityChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -38,6 +39,7 @@ class FakeSettingsHost(QObject):
         self._status_message = ""
         self._volume_percent = 100
         self._muted = False
+        self._visibility = int(QWindow.Visibility.FullScreen)
 
     @Property(str, notify=screenChanged)
     def screen(self) -> str:
@@ -85,12 +87,28 @@ class FakeSettingsHost(QObject):
         self._muted = bool(value)
         self.mutedChanged.emit()
 
+    @Property(int, notify=visibilityChanged)
+    def visibility(self) -> int:
+        return self._visibility
+
+    @Slot()
+    def showNormal(self) -> None:
+        self._visibility = int(QWindow.Visibility.Windowed)
+        self.visibilityChanged.emit()
+
+    @Slot()
+    def showFullScreen(self) -> None:
+        self._visibility = int(QWindow.Visibility.FullScreen)
+        self.visibilityChanged.emit()
+
 
 class FakeSettingsController(QObject):
     settingsChanged = Signal()
+    displayModeChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
+        self._display_mode = "fullscreen"
         self._settings = {
             "volumePercent": 100,
             "muted": False,
@@ -111,6 +129,25 @@ class FakeSettingsController(QObject):
     def settings(self):
         return self._settings
 
+    @Property(str, notify=displayModeChanged)
+    def displayMode(self):
+        return self._display_mode
+
+    @Slot(int, result="QVariantMap")
+    def changeDisplayMode(self, direction):
+        _ = direction
+        self._display_mode = (
+            "windowed" if self._display_mode == "fullscreen" else "fullscreen"
+        )
+        self.displayModeChanged.emit()
+        self.settingsChanged.emit()
+        return {
+            "ok": True,
+            "message": f"Display mode: {self._display_mode}",
+            "displayMode": self._display_mode,
+            "settings": self._settings,
+        }
+
     @Slot(str, int, result="QVariantMap")
     def adjustSetting(self, name, direction):
         return {
@@ -121,6 +158,9 @@ class FakeSettingsController(QObject):
 
     @Slot(result="QVariantMap")
     def resetSettings(self):
+        self._display_mode = "fullscreen"
+        self.displayModeChanged.emit()
+        self.settingsChanged.emit()
         return {
             "ok": True,
             "message": "reset",
@@ -212,5 +252,8 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
     assert "preferences.backgroundArtworkDuringPlayback" in text
     assert "preferences.reducedMotion" in text
     assert "preferences.artworkCacheBytes" in text
+    assert "channelOS.displayMode" in text
+    assert "channelOS.changeDisplayMode" in text
+    assert 'sequence: "F11"' in text
     assert "channelOS.clearArtworkCache()" in text
     assert "channelOS.resetSettings()" in text

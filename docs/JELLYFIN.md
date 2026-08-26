@@ -1,5 +1,13 @@
 # Jellyfin Live TV Adapter
 
+> [!IMPORTANT]
+> **Direction notice:** This file documents the experimental **outbound** adapter
+> (`ChannelOS -> Jellyfin Live TV`). It is retained as an interoperability proof, but
+> it is not the primary product direction. The intended integration keeps the
+> ChannelOS interface and uses Jellyfin invisibly as an optional inbound library,
+> metadata, and playback backend. See
+> [JELLYFIN_BACKEND_MASTER_PLAN.md](JELLYFIN_BACKEND_MASTER_PLAN.md).
+
 **Status:** Experimental source-tree proof
 
 **Boundary:** ChannelOS Core -> M3U / XMLTV / MPEG-TS -> Jellyfin Live TV

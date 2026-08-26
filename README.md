@@ -116,6 +116,11 @@ LibVLCBackend
 
 The UI is a client of ChannelOS state. It must not become the place where authoritative scheduling logic lives.
 
+An experimental [Jellyfin Live TV adapter](docs/JELLYFIN.md) now exercises that
+boundary outside the couch UI. It projects the same authoritative schedules as
+M3U and XMLTV and serves the tuned Broadcast Clock as MPEG-TS, allowing Jellyfin
+to act as another ChannelOS client without becoming a ChannelOS dependency.
+
 The Phase 0 full-file SHA-256 identity is intentionally conservative. A path is a location, not the media identity. Moving unchanged content and rescanning resolves to the same `sha256:...` asset.
 
 Runtime state is deliberately separate from the media index. Schedule epochs, current/previous channel, and Viewer Clock continuity can be discarded or exported without changing the media itself.
@@ -237,6 +242,18 @@ channelos tv channel-7.yaml channel-12.yaml \
   --db ".channelos/library.db" \
   --state-db ".channelos/runtime.db"
 ```
+
+Expose those same channels as an experimental Jellyfin Live TV source:
+
+```bash
+channelos jellyfin channel-7.yaml channel-12.yaml \
+  --db ".channelos/library.db" \
+  --state-db ".channelos/runtime.db"
+```
+
+This publishes `http://127.0.0.1:4242/channels.m3u` and
+`http://127.0.0.1:4242/guide.xml`. Live channel playback also requires FFmpeg.
+See [Jellyfin Live TV Adapter](docs/JELLYFIN.md) for setup and network safety.
 
 The console accepts the control-intent vocabulary that future UI and remotes will use:
 

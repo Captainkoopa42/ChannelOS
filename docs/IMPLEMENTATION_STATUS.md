@@ -1,6 +1,6 @@
 # ChannelOS Implementation Status
 
-**Snapshot:** August 24, 2026
+**Snapshot:** August 26, 2026
 **Status:** Working local alpha  
 **Active implementation:** First-release Windows packaging and release experience
 **Canonical product definition:** [MASTER_DESIGN.md](MASTER_DESIGN.md)
@@ -54,6 +54,11 @@ version guards, source-scoped resolution, atomic tuning persistence, and batched
 artwork updates now form the normal foundation.
 
 The largest remaining first-release work is now product experience and release hardening rather than proving the television model.
+
+An experimental Jellyfin boundary now also projects the authoritative ChannelOS
+lineup as M3U, its Guide as XMLTV, and a requested Broadcast Clock as a live
+MPEG-TS stream. This is an integration proof, not yet packaged release scope or
+a completed multi-device household implementation.
 
 ---
 

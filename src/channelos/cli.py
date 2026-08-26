@@ -6,6 +6,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from .guide import GuideError, GuideService
+from .jellyfin import (
+    FFmpegMpegTsStreamer,
+    JellyfinAdapterError,
+    JellyfinLiveTvAdapter,
+    JellyfinLiveTvHttpServer,
+)
 from .library import MediaLibrary
 from .loader import load_channel
 from .models import ChannelValidationError
@@ -153,6 +159,60 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("live", "resume", "ask"),
         default="live",
         help="behavior when returning to a channel with saved viewer continuity",
+    )
+
+    jellyfin = sub.add_parser(
+        "jellyfin",
+        help="Expose ChannelOS as an experimental Jellyfin M3U/XMLTV Live TV source.",
+    )
+    jellyfin.add_argument(
+        "paths",
+        nargs="+",
+        type=Path,
+        help="one or more channel YAML files",
+    )
+    _add_database_argument(jellyfin)
+    _add_runtime_database_argument(jellyfin)
+    jellyfin.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="HTTP bind address (default: 127.0.0.1)",
+    )
+    jellyfin.add_argument(
+        "--port",
+        type=int,
+        default=4242,
+        help="HTTP port (default: 4242)",
+    )
+    jellyfin.add_argument(
+        "--advertise-url",
+        help=(
+            "base URL Jellyfin can use to reach ChannelOS; defaults to "
+            "http://HOST:PORT for a specific bind host"
+        ),
+    )
+    jellyfin.add_argument(
+        "--ffmpeg",
+        default="ffmpeg",
+        help="FFmpeg executable name or path (default: ffmpeg)",
+    )
+    jellyfin.add_argument(
+        "--guide-past-hours",
+        type=float,
+        default=6.0,
+        help="hours of past XMLTV schedule data (default: 6)",
+    )
+    jellyfin.add_argument(
+        "--guide-hours",
+        type=float,
+        default=72.0,
+        help="hours of future XMLTV schedule data (default: 72)",
+    )
+    jellyfin.add_argument(
+        "--max-streams",
+        type=int,
+        default=2,
+        help="maximum simultaneous FFmpeg streams (default: 2)",
     )
 
     return parser
@@ -377,6 +437,80 @@ def main(argv: list[str] | None = None) -> int:
                 if args.why:
                     for step in program.explanation:
                         print(f"      why: {step}")
+        return 0
+
+    if args.command == "jellyfin":
+        if not 1 <= args.port <= 65535:
+            print("ERROR: --port must be from 1 through 65535", file=sys.stderr)
+            return 2
+        if args.guide_past_hours < 0:
+            print("ERROR: --guide-past-hours cannot be negative", file=sys.stderr)
+            return 2
+        if args.guide_hours <= 0:
+            print("ERROR: --guide-hours must be greater than zero", file=sys.stderr)
+            return 2
+        if args.max_streams <= 0:
+            print("ERROR: --max-streams must be greater than zero", file=sys.stderr)
+            return 2
+
+        advertise_url = args.advertise_url
+        if advertise_url is None:
+            if args.host in {"0.0.0.0", "::", "[::]"}:
+                print(
+                    "ERROR: --advertise-url is required when --host binds all interfaces",
+                    file=sys.stderr,
+                )
+                return 2
+            host_for_url = args.host
+            if ":" in host_for_url and not host_for_url.startswith("["):
+                host_for_url = f"[{host_for_url}]"
+            advertise_url = f"http://{host_for_url}:{args.port}"
+
+        library = MediaLibrary(args.db)
+        store = RuntimeStore(args.state_db)
+        opened: list[ChannelRuntime] = []
+        try:
+            for path in args.paths:
+                resolved = _resolve_or_report(path, library)
+                if resolved is None:
+                    return 3
+                opened.append(ChannelRuntime.open(resolved, store))
+
+            adapter = JellyfinLiveTvAdapter(
+                tuple(opened),
+                advertise_url=advertise_url,
+            )
+            streamer = FFmpegMpegTsStreamer(args.ffmpeg)
+            server = JellyfinLiveTvHttpServer(
+                (args.host, args.port),
+                adapter,
+                streamer,
+                guide_past_hours=args.guide_past_hours,
+                guide_future_hours=args.guide_hours,
+                max_streams=args.max_streams,
+            )
+        except (ChannelRuntimeError, JellyfinAdapterError, OSError, ValueError) as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 5
+
+        print("ChannelOS Jellyfin Live TV adapter is running.")
+        print(f"M3U tuner: {adapter.advertise_url}/channels.m3u")
+        print(f"XMLTV guide: {adapter.advertise_url}/guide.xml")
+        try:
+            streamer.resolved_executable()
+        except JellyfinAdapterError as exc:
+            print(f"WARNING: {exc}", file=sys.stderr)
+            print(
+                "Guide discovery will work, but channel playback will return HTTP 503.",
+                file=sys.stderr,
+            )
+        print("Press Ctrl+C to stop.")
+        try:
+            server.serve_forever(poll_interval=0.25)
+        except KeyboardInterrupt:
+            print("\nStopping Jellyfin adapter.")
+        finally:
+            server.server_close()
         return 0
 
     if args.command == "tv":

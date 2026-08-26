@@ -3,7 +3,7 @@
 > **ChannelOS is the television. Jellyfin is an optional media warehouse behind it.**
 
 **Status:** Living architecture and implementation plan  
-**Document version:** 0.1 — August 26, 2026  
+**Document version:** 0.2 — August 26, 2026  
 **Target branch:** `ChannelOS-for-Jellyfin`  
 **Jellyfin baseline reviewed:** Server 10.11.11  
 **Relationship:** Optional inbound media-source integration; not a Jellyfin UI replacement for ChannelOS
@@ -57,6 +57,103 @@ The integration should make this statement true:
 
 The local-only product must remain complete. Jellyfin is an enhancement and a source,
 not an entitlement system or mandatory dependency.
+
+### 2.1 Zero-terminal user experience
+
+The setup performed during the first proof used multiple PowerShell windows, a visible
+Jellyfin server console, manually copied localhost URLs, M3U/XMLTV configuration, and
+separate browser administration. That is an engineering test harness, not an
+acceptable product workflow.
+
+For an ordinary user, the complete relationship should be:
+
+```text
+One-time Jellyfin administration
+    install or connect to Jellyfin
+    sign in
+    add/organize media libraries
+                |
+                v
+ChannelOS Settings -> Media Sources -> Add Jellyfin
+    discover or enter server once
+    sign in / Quick Connect
+    choose libraries
+                |
+                v
+Everything else happens inside ChannelOS
+```
+
+The user may return to Jellyfin's own administration interface when they intentionally
+need to add storage, change server metadata providers, manage Jellyfin accounts, or
+perform other server-administrator work. Routine television use must not require it.
+
+After the server is connected, ChannelOS owns the integration experience:
+
+- server discovery and connection testing;
+- login and token renewal prompts;
+- library selection and synchronization;
+- cached metadata and artwork;
+- local/server source labeling;
+- Channel Studio and Add to Channel workflows;
+- Guide generation and source dividers;
+- stream negotiation, playback, seeking, and program transitions;
+- server health, reconnect, retry, and offline presentation;
+- removal of a Jellyfin source from ChannelOS;
+- all ordinary diagnostics that a nontechnical user needs.
+
+### 2.2 What a normal user must never need to do
+
+A packaged ChannelOS release must not require an ordinary user to:
+
+- open PowerShell, Command Prompt, or a terminal;
+- run Python, pip, FFmpeg, or ChannelOS CLI commands;
+- keep multiple console windows open;
+- copy `127.0.0.1`, port numbers, API routes, M3U URLs, or XMLTV URLs;
+- create or manage Jellyfin API keys manually;
+- configure ChannelOS as a Jellyfin Live TV tuner;
+- read server logs to determine whether a source is connected;
+- manually start an integration adapter every time ChannelOS launches;
+- understand which background helper performs metadata or playback work.
+
+Any ChannelOS-owned sync worker, authenticated playback relay, cache manager, or
+health monitor must run inside the packaged application or as a properly managed
+background component with no visible console window. ChannelOS starts it, monitors it,
+recovers it, and stops it.
+
+### 2.3 Local and remote server lifecycle
+
+ChannelOS should distinguish between:
+
+- **same-PC Jellyfin:** normally installed as a tray application or Windows service;
+- **remote Jellyfin:** running on another PC, NAS, appliance, or hosted server.
+
+For a same-PC server, ChannelOS should detect that Jellyfin is installed and report
+`Running`, `Stopped`, `Starting`, or `Unavailable` in plain language. A future
+explicit setting may allow ChannelOS to request that the local server start with
+ChannelOS, but ChannelOS must not silently install, reconfigure, elevate, or take
+ownership of Jellyfin.
+
+For a remote server, ChannelOS cannot start the machine or service. It should retain
+the cached catalog, show the named server as offline, retry sensibly, and allow the
+user to continue watching all local media.
+
+### 2.4 Finished-product acceptance test
+
+The integration is not product-ready until a nontechnical Windows user can complete
+this flow without a terminal:
+
+1. install or already possess a Jellyfin server;
+2. add media through Jellyfin's own setup/administration experience;
+3. open ChannelOS;
+4. choose **Add Jellyfin Server**;
+5. discover or enter the server and sign in;
+6. choose visible libraries;
+7. browse that media in ChannelOS;
+8. add server media to a ChannelOS channel;
+9. see the local/server divider in the ChannelOS Guide;
+10. tune and watch it without opening Jellyfin again.
+
+That is the minimum user-experience gate, not optional polish.
 
 ### A connected user should gain
 
@@ -916,7 +1013,8 @@ Deliverables:
 - server shelves inside the ChannelOS Library;
 - posters/backdrops from the ChannelOS artwork cache;
 - search/browse and `Add to Channel` using provider-neutral asset references;
-- no embedded Jellyfin web page.
+- no embedded Jellyfin web page;
+- no terminal, manual URL, helper-console, or separate-adapter workflow for ordinary users.
 
 Exit gate:
 
@@ -1009,7 +1107,8 @@ Possible work:
 6. server stopped during browsing;
 7. server stopped during playback;
 8. restart and reconnect without duplicate catalog items;
-9. confirm no token appears in logs, YAML, SQLite diagnostic exports, or UI errors.
+9. confirm no token appears in logs, YAML, SQLite diagnostic exports, or UI errors;
+10. repeat the complete packaged setup on Windows without opening a terminal or manually entering an API route.
 
 ### Regression rule
 

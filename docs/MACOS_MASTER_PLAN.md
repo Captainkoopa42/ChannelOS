@@ -1,9 +1,18 @@
 # ChannelOS for macOS Master Plan
 
-**Status:** Living feasibility, architecture, and implementation plan  
+**Status:** Shelved — awaiting macOS community contributors and physical Mac testing  
 **Branch:** `ChannelOS-for-macOS`  
 **Product direction:** Native, local-first ChannelOS for Mac desktops and living-room systems  
 **Source baseline:** ChannelOS `d9f8161`  
+
+> [!IMPORTANT]
+> **This platform build is shelved.** The maintainer does not currently own Mac
+> hardware, and ChannelOS will not pretend to support a platform that cannot be
+> developed and tested on real machines. Work may resume when a Mac-owning
+> community forms around ChannelOS and contributors are willing to help develop,
+> package, and test the macOS edition alongside the maintainer. Until then, this
+> branch and master plan preserve the intended architecture without representing
+> an active release commitment.
 
 ---
 

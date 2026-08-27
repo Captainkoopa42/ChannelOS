@@ -3,7 +3,7 @@
 > **ChannelOS is the television. Jellyfin is an optional media warehouse behind it.**
 
 **Status:** Living architecture and implementation plan  
-**Document version:** 0.2 — August 26, 2026  
+**Document version:** 0.3 — August 27, 2026  
 **Target branch:** `ChannelOS-for-Jellyfin`  
 **Jellyfin baseline reviewed:** Server 10.11.11  
 **Relationship:** Optional inbound media-source integration; not a Jellyfin UI replacement for ChannelOS
@@ -318,7 +318,7 @@ distinguishes what Jellyfin offers from how ChannelOS should use it.
 | Favorites, played state, resume position, play count | Cross-client continuity | Optional two-way sync with explicit conflict rules |
 | Playback start/progress/stop reporting | Correct Jellyfin session and watch state | Required when watch-state integration is enabled |
 | Quick Connect and username/password authentication | Couch-friendly server connection | Prefer Quick Connect when enabled; support manual login |
-| API keys | Headless administration/integration | Avoid as the default household login; use least privilege where applicable |
+| API keys | Headless administration/integration | Avoid as the default household login; if deliberately used, send through the current `Authorization` scheme and apply least privilege |
 | WebSocket notifications and sessions | Faster library/state updates | Add after polling sync is reliable |
 | Server discovery and public system information | Easier setup and compatibility checks | Adopt with manual URL always available |
 | Endpoint local/network classification | Playback policy and status display | Use as one signal; do not assume it measures actual quality |
@@ -703,7 +703,39 @@ Inside ChannelOS Settings or Library Manager:
 The Jellyfin web dashboard remains available for Jellyfin administration, but it is
 not part of routine ChannelOS viewing.
 
-### 11.2 Connection record
+### 11.2 Authentication protocol rule
+
+ChannelOS must use Jellyfin's current authorization scheme for authenticated API
+requests. Once a token has been issued, the required core form is:
+
+```http
+Authorization: MediaBrowser Token="<access-token>"
+```
+
+The same scheme may also carry the case-sensitive `Client`, `Version`, `DeviceId`,
+and `Device` parameters used to identify ChannelOS to the server. Values must be
+double-quoted. The token will normally be the user/device access token returned by
+Quick Connect or username/password authentication. An administrator-created API key
+is reserved for an explicitly headless integration and is not interchangeable with a
+user token for endpoints that require a current user's identity or permissions.
+
+ChannelOS must not emit any of Jellyfin's deprecated authorization forms:
+
+- the `api_key` query parameter;
+- the `X-Emby-Token` header;
+- the `X-MediaBrowser-Token` header;
+- the `X-Emby-Authorization` header.
+
+Do not send a token in more than one place on the same request. If an API consumer
+cannot set an `Authorization` header, the exact case-sensitive
+`ApiKey=<access-token>` query parameter is the only compatibility fallback. Because
+a query token can leak through logs, history, diagnostics, or copied URLs, ChannelOS
+must keep it ephemeral, redact it everywhere, and use it only as a last resort.
+
+This rule requires explicit regression tests so copied examples, generated code, or
+older Jellyfin client libraries cannot silently reintroduce deprecated authentication.
+
+### 11.3 Connection record
 
 Non-secret settings may include:
 
@@ -721,7 +753,7 @@ source affinity preferences
 
 The token is stored separately in a credential vault.
 
-### 11.3 Compatibility handshake
+### 11.4 Compatibility handshake
 
 On connection and periodically thereafter:
 
@@ -798,19 +830,29 @@ An inaccurate profile produces unnecessary transcoding or playback failures.
 
 ### 13.3 Authentication transport
 
-Ordinary API requests should use Jellyfin's authorization header with a device token.
-Playback URLs and decoder logs require special care because some Jellyfin deployments
-use query-string API keys.
+Ordinary API and playback requests must use the current Jellyfin authorization header:
 
-Preferred long-term approach:
+```http
+Authorization: MediaBrowser Token="<access-token>"
+```
+
+The implementation must not fall back to `api_key`, `X-Emby-Token`,
+`X-MediaBrowser-Token`, or `X-Emby-Authorization`. Servers from Jellyfin 10.11
+onward can disable these legacy methods, and they are scheduled for removal.
+
+Playback URLs and decoder logs require special care because libVLC or another URL-only
+consumer may be unable to attach an authorization header. Preferred long-term
+approach:
 
 - ChannelOS creates a loopback-only authenticated stream relay;
 - libVLC receives an uncredentialed ephemeral localhost URL;
-- the relay injects the Jellyfin authorization header upstream;
+- the relay injects `Authorization: MediaBrowser Token="..."` upstream;
 - the relay never logs full upstream URLs or tokens.
 
-A first proof may use a short-lived authenticated URL only if logging is scrubbed and
-the URL is never persisted.
+A first proof may use the supported, exact-case `ApiKey=<access-token>` query
+parameter only when the consumer cannot send the header. The URL must be short-lived,
+must never be persisted or exposed in UI/diagnostics, and must be centrally redacted.
+ChannelOS must never send both the header and query token on one request.
 
 ### 13.4 Broadcast Clock seeking
 
@@ -953,7 +995,7 @@ versions. The 10.11.11 source exposes the relevant families:
 | Purpose | Jellyfin API family |
 |---|---|
 | Server identity/readiness | `System/Info/Public`, `System/Ping`, authenticated system/endpoint info |
-| Authentication | `Users/AuthenticateByName`, Quick Connect endpoints, device access token |
+| Authentication | `Users/AuthenticateByName`, Quick Connect endpoints, user/device access token, and `Authorization: MediaBrowser Token="..."` transport |
 | User libraries | `UserViews` |
 | Item browse/search/filter | `Items` with user, parent, type, field, paging, filter, and sort parameters |
 | Item details | user-aware item lookup and requested metadata fields |
@@ -1028,7 +1070,8 @@ Deliverables:
 - `PlaybackTarget` and `PlaybackResolver` abstractions;
 - Jellyfin PlaybackInfo negotiation;
 - Direct Play first, then remux/transcode fallback;
-- secure token transport/redacted logging;
+- current Jellyfin authorization-header transport and redacted logging;
+- controlled `ApiKey` fallback only if the playback consumer cannot attach headers;
 - audio/subtitle selection at a minimal useful level;
 - start/progress/stop reporting;
 - local playback remains unchanged.
@@ -1077,7 +1120,14 @@ Possible work:
 ### Unit tests
 
 - URL normalization and same-origin validation;
-- auth header creation and mandatory redaction;
+- exact, case-sensitive `Authorization: MediaBrowser Token="..."` header creation;
+- optional client/device parameter serialization with quoted values;
+- mandatory token and authenticated-URL redaction;
+- rejection of deprecated `api_key`, `X-Emby-Token`,
+  `X-MediaBrowser-Token`, and `X-Emby-Authorization` request paths;
+- restriction of exact-case `ApiKey` query fallback to the controlled URL-only
+  playback path, never alongside an authorization header;
+- user/device token versus administrator API-key scope distinctions;
 - DTO parsing with missing/unknown Jellyfin fields;
 - paging and cancellation;
 - provider-scoped identity stability;
@@ -1094,6 +1144,7 @@ Possible work:
 - recorded sanitized 10.11.11 responses;
 - a disposable Jellyfin test server where practical;
 - public info, authentication, views, items, images, PlaybackInfo, stream, progress;
+- operation with Jellyfin legacy authorization disabled;
 - 401 token expiry, 403 restriction, 404 item removal, 503 startup/restart;
 - slow responses, connection reset, malformed JSON, and version changes.
 
@@ -1160,11 +1211,14 @@ The safest first code change is deliberately small:
 1. add a `channelos/jellyfin_client.py` protocol/client module;
 2. add typed server, user-view, and item summary records;
 3. implement public-info, authentication, user-views, and paged-video-items requests;
-4. redact tokens centrally;
-5. test using an injected fake HTTP transport;
-6. expose a development-only CLI inspection command;
-7. run it against the already installed local Jellyfin 10.11.11 server;
-8. make no library schema, QML, channel YAML, or playback changes yet.
+4. implement the current `Authorization: MediaBrowser Token="..."` scheme and reject
+   deprecated authorization forms;
+5. redact tokens and authenticated URLs centrally;
+6. test using an injected fake HTTP transport;
+7. expose a development-only CLI inspection command;
+8. run it against the already installed local Jellyfin 10.11.11 server with legacy
+   authorization disabled during compatibility testing;
+9. make no library schema, QML, channel YAML, or playback changes yet.
 
 That slice proves the correct direction:
 
@@ -1188,7 +1242,7 @@ These should be decided with prototypes and measurements rather than guessed now
 5. the exact Guide divider visual and remote-focus behavior;
 6. whether remote channels may mix sources in schema `0.2` or wait for a later schema;
 7. which libVLC capabilities should be advertised to Jellyfin;
-8. whether the first stream path uses an ephemeral query token or loopback relay;
+8. whether the first stream consumer can attach the authorization header or requires an ephemeral exact-case `ApiKey` fallback before the loopback relay is complete;
 9. which Jellyfin watch events should be reported for live/channel viewing;
 10. supported Jellyfin server-version range after 10.11.11 contract testing.
 
@@ -1221,6 +1275,8 @@ Jellyfin primary references reviewed:
 - [Transcoding](https://jellyfin.org/docs/general/post-install/transcoding/)
 - [Managing users](https://jellyfin.org/docs/general/server/users/adding-managing-users/)
 - [Quick Connect](https://jellyfin.org/docs/general/server/quick-connect/)
+- [Jellyfin API Authorization](https://gist.github.com/nielsvanvelzen/ea047d9028f676185832e51ffaf12a6f)
+  by Jellyfin Android TV maintainer Niels van Velzen
 - [Networking](https://jellyfin.org/docs/general/post-install/networking/)
 - [Jellyfin for Kodi](https://jellyfin.org/docs/general/clients/kodi/)
 - [Server 10.11.11 source](https://github.com/jellyfin/jellyfin/tree/v10.11.11)

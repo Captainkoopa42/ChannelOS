@@ -1,6 +1,8 @@
 > [!IMPORTANT]
-> This is the macOS feasibility and compatibility branch. Its implementation
-> boundary, phases, and real-machine acceptance gates are defined in
+> **The macOS edition is currently shelved.** The maintainer does not own Mac
+> hardware, so active development will wait until a Mac-owning community is
+> willing to help develop and test the platform alongside him. The preserved
+> architecture and restart conditions are recorded in
 > [the macOS Master Plan](docs/MACOS_MASTER_PLAN.md).
 
 # ChannelOS

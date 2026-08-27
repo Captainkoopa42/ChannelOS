@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> This is the macOS feasibility and compatibility branch. Its implementation
+> boundary, phases, and real-machine acceptance gates are defined in
+> [the macOS Master Plan](docs/MACOS_MASTER_PLAN.md).
+
 # ChannelOS
 
 > **A personal broadcasting system for user-owned media.**

@@ -1,3 +1,8 @@
+> [!IMPORTANT]
+> This is the Linux compatibility branch. Its implementation boundary, phases,
+> and real-machine acceptance gates are defined in
+> [the Linux Master Plan](docs/LINUX_MASTER_PLAN.md).
+
 # ChannelOS
 
 > **A personal broadcasting system for user-owned media.**

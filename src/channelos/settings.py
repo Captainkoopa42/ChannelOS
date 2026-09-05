@@ -8,6 +8,7 @@ from typing import Any, Mapping
 
 DEFAULT_VOLUME_PERCENT = 100
 DEFAULT_MUTED = False
+DEFAULT_AUDIO_OUTPUT_DEVICE_ID = ""
 DEFAULT_SKIP_BACK_SECONDS = 10
 DEFAULT_SKIP_FORWARD_SECONDS = 30
 DEFAULT_DISPLAY_MODE = "fullscreen"
@@ -44,6 +45,7 @@ class CouchSettings:
 
     volume_percent: int = DEFAULT_VOLUME_PERCENT
     muted: bool = DEFAULT_MUTED
+    audio_output_device_id: str = DEFAULT_AUDIO_OUTPUT_DEVICE_ID
     skip_back_seconds: int = DEFAULT_SKIP_BACK_SECONDS
     skip_forward_seconds: int = DEFAULT_SKIP_FORWARD_SECONDS
     display_mode: str = DEFAULT_DISPLAY_MODE
@@ -82,6 +84,13 @@ class CouchSettings:
         muted = values.get("muted", DEFAULT_MUTED)
         if not isinstance(muted, bool):
             muted = DEFAULT_MUTED
+
+        audio_output_device_id = values.get(
+            "audio_output_device_id",
+            DEFAULT_AUDIO_OUTPUT_DEVICE_ID,
+        )
+        if not isinstance(audio_output_device_id, str):
+            audio_output_device_id = DEFAULT_AUDIO_OUTPUT_DEVICE_ID
 
         skip_back = values.get(
             "skip_back_seconds",
@@ -163,6 +172,7 @@ class CouchSettings:
         return cls(
             volume_percent=max(0, min(100, int(volume))),
             muted=muted,
+            audio_output_device_id=audio_output_device_id,
             skip_back_seconds=int(skip_back),
             skip_forward_seconds=int(skip_forward),
             display_mode=display_mode,

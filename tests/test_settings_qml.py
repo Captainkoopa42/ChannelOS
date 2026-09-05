@@ -112,6 +112,9 @@ class FakeSettingsController(QObject):
         self._settings = {
             "volumePercent": 100,
             "muted": False,
+            "audioOutputDeviceId": "",
+            "audioOutputDeviceName": "System Default",
+            "audioOutputDevices": [],
             "skipBackSeconds": 10,
             "skipForwardSeconds": 30,
             "performanceProfile": "standard",
@@ -244,6 +247,9 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
 
     assert "preferences.volumePercent" in text
     assert "preferences.muted" in text
+    assert "preferences.audioOutputDeviceName" in text
+    assert '2: "audioOutput"' in text
+    assert "Audio Output" in text
     assert "preferences.skipBackSeconds" in text
     assert "preferences.skipForwardSeconds" in text
     assert "preferences.performanceProfile" in text

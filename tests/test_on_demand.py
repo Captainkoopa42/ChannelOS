@@ -17,6 +17,7 @@ class FakeBackend(PlaybackBackend):
         self.ended = False
         self.volume = 50
         self.muted = False
+        self.audio_output_device_id = None
         self.events = []
 
     def attach_video_surface(self, surface):
@@ -62,6 +63,9 @@ class FakeBackend(PlaybackBackend):
 
     def set_rate(self, rate):
         pass
+
+    def set_audio_output_device(self, device_id):
+        self.audio_output_device_id = device_id
 
 
 def make_media(tmp_path, duration=120.0):
@@ -299,3 +303,13 @@ def test_on_demand_volume_and_mute_use_playback_backend(tmp_path):
 
     assert session.set_muted(True)
     assert backend.muted
+
+
+def test_on_demand_applies_saved_audio_output_when_playback_starts(tmp_path):
+    backend = FakeBackend()
+    session = OnDemandSession(backend_factory=lambda: backend)
+
+    session.set_audio_output_device("headphones-id")
+    session.play_media(make_media(tmp_path))
+
+    assert backend.audio_output_device_id == "headphones-id"

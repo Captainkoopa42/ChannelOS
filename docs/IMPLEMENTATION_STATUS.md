@@ -43,10 +43,13 @@ A real Windows machine can now:
 - reload created/edited channels immediately into runtime and Guide state.
 
 Home now wires every visible destination, makes the lower quick-action row
-controller/mouse accessible, and provides persistent volume, mute, and
-seek-distance preferences. Settings includes Standard, Lightweight, and Custom
-machine-performance profiles, generated-art cache controls, and reduced motion;
-these controls have passed Windows real-machine validation and are merged.
+controller/mouse accessible, and provides persistent audio-output, volume, mute,
+and seek-distance preferences. Audio-output selection is implemented against
+the existing libVLC backend with automated coverage; Windows speaker/headphone
+switching remains its real-machine gate. Settings also includes Standard,
+Lightweight, and Custom machine-performance profiles, generated-art cache
+controls, and reduced motion; those established controls have passed Windows
+real-machine validation and are merged.
 
 The [Reliability Gate](RELIABILITY_GATE.md) is implemented, Windows validated,
 and merged: shared background/cancellable media scanning, SQLite concurrency and

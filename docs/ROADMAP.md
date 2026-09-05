@@ -96,6 +96,8 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 - [x] Channel up/down
 - [x] Previous Channel couch binding
 - [x] Volume / mute integration
+- [x] Selectable libVLC audio output for speakers, headphones, and System Default
+  — implementation and automated tests complete; Windows hardware validation pending
 - [x] Play / pause
 - [x] Rewind / fast-forward / skip
 - [x] LIVE button behavior

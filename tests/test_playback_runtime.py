@@ -100,3 +100,68 @@ def test_libvlc_routes_native_surface_to_platform_method(platform: str) -> None:
     backend.attach_video_surface(playback.NativeVideoSurface(platform, 4242))
 
     assert player.calls == [(platform, 4242)]
+
+
+class _AudioDeviceNode:
+    def __init__(self, device: bytes, description: bytes, next_node=None) -> None:
+        self.device = device
+        self.description = description
+        self.next = next_node
+
+
+class _AudioDevicePointer:
+    def __init__(self, node: _AudioDeviceNode) -> None:
+        self.contents = node
+
+
+class _FakeAudioPlayer:
+    def __init__(self, head=None) -> None:
+        self.head = head
+        self.selections: list[tuple[None, str | None]] = []
+
+    def audio_output_device_enum(self):
+        return self.head
+
+    def audio_output_device_set(self, module, device_id) -> None:
+        self.selections.append((module, device_id))
+
+
+def test_libvlc_enumerates_and_releases_audio_output_devices() -> None:
+    headphones = _AudioDevicePointer(
+        _AudioDeviceNode(b"headphones-id", b"USB Headphones")
+    )
+    speakers = _AudioDevicePointer(
+        _AudioDeviceNode(b"speakers-id", b"Desktop Speakers", headphones)
+    )
+    released = []
+    backend = object.__new__(playback.LibVLCBackend)
+    backend._player = _FakeAudioPlayer(speakers)
+    backend._vlc = type(
+        "FakeVlc",
+        (),
+        {
+            "libvlc_audio_output_device_list_release": staticmethod(
+                lambda head: released.append(head)
+            )
+        },
+    )
+
+    assert backend.list_audio_output_devices() == (
+        playback.AudioOutputDevice("speakers-id", "Desktop Speakers"),
+        playback.AudioOutputDevice("headphones-id", "USB Headphones"),
+    )
+    assert released == [speakers]
+
+
+def test_libvlc_selects_explicit_or_system_default_audio_output() -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+    player = _FakeAudioPlayer()
+    backend._player = player
+
+    backend.set_audio_output_device("headphones-id")
+    backend.set_audio_output_device(None)
+
+    assert player.selections == [
+        (None, "headphones-id"),
+        (None, None),
+    ]

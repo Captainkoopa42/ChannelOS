@@ -101,6 +101,24 @@ class CouchController(QObject):
             self._runtime_store.database_path.with_name("settings.json")
         )
         self._settings = self._settings_store.load()
+        selected_audio_device = self._settings.audio_output_device_id
+        self._audio_output_devices: list[dict[str, object]] = [
+            {
+                "deviceId": "",
+                "name": "System Default",
+                "available": True,
+            }
+        ]
+        if selected_audio_device:
+            self._audio_output_devices.append(
+                {
+                    "deviceId": selected_audio_device,
+                    "name": "Saved device (currently unavailable)",
+                    "available": False,
+                }
+            )
+        self._actions.set_audio_output_device(selected_audio_device or None)
+        self._on_demand.set_audio_output_device(selected_audio_device or None)
         cache_stats = self._artwork_cache.stats()
         self._artwork_cache_bytes = cache_stats.size_bytes
         self._artwork_cache_files = cache_stats.file_count
@@ -224,6 +242,9 @@ class CouchController(QObject):
         return {
             "volumePercent": self._settings.volume_percent,
             "muted": self._settings.muted,
+            "audioOutputDeviceId": self._settings.audio_output_device_id,
+            "audioOutputDeviceName": self._audio_output_device_name(),
+            "audioOutputDevices": self._audio_output_devices,
             "skipBackSeconds": self._settings.skip_back_seconds,
             "skipForwardSeconds": self._settings.skip_forward_seconds,
             "performanceProfile": self._settings.performance_profile,
@@ -239,6 +260,64 @@ class CouchController(QObject):
             "ffmpegThreads": self._settings.ffmpeg_threads,
             "artworkCacheBytes": self._artwork_cache_bytes,
             "artworkCacheFiles": self._artwork_cache_files,
+        }
+
+    def _audio_output_device_name(self) -> str:
+        selected = self._settings.audio_output_device_id
+        for device in self._audio_output_devices:
+            if str(device["deviceId"]) == selected:
+                return str(device["name"])
+        return "System Default" if not selected else "Unavailable device"
+
+    @Slot(result="QVariantMap")
+    def refreshAudioOutputDevices(self) -> dict[str, object]:
+        """Refresh libVLC audio destinations without blocking Settings access."""
+
+        try:
+            discovered = self._actions.list_audio_output_devices()
+        except (PlaybackError, ValueError) as exc:
+            return {
+                "ok": False,
+                "message": f"Audio outputs could not be refreshed: {exc}",
+                "settings": self.settings,
+            }
+
+        devices: list[dict[str, object]] = [
+            {
+                "deviceId": "",
+                "name": "System Default",
+                "available": True,
+            }
+        ]
+        known = {""}
+        for device in discovered:
+            if device.device_id in known:
+                continue
+            devices.append(
+                {
+                    "deviceId": device.device_id,
+                    "name": device.name,
+                    "available": True,
+                }
+            )
+            known.add(device.device_id)
+
+        selected = self._settings.audio_output_device_id
+        if selected and selected not in known:
+            devices.append(
+                {
+                    "deviceId": selected,
+                    "name": "Saved device (currently unavailable)",
+                    "available": False,
+                }
+            )
+
+        self._audio_output_devices = devices
+        self.settingsChanged.emit()
+        return {
+            "ok": True,
+            "message": "",
+            "settings": self.settings,
         }
 
     @Slot()
@@ -944,6 +1023,28 @@ class CouchController(QObject):
                 )
                 settings = self._settings.with_performance_profile(value)
                 message = f"Performance profile: {value.title()}"
+            elif name == "audioOutput":
+                current = self._settings.audio_output_device_id
+                choices = tuple(
+                    str(device["deviceId"])
+                    for device in self._audio_output_devices
+                    if bool(device["available"])
+                    or str(device["deviceId"]) == current
+                )
+                if current not in choices:
+                    current = ""
+                index = choices.index(current)
+                value = choices[(index + step) % len(choices)]
+                settings = replace(
+                    self._settings,
+                    audio_output_device_id=value,
+                )
+                device_name = next(
+                    str(device["name"])
+                    for device in self._audio_output_devices
+                    if str(device["deviceId"]) == value
+                )
+                message = f"Audio output: {device_name}"
             elif name == "skipBack":
                 value = self._cycle_choice(
                     self._settings.skip_back_seconds,
@@ -1018,12 +1119,16 @@ class CouchController(QObject):
                 raise ValueError(f"unknown setting: {name}")
 
             self._save_settings(settings)
+            if name == "audioOutput":
+                selected = settings.audio_output_device_id or None
+                self._actions.set_audio_output_device(selected)
+                self._on_demand.set_audio_output_device(selected)
             return {
                 "ok": True,
                 "message": message,
                 "settings": self.settings,
             }
-        except (OSError, ValueError) as exc:
+        except (OSError, PlaybackError, ValueError) as exc:
             return self._error(exc)
 
     @Slot(result="QVariantMap")
@@ -1067,6 +1172,8 @@ class CouchController(QObject):
     def resetSettings(self) -> dict[str, object]:
         try:
             self._save_settings(CouchSettings())
+            self._actions.set_audio_output_device(None)
+            self._on_demand.set_audio_output_device(None)
             self._apply_audio_state()
             return {
                 "ok": True,
@@ -1466,6 +1573,9 @@ class CouchKeyFilter(QObject):
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
         self._window.setProperty("infoVisible", False)
+        refresh = self._controller.refreshAudioOutputDevices()
+        if not bool(refresh.get("ok")):
+            self._notify(refresh)
         self._window.setProperty("screen", "settings")
         return True
 

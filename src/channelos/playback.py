@@ -34,6 +34,14 @@ class NativeVideoSurface:
             raise ValueError("native video window_id must be a positive integer")
 
 
+@dataclass(frozen=True, slots=True)
+class AudioOutputDevice:
+    """One audio destination exposed by the active playback backend."""
+
+    device_id: str
+    name: str
+
+
 def _bundled_vlc_runtime_candidates() -> tuple[Path, ...]:
     """Return ChannelOS-owned libVLC locations in product-first order."""
 
@@ -139,6 +147,19 @@ class PlaybackBackend(ABC):
             f"{type(self).__name__} does not support an embedded native video surface"
         )
 
+    def list_audio_output_devices(self) -> tuple[AudioOutputDevice, ...]:
+        """Return selectable audio destinations, excluding the system default."""
+
+        return ()
+
+    def set_audio_output_device(self, device_id: str | None) -> None:
+        """Select an audio destination, or the operating-system default with ``None``."""
+
+        if device_id:
+            raise PlaybackUnavailableError(
+                f"{type(self).__name__} does not support audio-output selection"
+            )
+
 
 class LibVLCBackend(PlaybackBackend):
     """Reference playback backend using python-vlc over the native libVLC library."""
@@ -242,6 +263,76 @@ class LibVLCBackend(PlaybackBackend):
 
     def get_muted(self) -> bool:
         return bool(self._player.audio_get_mute())
+
+    @staticmethod
+    def _decode_vlc_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value)
+
+    def list_audio_output_devices(self) -> tuple[AudioOutputDevice, ...]:
+        """Enumerate libVLC audio destinations and release its native list."""
+
+        try:
+            head = self._player.audio_output_device_enum()
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise PlaybackUnavailableError(
+                "libVLC could not enumerate audio output devices"
+            ) from exc
+
+        if not head:
+            return ()
+
+        devices: list[AudioOutputDevice] = []
+        seen: set[str] = set()
+        node = head
+        try:
+            # libVLC returns a null-terminated native linked list. The limit is
+            # defensive protection against a malformed third-party audio module.
+            for _ in range(512):
+                if not node:
+                    break
+                current = node.contents
+                device_id = self._decode_vlc_text(current.device)
+                name = self._decode_vlc_text(current.description)
+                if device_id and device_id not in seen:
+                    devices.append(
+                        AudioOutputDevice(
+                            device_id=device_id,
+                            name=name or device_id,
+                        )
+                    )
+                    seen.add(device_id)
+                node = current.next
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise PlaybackUnavailableError(
+                "libVLC returned an invalid audio output device list"
+            ) from exc
+        finally:
+            release = getattr(
+                self._vlc,
+                "libvlc_audio_output_device_list_release",
+                None,
+            )
+            if release is not None:
+                release(head)
+
+        return tuple(devices)
+
+    def set_audio_output_device(self, device_id: str | None) -> None:
+        """Switch libVLC immediately; ``None`` follows the system default."""
+
+        selected = None if not device_id else str(device_id)
+        try:
+            # Passing no module lets libVLC route the identifier to the active
+            # audio output. libVLC 3 exposes no useful success return here.
+            self._player.audio_output_device_set(None, selected)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise PlaybackUnavailableError(
+                "libVLC could not select the requested audio output device"
+            ) from exc
 
     def set_rate(self, rate: float) -> None:
         if rate <= 0:

@@ -10,6 +10,9 @@ Item {
         channelOS ? channelOS.settings : ({
             volumePercent: 100,
             muted: false,
+            audioOutputDeviceId: "",
+            audioOutputDeviceName: "System Default",
+            audioOutputDevices: [],
             skipBackSeconds: 10,
             skipForwardSeconds: 30,
             performanceProfile: "standard",
@@ -25,6 +28,7 @@ Item {
     readonly property var settingsRows: [
         { title: "Performance Profile", detail: "Standard preserves full artwork behavior. Lightweight reduces optional background work." },
         { title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
+        { title: "Audio Output", detail: "Choose System Default, speakers, headphones, or another destination exposed by VLC." },
         { title: "Volume", detail: "The volume ChannelOS uses now and on its next launch." },
         { title: "Muted", detail: "Remember whether ChannelOS should start muted." },
         { title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
@@ -34,7 +38,7 @@ Item {
         { title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
         { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
         { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
-        { title: "Reset Defaults", detail: "Restore Fullscreen, Standard mode, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
+        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
     ]
 
     anchors.fill: parent
@@ -100,22 +104,24 @@ Item {
         if (index === 1)
             return displayModeLabel()
         if (index === 2)
-            return (preferences.volumePercent || 0) + "%"
+            return String(preferences.audioOutputDeviceName || "System Default")
         if (index === 3)
-            return preferences.muted ? "On" : "Off"
+            return (preferences.volumePercent || 0) + "%"
         if (index === 4)
-            return (preferences.skipBackSeconds || 10) + " seconds"
+            return preferences.muted ? "On" : "Off"
         if (index === 5)
-            return (preferences.skipForwardSeconds || 30) + " seconds"
+            return (preferences.skipBackSeconds || 10) + " seconds"
         if (index === 6)
-            return preferences.generateVideoThumbnails ? "On" : "Off"
+            return (preferences.skipForwardSeconds || 30) + " seconds"
         if (index === 7)
-            return cacheLimitLabel()
+            return preferences.generateVideoThumbnails ? "On" : "Off"
         if (index === 8)
-            return preferences.backgroundArtworkDuringPlayback ? "On" : "Off"
+            return cacheLimitLabel()
         if (index === 9)
-            return preferences.reducedMotion ? "On" : "Off"
+            return preferences.backgroundArtworkDuringPlayback ? "On" : "Off"
         if (index === 10)
+            return preferences.reducedMotion ? "On" : "Off"
+        if (index === 11)
             return cacheUsageLabel()
         return "Standard"
     }
@@ -123,14 +129,15 @@ Item {
     function settingName(index) {
         var names = ({
             0: "performanceProfile",
-            2: "volume",
-            3: "muted",
-            4: "skipBack",
-            5: "skipForward",
-            6: "generateVideoThumbnails",
-            7: "artworkCacheLimit",
-            8: "backgroundArtworkDuringPlayback",
-            9: "reducedMotion"
+            2: "audioOutput",
+            3: "volume",
+            4: "muted",
+            5: "skipBack",
+            6: "skipForward",
+            7: "generateVideoThumbnails",
+            8: "artworkCacheLimit",
+            9: "backgroundArtworkDuringPlayback",
+            10: "reducedMotion"
         })
         return names[index]
     }
@@ -148,7 +155,7 @@ Item {
     }
 
     function adjust(index, direction) {
-        if (index < 0 || index > 9)
+        if (index < 0 || index > 10)
             return
         if (index === 1) {
             changeDisplayMode(direction)
@@ -161,9 +168,9 @@ Item {
     }
 
     function activateAction(index) {
-        if (index === 10) {
+        if (index === 11) {
             showResult(channelOS.clearArtworkCache())
-        } else if (index === 11) {
+        } else if (index === 12) {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
         }
@@ -196,7 +203,7 @@ Item {
             return
         }
         if (intent === "SELECT") {
-            if (hostWindow.settingsSelection < 10)
+            if (hostWindow.settingsSelection < 11)
                 adjust(hostWindow.settingsSelection, 1)
             else
                 activateAction(hostWindow.settingsSelection)
@@ -412,7 +419,7 @@ Item {
                     anchors.rightMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
-                    visible: settingRow.index < 10
+                    visible: settingRow.index < 11
 
                     Rectangle {
                         width: 38
@@ -471,12 +478,12 @@ Item {
                     width: 236
                     height: 42
                     radius: 6
-                    visible: settingRow.index >= 10
+                    visible: settingRow.index >= 11
                     color: actionMouse.containsMouse ? "#1a4d82" : "#10283f"
                     border.color: "#1a91ff"
                     Text {
                         anchors.centerIn: parent
-                        text: settingRow.index === 10
+                        text: settingRow.index === 11
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
                               : "Restore Standard Defaults"
                         color: "#f4f7fb"

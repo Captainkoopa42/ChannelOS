@@ -9,7 +9,7 @@ from channelos.couch_actions import CouchActions
 from channelos.guide import GuideError, GuideService
 from channelos.library import IndexedMedia, MediaAsset, MediaLocation
 from channelos.models import ChannelDefinition
-from channelos.playback import NativeVideoSurface
+from channelos.playback import AudioOutputDevice, NativeVideoSurface
 from channelos.resolve import ResolvedChannel
 from channelos.runtime import ChannelRuntime, RuntimeStore, TelevisionRuntime
 
@@ -23,6 +23,7 @@ class FakeBackend:
         self.position = 0.0
         self.volume = 50
         self.muted = False
+        self.audio_output_device_id: str | None = None
         self.events: list[str] = []
 
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
@@ -63,6 +64,15 @@ class FakeBackend:
 
     def set_rate(self, rate: float) -> None:
         return None
+
+    def list_audio_output_devices(self) -> tuple[AudioOutputDevice, ...]:
+        return (
+            AudioOutputDevice("speakers-id", "Desktop Speakers"),
+            AudioOutputDevice("headphones-id", "USB Headphones"),
+        )
+
+    def set_audio_output_device(self, device_id: str | None) -> None:
+        self.audio_output_device_id = device_id
 
 
 def make_resolved(tmp_path: Path, number: int, durations: tuple[float, ...]) -> ResolvedChannel:
@@ -322,3 +332,17 @@ def test_numeric_tune_previous_channel_and_audio_controls(tmp_path: Path) -> Non
 
     assert actions.set_muted(True)
     assert backend.muted
+
+
+def test_audio_output_selection_is_applied_when_backend_is_created(tmp_path: Path) -> None:
+    epoch = datetime(2026, 8, 19, 20, 0, tzinfo=UTC)
+    actions, _, backend = make_actions(tmp_path, epoch)
+
+    actions.set_audio_output_device("headphones-id")
+    assert backend.audio_output_device_id is None
+
+    assert actions.list_audio_output_devices() == (
+        AudioOutputDevice("speakers-id", "Desktop Speakers"),
+        AudioOutputDevice("headphones-id", "USB Headphones"),
+    )
+    assert backend.audio_output_device_id == "headphones-id"

@@ -27,6 +27,7 @@ def test_settings_round_trip_to_separate_json_file(tmp_path) -> None:
     expected = CouchSettings(
         volume_percent=65,
         muted=True,
+        audio_output_device_id="headphones-id",
         skip_back_seconds=15,
         skip_forward_seconds=60,
         display_mode="windowed",
@@ -37,6 +38,7 @@ def test_settings_round_trip_to_separate_json_file(tmp_path) -> None:
     assert not path.with_name("settings.json.tmp").exists()
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "artwork_cache_limit_mb": 0,
+        "audio_output_device_id": "headphones-id",
         "background_artwork_during_playback": True,
         "display_mode": "windowed",
         "ffmpeg_threads": 0,
@@ -66,6 +68,7 @@ def test_invalid_or_corrupt_settings_fall_back_safely(tmp_path) -> None:
                 "skip_back_seconds": 999,
                 "skip_forward_seconds": 1,
                 "display_mode": "floating-space-window",
+                "audio_output_device_id": 42,
             }
         ),
         encoding="utf-8",
@@ -108,6 +111,7 @@ def test_legacy_settings_without_performance_fields_preserve_full_behavior() -> 
 
     assert settings.performance_profile == "standard"
     assert settings.display_mode == "fullscreen"
+    assert settings.audio_output_device_id == ""
     for name, value in STANDARD_PERFORMANCE.items():
         assert getattr(settings, name) == value
 

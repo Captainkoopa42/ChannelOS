@@ -28,6 +28,7 @@ ApplicationWindow {
     property int homeFocusArea: 0
     property int homeCardSelection: 0
     property int settingsSelection: 0
+    property int studioChannelNumber: 0
     property int selectedRow: 0
     property int selectedProgram: 0
     property int selectedLibrary: 0

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -66,6 +67,37 @@ def open_two_channel_tv(tmp_path: Path, epoch: datetime) -> TelevisionRuntime:
     return TelevisionRuntime((runtime_7, runtime_12), store)
 
 
+def calendar_channel(
+    resolved: ResolvedChannel,
+    starts_and_indexes: list[tuple[datetime, int]],
+    *,
+    filler_mode: str = "sequential",
+) -> ResolvedChannel:
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.2",
+            "channel": resolved.definition.channel,
+            "name": resolved.definition.name,
+            "sources": [
+                {"path": str(source.path)}
+                for source in resolved.definition.sources
+            ],
+            "programming": {
+                "mode": "calendar",
+                "filler_mode": filler_mode,
+                "calendar": [
+                    {
+                        "start_utc": start.isoformat(),
+                        "asset_id": resolved.media[index].asset.asset_id,
+                    }
+                    for start, index in starts_and_indexes
+                ],
+            },
+        }
+    )
+    return ResolvedChannel(definition=definition, media=resolved.media)
+
+
 def test_broadcast_clock_selects_program_and_seek_offset(tmp_path: Path) -> None:
     resolved = build_resolved_channel(tmp_path, [30.0, 45.0, 60.0])
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -116,6 +148,68 @@ def test_broadcast_clock_is_defined_before_epoch_too(tmp_path: Path) -> None:
     assert selection.cycle_index == -1
 
 
+def test_calendar_blocks_override_and_normal_cycle_fills_gaps(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0, 60.0])
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    fixed_start = epoch + timedelta(seconds=40)
+    calendar = calendar_channel(resolved, [(fixed_start, 2)])
+    runtime = ChannelRuntime.open(
+        calendar,
+        RuntimeStore(tmp_path / "runtime.db"),
+        now=epoch,
+    )
+
+    before = runtime.broadcast_at(epoch + timedelta(seconds=35))
+    fixed = runtime.broadcast_at(fixed_start + timedelta(seconds=12))
+    after = runtime.broadcast_at(fixed_start + timedelta(seconds=65))
+
+    assert before.origin == "filler"
+    assert before.media.location.path.name == "01.mp4"
+    assert before.program_ends_at == fixed_start
+    assert fixed.origin == "calendar"
+    assert fixed.media.location.path.name == "02.mp4"
+    assert fixed.offset_seconds == pytest.approx(12.0)
+    assert after.origin == "filler"
+    assert after.media.location.path.name == "00.mp4"
+    assert after.offset_seconds == pytest.approx(5.0)
+
+
+def test_calendar_runtime_rejects_overlapping_fixed_blocks(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [60.0, 45.0])
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    calendar = calendar_channel(
+        resolved,
+        [(epoch, 0), (epoch + timedelta(seconds=30), 1)],
+    )
+
+    with pytest.raises(ChannelRuntimeError, match="calendar blocks overlap"):
+        ChannelRuntime.open(
+            calendar,
+            RuntimeStore(tmp_path / "runtime.db"),
+            now=epoch,
+        )
+
+
+def test_calendar_edit_changes_schedule_signature_and_epoch(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    store = RuntimeStore(tmp_path / "runtime.db")
+    first = ChannelRuntime.open(
+        calendar_channel(resolved, [(epoch + timedelta(hours=1), 0)]),
+        store,
+        now=epoch,
+    )
+    changed_at = epoch + timedelta(minutes=5)
+    changed = ChannelRuntime.open(
+        calendar_channel(resolved, [(epoch + timedelta(hours=2), 0)]),
+        store,
+        now=changed_at,
+    )
+
+    assert changed.signature != first.signature
+    assert changed.epoch_utc == changed_at
+
+
 def test_channel_epoch_survives_runtime_restart(tmp_path: Path) -> None:
     resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -148,6 +242,42 @@ def test_schedule_change_creates_new_epoch(tmp_path: Path) -> None:
 
     assert second.signature != first.signature
     assert second.epoch_utc == changed_at
+
+
+def test_calendar_support_preserves_legacy_schedule_signature(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
+    programming = resolved.definition.programming
+    legacy_payload = {
+        "schema": 2,
+        "channel": resolved.definition.channel,
+        "programming": {
+            "mode": programming.mode,
+            "preserve_episode_order": programming.preserve_episode_order,
+            "avoid_repeat_days": programming.avoid_repeat_days,
+        },
+        "media": [
+            {
+                "asset_id": item.asset.asset_id,
+                "duration_seconds": item.asset.duration_seconds,
+            }
+            for item in resolved.media
+        ],
+    }
+    expected = hashlib.sha256(
+        json.dumps(
+            legacy_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    runtime = ChannelRuntime.open(
+        resolved,
+        RuntimeStore(tmp_path / "runtime.db"),
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    assert runtime.signature == expected
 
 
 def test_runtime_refuses_unknown_media_duration(tmp_path: Path) -> None:

@@ -173,3 +173,52 @@ def test_guide_rejects_invalid_horizons_and_unknown_channels(tmp_path: Path) -> 
 
     with pytest.raises(GuideError, match="unknown channel"):
         service.now_next(99, at=epoch)
+
+
+def test_calendar_guide_shows_fixed_blocks_and_filler_from_runtime_truth(tmp_path: Path) -> None:
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    resolved = build_resolved_channel(
+        tmp_path,
+        [30.0, 60.0],
+        channel_number=18,
+    )
+    fixed_start = epoch + timedelta(seconds=40)
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.2",
+            "channel": 18,
+            "name": "Calendar TV",
+            "sources": [
+                {"path": str(source.path)}
+                for source in resolved.definition.sources
+            ],
+            "programming": {
+                "mode": "calendar",
+                "filler_mode": "sequential",
+                "calendar": [
+                    {
+                        "start_utc": fixed_start.isoformat(),
+                        "asset_id": resolved.media[1].asset.asset_id,
+                    }
+                ],
+            },
+        }
+    )
+    runtime = ChannelRuntime.open(
+        ResolvedChannel(definition=definition, media=resolved.media),
+        RuntimeStore(tmp_path / "guide-runtime.db"),
+        now=epoch,
+    )
+
+    guide = GuideService((runtime,)).horizon(
+        epoch + timedelta(seconds=35),
+        epoch + timedelta(seconds=110),
+        generated_at=epoch + timedelta(seconds=35),
+    )
+    programs = guide.rows[0].programs
+
+    assert [program.display_label for program in programs] == ["01", "01", "00"]
+    assert programs[0].end_utc == fixed_start
+    assert "automatic filler" in programs[0].explanation[1]
+    assert programs[1].start_utc == fixed_start
+    assert "Channel Studio calendar programming" in programs[1].explanation

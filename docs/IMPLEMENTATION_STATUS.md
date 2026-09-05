@@ -244,7 +244,7 @@ Estimated completion:
 
 ### 4. Broadcaster / Management
 
-**Status: safe Channel Builder MVP implemented**
+**Status: safe Classic Builder plus first Channel Studio calendar slice implemented**
 
 Implemented:
 
@@ -260,14 +260,23 @@ Implemented:
 - explicit Edit path with identity lock,
 - `.bak` backup before updates,
 - atomic replace,
-- portable Channel Definition 0.1 YAML in `channels/`,
+- portable Channel Definition 0.1/0.2 YAML in `channels/`,
 - immediate Guide/runtime/numeric-tuning reload,
-- external/LLM authoring documentation.
+- external/LLM authoring documentation,
+- detached Channel Studio drafts,
+- canonical Library media bin,
+- week/month calendar views,
+- draggable fixed blocks and horizontal program timeline,
+- editable sequential/shuffle Auto Fill,
+- automatic filler in calendar gaps,
+- UTC portable starts with local-time presentation,
+- full resolver/runtime validation before Apply.
 
 Still needed:
 
 - Library -> Add to Channel,
-- programming-block editor,
+- recurring schedule templates and copy-week tools,
+- undo/redo and unsaved-draft recovery,
 - weighted rotations,
 - time-of-day schedules,
 - marathons/feature slots,
@@ -278,7 +287,8 @@ Still needed:
 
 Estimated mode completion:
 
-**80-85% of the minimum first-release Broadcaster, with advanced programming intentionally later.**
+**90-95% of the minimum first-release Broadcaster, with recurring and richer
+rule-based programming intentionally later.**
 
 ---
 

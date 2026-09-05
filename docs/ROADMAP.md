@@ -172,7 +172,16 @@ Rich Library work still remaining:
 
 **Goal:** Make the library understandable and the channels programmable without making metadata providers authoritative.
 
-The future visual programming workspace is recorded in the [Channel Studio concept](design/CHANNEL_STUDIO_CONCEPT.md). It complements rather than replaces the existing Channel Builder.
+The first visual programming workspace described by the [Channel Studio
+concept](design/CHANNEL_STUDIO_CONCEPT.md) is implemented. It complements rather
+than replaces the existing Channel Builder.
+
+- [x] Channel Studio detached draft workflow
+- [x] Week/month calendar views
+- [x] Drag/drop fixed media blocks and horizontal program timeline
+- [x] Editable sequential/shuffle Auto Fill
+- [x] Channel Definition 0.2 calendar blocks plus automatic gap filler
+- [ ] Recurring weekly templates and copy-week tools
 
 - [ ] Metadata provider abstraction
 - [ ] File/title matching workflow
@@ -180,7 +189,7 @@ The future visual programming workspace is recorded in the [Channel Studio conce
 - [ ] Manual correction
 - [ ] Metadata overrides
 - [ ] Portable metadata strategy
-- [ ] Time-of-day blocks
+- [x] Absolute clock-time calendar blocks
 - [ ] Weighted rotations
 - [ ] Marathons
 - [ ] Feature/movie slots

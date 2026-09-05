@@ -106,7 +106,10 @@ A basic library scan may still index media without ffprobe. A persistent Broadca
 
 Channel definitions describe durable user intent: channel number, name, source selectors, and programming behavior. They are human-readable and versioned.
 
-Resolved media IDs, wall-clock epochs, current tune state, and viewer positions do not belong inside the portable channel definition.
+Generated resolved-media lists, wall-clock epochs, current tune state, and
+viewer positions do not belong inside the portable channel definition. An
+explicit 0.2 calendar block may deliberately reference one stable Library asset
+ID; that is authored programming intent rather than generated runtime state.
 
 ### Runtime state
 
@@ -128,16 +131,21 @@ This state can be deleted without deleting media. Future Export My Television wo
 
 The programming layer converts a resolved channel into a timed schedule.
 
-Phase 1 implements two deterministic repeating policies:
+The runtime implements two deterministic repeating policies:
 
 - sequential programming in resolved source order,
 - deterministic shuffle derived from stable asset identities.
 
 Every eligible shuffle item appears once before the cycle repeats. `avoid_repeat_days` is treated as a guarantee: if the eligible media duration cannot satisfy the requested window, the runtime rejects the configuration rather than silently weakening it.
 
-For either policy, indexed positive durations form a repeating timed cycle anchored to a persistent UTC schedule epoch.
+For either policy, indexed positive durations form a repeating timed cycle
+anchored to a persistent UTC schedule epoch. Channel Definition 0.2 adds fixed
+UTC calendar blocks. Those blocks override the cycle at their declared times;
+the selected sequential or shuffle cycle fills every uncovered interval. The
+Guide and playback session read this combined timeline from `ChannelRuntime`.
 
-Time-of-day blocks, weighted rotations, marathons, feature slots, and seasonal rules remain later broadcaster-tool work.
+Recurring templates, weighted rotations, marathons, feature slots, and seasonal
+rules remain later broadcaster-tool work.
 
 ## Broadcast Clock
 
@@ -168,6 +176,7 @@ A persistent channel schedule is fingerprinted from the inputs that define its c
 - programming policy,
 - stable asset IDs,
 - indexed durations.
+- fixed calendar starts and their stable asset IDs for 0.2 channels.
 
 Sequential schedules preserve effective source order. Shuffle schedules derive their order from stable identities so path movement does not silently mutate the shuffled schedule.
 

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SCHEMA_VERSIONS = {"0.1"}
-SUPPORTED_PROGRAMMING_MODES = {"sequential", "shuffle"}
+SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2"}
+SUPPORTED_PROGRAMMING_MODES = {"sequential", "shuffle", "calendar"}
 TOP_LEVEL_KEYS = {
     "schema_version",
     "channel",
@@ -27,10 +28,20 @@ class SourceDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class CalendarBlockDefinition:
+    """One fixed UTC program start in a Studio-authored calendar."""
+
+    start_utc: datetime
+    asset_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProgrammingDefinition:
     mode: str
     preserve_episode_order: bool = False
     avoid_repeat_days: int = 0
+    filler_mode: str = "sequential"
+    calendar: tuple[CalendarBlockDefinition, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +97,7 @@ class ChannelDefinition:
         for index, item in enumerate(raw_sources):
             if not isinstance(item, dict) or set(item) != {"path"}:
                 raise ChannelValidationError(
-                    f"sources[{index}] must contain exactly one 'path' field in schema 0.1"
+                    f"sources[{index}] must contain exactly one 'path' field"
                 )
             path_value = item["path"]
             if not isinstance(path_value, str) or not path_value.strip():
@@ -97,7 +108,13 @@ class ChannelDefinition:
         if not isinstance(raw_programming, dict):
             raise ChannelValidationError("programming must be a mapping")
 
-        allowed_programming = {"mode", "preserve_episode_order", "avoid_repeat_days"}
+        allowed_programming = {
+            "mode",
+            "preserve_episode_order",
+            "avoid_repeat_days",
+        }
+        if version == "0.2":
+            allowed_programming.update({"filler_mode", "calendar"})
         unknown_programming = set(raw_programming) - allowed_programming
         if unknown_programming:
             names = ", ".join(sorted(unknown_programming))
@@ -107,6 +124,10 @@ class ChannelDefinition:
         if mode not in SUPPORTED_PROGRAMMING_MODES:
             raise ChannelValidationError(
                 f"programming.mode must be one of {sorted(SUPPORTED_PROGRAMMING_MODES)}"
+            )
+        if version == "0.1" and mode == "calendar":
+            raise ChannelValidationError(
+                "calendar programming requires schema_version '0.2'"
             )
 
         preserve = raw_programming.get("preserve_episode_order", False)
@@ -120,6 +141,72 @@ class ChannelDefinition:
             or avoid_repeat_days < 0
         ):
             raise ChannelValidationError("programming.avoid_repeat_days must be a non-negative integer")
+
+        filler_mode = raw_programming.get("filler_mode", "sequential")
+        if filler_mode not in {"sequential", "shuffle"}:
+            raise ChannelValidationError(
+                "programming.filler_mode must be 'sequential' or 'shuffle'"
+            )
+
+        raw_calendar = raw_programming.get("calendar", [])
+        if not isinstance(raw_calendar, list):
+            raise ChannelValidationError("programming.calendar must be a list")
+        if mode != "calendar" and raw_calendar:
+            raise ChannelValidationError(
+                "programming.calendar is only valid when mode is 'calendar'"
+            )
+        if mode == "calendar" and not raw_calendar:
+            raise ChannelValidationError(
+                "calendar programming requires at least one calendar block"
+            )
+        if len(raw_calendar) > 10000:
+            raise ChannelValidationError(
+                "programming.calendar cannot contain more than 10000 blocks"
+            )
+
+        calendar: list[CalendarBlockDefinition] = []
+        seen_starts: set[datetime] = set()
+        for index, item in enumerate(raw_calendar):
+            if not isinstance(item, dict) or set(item) != {"start_utc", "asset_id"}:
+                raise ChannelValidationError(
+                    f"programming.calendar[{index}] must contain exactly "
+                    "'start_utc' and 'asset_id'"
+                )
+            start_text = item["start_utc"]
+            if not isinstance(start_text, str) or not start_text.strip():
+                raise ChannelValidationError(
+                    f"programming.calendar[{index}].start_utc must be an ISO timestamp"
+                )
+            try:
+                start = datetime.fromisoformat(start_text.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ChannelValidationError(
+                    f"programming.calendar[{index}].start_utc must be an ISO timestamp"
+                ) from exc
+            if start.tzinfo is None or start.utcoffset() is None:
+                raise ChannelValidationError(
+                    f"programming.calendar[{index}].start_utc must include a timezone"
+                )
+            start = start.astimezone(timezone.utc)
+            if start in seen_starts:
+                raise ChannelValidationError(
+                    f"programming.calendar has duplicate start time {start.isoformat()}"
+                )
+
+            asset_id = item["asset_id"]
+            if not isinstance(asset_id, str) or not asset_id.strip():
+                raise ChannelValidationError(
+                    f"programming.calendar[{index}].asset_id must be a non-empty string"
+                )
+            calendar.append(
+                CalendarBlockDefinition(
+                    start_utc=start,
+                    asset_id=asset_id.strip(),
+                )
+            )
+            seen_starts.add(start)
+
+        calendar.sort(key=lambda block: block.start_utc)
 
         raw_presentation = raw.get("presentation", {})
         if not isinstance(raw_presentation, dict):
@@ -142,6 +229,8 @@ class ChannelDefinition:
                 mode=mode,
                 preserve_episode_order=preserve,
                 avoid_repeat_days=avoid_repeat_days,
+                filler_mode=filler_mode,
+                calendar=tuple(calendar),
             ),
             presentation=PresentationDefinition(number_width=number_width),
         )

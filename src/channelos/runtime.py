@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .library import IndexedMedia
+from .models import CalendarBlockDefinition
 from .resolve import ResolvedChannel
 from .storage import (
     SQLITE_BUSY_TIMEOUT_MS,
@@ -69,6 +71,7 @@ class BroadcastSelection:
     program_started_at: datetime
     program_ends_at: datetime
     cycle_index: int
+    origin: str = "cycle"
 
     @property
     def media(self) -> IndexedMedia:
@@ -150,6 +153,105 @@ class SequentialTimeline:
         )
 
 
+class CalendarTimeline:
+    """Fixed Studio calendar blocks with the normal channel cycle as filler."""
+
+    def __init__(
+        self,
+        media: tuple[IndexedMedia, ...],
+        filler_media: tuple[IndexedMedia, ...],
+        calendar: tuple[CalendarBlockDefinition, ...],
+    ) -> None:
+        self.filler = SequentialTimeline(filler_media)
+        self.cycle_duration_seconds = self.filler.cycle_duration_seconds
+        by_asset = {item.asset.asset_id: item for item in media}
+
+        programs: list[ScheduledProgram] = []
+        starts: list[datetime] = []
+        ends: list[datetime] = []
+        previous_end: datetime | None = None
+        for index, block in enumerate(calendar):
+            try:
+                item = by_asset[block.asset_id]
+            except KeyError as exc:
+                raise ChannelRuntimeError(
+                    "calendar block references media that is not online or is "
+                    f"outside the channel sources: {block.asset_id}"
+                ) from exc
+            duration = item.asset.duration_seconds
+            if duration is None or duration <= 0:
+                raise ChannelRuntimeError(
+                    "Broadcast Clock requires positive media durations. "
+                    f"Re-scan before scheduling: {item.location.path}"
+                )
+            start = require_aware_utc(block.start_utc)
+            end = start + timedelta(seconds=float(duration))
+            if previous_end is not None and start < previous_end:
+                raise ChannelRuntimeError(
+                    "calendar blocks overlap; move or remove the block beginning "
+                    f"at {start.isoformat()}"
+                )
+            programs.append(
+                ScheduledProgram(
+                    media=item,
+                    index=index,
+                    duration_seconds=float(duration),
+                )
+            )
+            starts.append(start)
+            ends.append(end)
+            previous_end = end
+
+        if not programs:
+            raise ChannelRuntimeError(
+                "calendar programming requires at least one fixed block"
+            )
+        self.programs = tuple(programs)
+        self._starts = tuple(starts)
+        self._ends = tuple(ends)
+
+    def selection_at(self, epoch: datetime, at: datetime) -> BroadcastSelection:
+        epoch_utc = require_aware_utc(epoch)
+        at_utc = require_aware_utc(at)
+        insertion = bisect_right(self._starts, at_utc)
+        previous_index = insertion - 1
+
+        if previous_index >= 0 and at_utc < self._ends[previous_index]:
+            program = self.programs[previous_index]
+            start = self._starts[previous_index]
+            return BroadcastSelection(
+                program=program,
+                offset_seconds=(at_utc - start).total_seconds(),
+                program_started_at=start,
+                program_ends_at=self._ends[previous_index],
+                cycle_index=previous_index,
+                origin="calendar",
+            )
+
+        gap_anchor = (
+            self._ends[previous_index]
+            if previous_index >= 0
+            else epoch_utc
+        )
+        filler = self.filler.selection_at(gap_anchor, at_utc)
+        next_start = (
+            self._starts[insertion]
+            if insertion < len(self._starts)
+            else None
+        )
+        filler_end = filler.program_ends_at
+        if next_start is not None and filler_end > next_start:
+            filler_end = next_start
+        return BroadcastSelection(
+            program=filler.program,
+            offset_seconds=filler.offset_seconds,
+            program_started_at=filler.program_started_at,
+            program_ends_at=filler_end,
+            cycle_index=filler.cycle_index,
+            origin="filler",
+        )
+
+
 def deterministic_shuffle_order(channel: ResolvedChannel) -> tuple[IndexedMedia, ...]:
     """Return a stable asset permutation independent of paths and process randomness."""
 
@@ -193,13 +295,54 @@ def schedule_signature(channel: ResolvedChannel) -> str:
     if programming.mode == "shuffle":
         signature_media = tuple(sorted(channel.media, key=lambda item: item.asset.asset_id))
 
+    # Keep the exact schema-2 payload for legacy 0.1 channels. Adding Channel
+    # Studio must not re-anchor every existing Broadcast Clock on upgrade.
+    if programming.mode != "calendar":
+        payload = {
+            "schema": 2,
+            "channel": channel.definition.channel,
+            "programming": {
+                "mode": programming.mode,
+                "preserve_episode_order": programming.preserve_episode_order,
+                "avoid_repeat_days": programming.avoid_repeat_days,
+            },
+            "media": [
+                {
+                    "asset_id": item.asset.asset_id,
+                    "duration_seconds": item.asset.duration_seconds,
+                }
+                for item in signature_media
+            ],
+        }
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    if programming.filler_mode == "shuffle":
+        signature_media = tuple(
+            sorted(channel.media, key=lambda item: item.asset.asset_id)
+        )
+
     payload = {
-        "schema": 2,
+        "schema": 3,
         "channel": channel.definition.channel,
         "programming": {
             "mode": programming.mode,
             "preserve_episode_order": programming.preserve_episode_order,
             "avoid_repeat_days": programming.avoid_repeat_days,
+            "filler_mode": programming.filler_mode,
+            "calendar": [
+                {
+                    "start_utc": block.start_utc.isoformat(
+                        timespec="microseconds"
+                    ),
+                    "asset_id": block.asset_id,
+                }
+                for block in programming.calendar
+            ],
         },
         "media": [
             {
@@ -657,7 +800,7 @@ class RuntimeStore:
 @dataclass(frozen=True, slots=True)
 class ChannelRuntime:
     channel: ResolvedChannel
-    timeline: SequentialTimeline
+    timeline: SequentialTimeline | CalendarTimeline
     epoch_utc: datetime
     signature: str
 
@@ -674,14 +817,34 @@ class ChannelRuntime:
             ordered_media = channel.media
         elif programming.mode == "shuffle":
             ordered_media = deterministic_shuffle_order(channel)
+        elif programming.mode == "calendar":
+            if programming.filler_mode == "shuffle":
+                ordered_media = deterministic_shuffle_order(channel)
+            else:
+                ordered_media = channel.media
         else:
             raise ChannelRuntimeError(
                 f"unsupported programming mode for Broadcast Clock: {programming.mode!r}"
             )
 
-        timeline = SequentialTimeline(ordered_media)
-        if programming.mode == "shuffle":
-            _validate_shuffle_repeat_window(timeline, programming.avoid_repeat_days)
+        if programming.mode == "calendar":
+            timeline = CalendarTimeline(
+                channel.media,
+                ordered_media,
+                programming.calendar,
+            )
+            if programming.filler_mode == "shuffle":
+                _validate_shuffle_repeat_window(
+                    timeline.filler,
+                    programming.avoid_repeat_days,
+                )
+        else:
+            timeline = SequentialTimeline(ordered_media)
+            if programming.mode == "shuffle":
+                _validate_shuffle_repeat_window(
+                    timeline,
+                    programming.avoid_repeat_days,
+                )
 
         signature = schedule_signature(channel)
         persisted = store.ensure_channel(

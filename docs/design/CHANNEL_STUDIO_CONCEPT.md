@@ -1,7 +1,9 @@
 # Channel Studio Concept
 
-**Status:** Recorded product direction; not an implementation specification  
-**Implementation:** Not started  
+**Status:** First calendar implementation landed; longer-term design continues
+
+**Implementation:** Week/month calendar Studio, media bin, timeline, and Auto Fill
+
 **Existing Channel Builder:** Must remain available
 
 ## Purpose
@@ -115,34 +117,39 @@ The existing ChannelOS source-based channel system is already conceptually close
 9. A simpler editor must never silently erase Studio features it cannot represent.
 10. Existing portable YAML channel definitions remain a compatibility boundary unless a versioned schema change is intentionally designed.
 
-## First implementation boundary
+## Implemented first boundary
 
-A sensible first Channel Studio slice would support only what ChannelOS already understands:
+The first Channel Studio slice now supports:
 
 - create or open a channel,
 - edit channel number and name,
-- visually arrange an ordered sequential cycle,
-- represent an existing shuffle/source pool,
+- week and month calendar views,
+- fixed clock-based blocks stored as stable Library asset IDs,
+- sequential or shuffle filler for all uncovered time,
+- Auto Fill that generates real editable blocks for the visible range,
 - drag exact Library assets into the draft,
 - reorder and remove blocks,
 - validate before saving,
-- preview durations and the resulting repeating cycle,
+- preview durations and exact local calendar times,
 - return to the Classic Builder without losing representable information.
 
-Time-of-day programming, weekly schedules, weighted rotations, bumpers, virtual in/out points, marathons, nested collections, and multiple editor lanes can remain later work.
+Recurring weekly templates, weighted rotations, bumpers, virtual in/out points,
+marathons, nested collections, and multiple editor lanes remain later work.
 
-## Important unsolved design questions
+## Decisions made for the first implementation
 
-Before implementation, decide:
+- Studio writes the explicit portable Channel Definition `0.2` calendar extension.
+- Applying a changed calendar changes the schedule signature and uses the normal
+  runtime re-anchor/Viewer Clock invalidation behavior.
+- Classic Builder remains available, while Studio is the safe editor for a
+  calendar channel so advanced blocks are not silently erased.
+- Fixed blocks reference stable Library asset IDs; source roots remain the
+  dynamic filler pool.
+- The initial canvas is a clock-based week/month horizon with one timeline lane.
+- Opening, browsing, Auto Fill, and drag/drop remain draft-only. Apply is explicit.
 
-- whether Studio edits the existing YAML schema directly or requires a versioned extension,
-- how applying a changed schedule affects the current channel epoch and viewer expectations,
-- how Classic Builder behaves when it opens a channel containing advanced Studio-only blocks,
-- which Library groupings are durable enough to become dynamic sources,
-- whether preview shows one repeating cycle, a clock-based schedule horizon, or both,
-- how undo/redo and unsaved-change recovery should work.
-
-These questions should be resolved in a design-first branch before building the full interface.
+Undo/redo, durable unsaved-draft recovery, and recurring calendar templates are
+still intentionally unresolved.
 
 ## Product intent in one sentence
 

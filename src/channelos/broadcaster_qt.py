@@ -501,6 +501,9 @@ class BroadcasterCouchController(CouchController):
                 television.tune(television.current_channel, return_behavior="live")
 
         actions = CouchActions(service, television)
+        actions.set_audio_output_device(
+            self._settings.audio_output_device_id or None
+        )
         if self._video_surface is not None:
             actions.attach_video_surface(self._video_surface)
 
@@ -524,6 +527,45 @@ class BroadcasterCouchController(CouchController):
     def previewChannel(self, editor: dict[str, object]) -> dict[str, object]:
         try:
             return self._broadcaster.preview(self._editor_mapping(editor))
+        except (
+            BroadcasterError,
+            ChannelRuntimeError,
+            ChannelValidationError,
+            OSError,
+            ValueError,
+        ) as exc:
+            return self._error(exc)
+
+    @Slot(int, result="QVariantMap")
+    def loadChannelStudio(self, channel_number: int) -> dict[str, object]:
+        try:
+            draft = self._broadcaster.studio_draft(int(channel_number))
+            return {
+                "ok": True,
+                "message": "Studio draft loaded. Live television is unchanged.",
+                "draft": draft,
+            }
+        except (
+            BroadcasterError,
+            ChannelValidationError,
+            OSError,
+            ValueError,
+        ) as exc:
+            return self._error(exc)
+
+    @Slot("QVariantMap", str, str, result="QVariantMap")
+    def autoFillStudio(
+        self,
+        editor: dict[str, object],
+        start_utc: str,
+        end_utc: str,
+    ) -> dict[str, object]:
+        try:
+            return self._broadcaster.auto_fill_studio(
+                self._editor_mapping(editor),
+                start_utc,
+                end_utc,
+            )
         except (
             BroadcasterError,
             ChannelRuntimeError,
@@ -604,15 +646,18 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         super().__init__(controller, window)
         self._library_item: QQuickItem | None = None
         self._broadcaster_item: QQuickItem | None = None
+        self._studio_item: QQuickItem | None = None
 
     def bind_management_overlays(
         self,
         *,
         library_item: QQuickItem,
         broadcaster_item: QQuickItem,
+        studio_item: QQuickItem | None = None,
     ) -> None:
         self._library_item = library_item
         self._broadcaster_item = broadcaster_item
+        self._studio_item = studio_item
 
     @staticmethod
     def _invoke_overlay(item: QQuickItem | None, intent: ControlIntent) -> bool:
@@ -651,6 +696,8 @@ class BroadcasterKeyFilter(CouchKeyFilter):
             return self._invoke_overlay(self._library_item, command.intent)
         if screen == "broadcaster" and command.intent in overlay_intents:
             return self._invoke_overlay(self._broadcaster_item, command.intent)
+        if screen == "studio" and command.intent in overlay_intents:
+            return self._invoke_overlay(self._studio_item, command.intent)
         return super().dispatch_command(command)
 
     @staticmethod
@@ -675,7 +722,8 @@ class BroadcasterKeyFilter(CouchKeyFilter):
     def eventFilter(self, watched, event) -> bool:
         if (
             event.type() == QEvent.Type.KeyPress
-            and str(self._window.property("screen")) in {"broadcaster", "library"}
+            and str(self._window.property("screen"))
+            in {"broadcaster", "library", "studio"}
         ):
             command = self.command_for_key(event.key())
             if (
@@ -800,6 +848,12 @@ def run_qt(
         "BroadcasterScreen.qml",
         z=90,
     )
+    studio_item = _attach_overlay(
+        engine,
+        window,
+        "ChannelStudioScreen.qml",
+        z=92,
+    )
     settings_item = _attach_overlay(
         engine,
         window,
@@ -811,6 +865,7 @@ def run_qt(
     key_filter.bind_management_overlays(
         library_item=library_item,
         broadcaster_item=broadcaster_item,
+        studio_item=studio_item,
     )
     app.installEventFilter(key_filter)
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
@@ -820,6 +875,7 @@ def run_qt(
     window._channelos_video_window = video_window
     window._channelos_library_item = library_item
     window._channelos_broadcaster_item = broadcaster_item
+    window._channelos_studio_item = studio_item
     window._channelos_settings_item = settings_item
     window._channelos_component_engine = engine
 

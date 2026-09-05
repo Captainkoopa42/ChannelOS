@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -51,7 +52,7 @@ class ChannelSaveResult:
 
 
 def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
-    """Serialize the public 0.1 channel contract without runtime-only state."""
+    """Serialize the portable channel contract without runtime-only state."""
 
     mapping: dict[str, Any] = {
         "schema_version": definition.schema_version,
@@ -70,6 +71,17 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
         "preserve_episode_order": definition.programming.preserve_episode_order,
         "avoid_repeat_days": definition.programming.avoid_repeat_days,
     }
+    if definition.programming.mode == "calendar":
+        mapping["programming"]["filler_mode"] = (
+            definition.programming.filler_mode
+        )
+        mapping["programming"]["calendar"] = [
+            {
+                "start_utc": block.start_utc.isoformat(),
+                "asset_id": block.asset_id,
+            }
+            for block in definition.programming.calendar
+        ]
     mapping["presentation"] = {
         "number_width": definition.presentation.number_width,
     }
@@ -108,14 +120,31 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
         if str(path).strip()
     ]
 
+    mode = str(raw.get("mode", "sequential")).strip().lower()
+    calendar_raw = raw.get("calendarBlocks", [])
+    if not isinstance(calendar_raw, (list, tuple)):
+        raise ChannelValidationError("calendarBlocks must be a list")
+    calendar = []
+    for index, block in enumerate(calendar_raw):
+        if not isinstance(block, dict):
+            raise ChannelValidationError(
+                f"calendarBlocks[{index}] must be a mapping"
+            )
+        calendar.append(
+            {
+                "start_utc": str(block.get("startUtc", "")).strip(),
+                "asset_id": str(block.get("assetId", "")).strip(),
+            }
+        )
+
     mapping = {
-        "schema_version": "0.1",
+        "schema_version": "0.2" if mode == "calendar" else "0.1",
         "channel": _coerce_int(raw.get("channel"), "channel"),
         "name": str(raw.get("name", "")),
         "description": str(raw.get("description", "")).strip() or None,
         "sources": sources,
         "programming": {
-            "mode": str(raw.get("mode", "sequential")).strip().lower(),
+            "mode": mode,
             "preserve_episode_order": bool(
                 raw.get("preserveEpisodeOrder", False)
             ),
@@ -131,6 +160,11 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
             ),
         },
     }
+    if mode == "calendar":
+        mapping["programming"]["filler_mode"] = str(
+            raw.get("fillerMode", "sequential")
+        ).strip().lower()
+        mapping["programming"]["calendar"] = calendar
     return ChannelDefinition.from_mapping(mapping)
 
 
@@ -249,6 +283,7 @@ class BroadcasterService:
             channels.append(
                 {
                     "channelNumber": definition.channel,
+                    "schemaVersion": definition.schema_version,
                     "displayNumber": definition.display_number,
                     "name": definition.name,
                     "description": definition.description or "",
@@ -258,6 +293,10 @@ class BroadcasterService:
                     ),
                     "avoidRepeatDays": (
                         definition.programming.avoid_repeat_days
+                    ),
+                    "fillerMode": definition.programming.filler_mode,
+                    "calendarBlockCount": len(
+                        definition.programming.calendar
                     ),
                     "numberWidth": definition.presentation.number_width,
                     "sources": [
@@ -278,6 +317,190 @@ class BroadcasterService:
             "managedDirectory": str(
                 self._normalize_path(self.managed_directory)
             ),
+        }
+
+    def studio_media(self) -> list[dict[str, Any]]:
+        """Return one online Library card per stable asset for Channel Studio."""
+
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for media in self.library.list_online_media():
+            if media.asset.asset_id in seen:
+                continue
+            seen.add(media.asset.asset_id)
+            items.append(
+                {
+                    "assetId": media.asset.asset_id,
+                    "title": media.location.path.stem,
+                    "path": str(media.location.path),
+                    "sourceRoot": str(media.location.source_root),
+                    "durationSeconds": float(
+                        media.asset.duration_seconds or 0.0
+                    ),
+                    "containerFormat": str(
+                        media.asset.container_format or "media"
+                    ).upper(),
+                }
+            )
+        return items
+
+    def studio_draft(self, channel_number: int = 0) -> dict[str, Any]:
+        """Build a detached Studio draft; opening it never alters live TV."""
+
+        number = int(channel_number)
+        if number <= 0:
+            sources = list(self.source_options())
+            return {
+                "editingChannelNumber": 0,
+                "channel": self.suggested_channel_number(),
+                "name": "",
+                "description": "",
+                "numberWidth": 3,
+                "fillerMode": "sequential",
+                "avoidRepeatDays": 0,
+                "sources": sources,
+                "calendarBlocks": [],
+                "media": self.studio_media(),
+            }
+
+        try:
+            definition = self._records[number].definition
+        except KeyError as exc:
+            raise ChannelNotFoundError(
+                f"channel {number} is no longer in the active lineup"
+            ) from exc
+
+        media_by_id = {
+            item["assetId"]: item
+            for item in self.studio_media()
+        }
+        blocks: list[dict[str, Any]] = []
+        for block in definition.programming.calendar:
+            media = media_by_id.get(block.asset_id, {})
+            duration = float(media.get("durationSeconds", 0.0))
+            blocks.append(
+                {
+                    "assetId": block.asset_id,
+                    "title": str(media.get("title", "Unavailable media")),
+                    "path": str(media.get("path", "")),
+                    "sourceRoot": str(media.get("sourceRoot", "")),
+                    "durationSeconds": duration,
+                    "startUtc": block.start_utc.isoformat(),
+                    "endUtc": (
+                        block.start_utc + timedelta(seconds=duration)
+                    ).isoformat(),
+                }
+            )
+
+        return {
+            "editingChannelNumber": definition.channel,
+            "channel": definition.channel,
+            "name": definition.name,
+            "description": definition.description or "",
+            "numberWidth": definition.presentation.number_width,
+            "fillerMode": (
+                definition.programming.filler_mode
+                if definition.programming.mode == "calendar"
+                else definition.programming.mode
+            ),
+            "avoidRepeatDays": definition.programming.avoid_repeat_days,
+            "sources": [str(source.path) for source in definition.sources],
+            "calendarBlocks": blocks,
+            "media": list(media_by_id.values()),
+        }
+
+    @staticmethod
+    def _studio_timestamp(value: str, field: str) -> datetime:
+        try:
+            parsed = datetime.fromisoformat(
+                str(value).strip().replace("Z", "+00:00")
+            )
+        except ValueError as exc:
+            raise ChannelValidationError(
+                f"{field} must be an ISO timestamp"
+            ) from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ChannelValidationError(f"{field} must include a timezone")
+        return parsed.astimezone(timezone.utc)
+
+    def auto_fill_studio(
+        self,
+        raw: dict[str, Any],
+        start_text: str,
+        end_text: str,
+    ) -> dict[str, Any]:
+        """Generate editable calendar blocks from the selected channel sources."""
+
+        start = self._studio_timestamp(start_text, "calendar start")
+        end = self._studio_timestamp(end_text, "calendar end")
+        if end <= start:
+            raise ChannelValidationError("calendar end must be after start")
+        if end - start > timedelta(days=62):
+            raise ChannelValidationError(
+                "Auto Fill is limited to 62 days at a time"
+            )
+
+        pool_editor = dict(raw)
+        filler_mode = str(raw.get("fillerMode", "sequential")).lower()
+        pool_editor["channel"] = raw.get("channel") or self.suggested_channel_number()
+        pool_editor["name"] = str(raw.get("name", "")).strip() or "Studio Draft"
+        pool_editor["mode"] = filler_mode
+        pool_editor["calendarBlocks"] = []
+        definition = definition_from_editor(pool_editor)
+        resolved = self._resolve_and_validate(definition)
+        if filler_mode == "shuffle":
+            ordered = deterministic_shuffle_order(resolved)
+        else:
+            ordered = resolved.media
+
+        blocks: list[dict[str, Any]] = []
+        cursor = start
+        index = 0
+        while cursor < end and len(blocks) < 10000:
+            media = ordered[index % len(ordered)]
+            duration = float(media.asset.duration_seconds or 0.0)
+            if duration <= 0:
+                raise BroadcasterError(
+                    f"Auto Fill requires a positive duration for {media.location.path}"
+                )
+            block_end = cursor + timedelta(seconds=duration)
+            if block_end > end:
+                break
+            blocks.append(
+                {
+                    "assetId": media.asset.asset_id,
+                    "title": media.location.path.stem,
+                    "path": str(media.location.path),
+                    "sourceRoot": str(media.location.source_root),
+                    "durationSeconds": duration,
+                    "startUtc": cursor.isoformat(),
+                    "endUtc": block_end.isoformat(),
+                }
+            )
+            cursor = block_end
+            index += 1
+
+        hit_limit = cursor < end and len(blocks) >= 10000
+        message = (
+            f"Auto-filled {len(blocks)} editable program blocks from "
+            f"{start.date().isoformat()} through {end.date().isoformat()}; "
+        )
+        if hit_limit:
+            message += (
+                "the 10000-block safety limit was reached and filler covers "
+                "the remaining time"
+            )
+        else:
+            message += "the normal filler covers any short remainder"
+
+        return {
+            "ok": True,
+            "message": message,
+            "startUtc": start.isoformat(),
+            "endUtc": end.isoformat(),
+            "completeThroughUtc": cursor.isoformat(),
+            "hitBlockLimit": hit_limit,
+            "blocks": blocks,
         }
 
     def _resolve_and_validate(
@@ -311,21 +534,39 @@ class BroadcasterService:
 
         if definition.programming.mode == "shuffle":
             ordered = deterministic_shuffle_order(resolved)
+        elif definition.programming.mode == "calendar":
+            by_asset = {
+                media.asset.asset_id: media
+                for media in resolved.media
+            }
+            ordered = tuple(
+                by_asset[block.asset_id]
+                for block in definition.programming.calendar
+            )
         else:
             ordered = resolved.media
 
         items: list[dict[str, Any]] = []
-        for media in ordered[: max(1, int(limit))]:
-            items.append(
-                {
-                    "assetId": media.asset.asset_id,
-                    "title": media.location.path.stem,
-                    "path": str(media.location.path),
-                    "durationSeconds": float(
-                        media.asset.duration_seconds or 0.0
-                    ),
-                }
-            )
+        calendar_blocks = definition.programming.calendar
+        for index, media in enumerate(ordered[: max(1, int(limit))]):
+            item = {
+                "assetId": media.asset.asset_id,
+                "title": media.location.path.stem,
+                "path": str(media.location.path),
+                "durationSeconds": float(
+                    media.asset.duration_seconds or 0.0
+                ),
+            }
+            if definition.programming.mode == "calendar":
+                start = calendar_blocks[index].start_utc
+                item["startUtc"] = start.isoformat()
+                item["endUtc"] = (
+                    start
+                    + timedelta(
+                        seconds=float(media.asset.duration_seconds or 0.0)
+                    )
+                ).isoformat()
+            items.append(item)
 
         return {
             "ok": True,

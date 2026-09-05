@@ -74,6 +74,20 @@ def _explanation(runtime: ChannelRuntime, selection: BroadcastSelection) -> tupl
     programming = runtime.channel.definition.programming
     position = selection.program.index + 1
     count = len(runtime.timeline.programs)
+    if programming.mode == "calendar":
+        if selection.origin == "calendar":
+            return (
+                f"Channel {runtime.channel_number}",
+                "Channel Studio calendar programming",
+                f"fixed calendar block {position} of {count}",
+                f"asset {selection.media.asset.asset_id}",
+            )
+        return (
+            f"Channel {runtime.channel_number}",
+            f"{programming.filler_mode} automatic filler",
+            "fills time not occupied by a fixed calendar block",
+            f"asset {selection.media.asset.asset_id}",
+        )
     if programming.mode == "shuffle":
         return (
             f"Channel {runtime.channel_number}",

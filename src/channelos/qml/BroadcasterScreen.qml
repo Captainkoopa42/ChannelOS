@@ -133,6 +133,10 @@ Item {
             return
 
         var channel = selectedChannel()
+        if (String(channel.mode) === "calendar") {
+            openStudio(channel.channelNumber)
+            return
+        }
         editorMode = "edit"
         editingChannelNumber = Number(channel.channelNumber)
         resetFeedback()
@@ -152,6 +156,13 @@ Item {
             addDraftSource(channelSources[i])
 
         channelNameField.forceActiveFocus()
+    }
+
+    function openStudio(channelNumber) {
+        if (!broadcasterRoot.hostWindow)
+            return
+        broadcasterRoot.hostWindow.studioChannelNumber = Number(channelNumber || 0)
+        broadcasterRoot.hostWindow.screen = "studio"
     }
 
     function cancelEditor() {
@@ -328,6 +339,14 @@ Item {
                             selectedChannelIndex + 1)
                 event.accepted = true
             } else if (event.key === Qt.Key_N) {
+                openStudio(0)
+                event.accepted = true
+            } else if (event.key === Qt.Key_S) {
+                openStudio(channels.length
+                           ? selectedChannel().channelNumber
+                           : 0)
+                event.accepted = true
+            } else if (event.key === Qt.Key_C) {
                 beginCreate()
                 event.accepted = true
             } else if (event.key === Qt.Key_E
@@ -588,15 +607,33 @@ Item {
                     spacing: 12
 
                     Button {
-                        text: "Create Channel"
-                        width: (parent.width - 12) / 2
+                        text: "New in Studio"
+                        width: (parent.width - 36) / 4
+                        onClicked: broadcasterRoot.openStudio(0)
+                    }
+
+                    Button {
+                        text: "Open Studio"
+                        width: (parent.width - 36) / 4
+                        enabled: broadcasterRoot.channels.length > 0
+                        onClicked: broadcasterRoot.openStudio(
+                                       broadcasterRoot.selectedChannel().channelNumber)
+                    }
+
+                    Button {
+                        text: "Classic New"
+                        width: (parent.width - 36) / 4
                         onClicked: broadcasterRoot.beginCreate()
                     }
 
                     Button {
-                        text: "Edit Existing"
-                        width: (parent.width - 12) / 2
+                        text: broadcasterRoot.channels.length
+                              && broadcasterRoot.selectedChannel().mode === "calendar"
+                              ? "Studio Channel"
+                              : "Classic Edit"
+                        width: (parent.width - 36) / 4
                         enabled: broadcasterRoot.channels.length > 0
+                                 && broadcasterRoot.selectedChannel().mode !== "calendar"
                         onClicked: broadcasterRoot.beginEdit()
                     }
                 }
@@ -1303,7 +1340,9 @@ Item {
                 spacing: 30
 
                 Text { text: "UP/DOWN  Select Channel"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
-                Text { text: "N  New Channel"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
+                Text { text: "N  New Studio Channel"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
+                Text { text: "S  Open Studio"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
+                Text { text: "C  Classic New"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "E / ENTER  Edit"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "TAB  Fields"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "CTRL+S  Save"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }

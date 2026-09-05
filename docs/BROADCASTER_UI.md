@@ -1,6 +1,7 @@
 # ChannelOS Broadcaster / Channel Builder
 
-**Status:** First functional management slice  
+**Status:** Classic Builder plus first functional Channel Studio slice
+
 **Product mode:** Broadcaster / Management
 
 ## Product rule
@@ -28,15 +29,21 @@ ChannelRuntime / Broadcast Clock
       +----> Live TV
 ```
 
-## First slice
+## Implemented authoring surfaces
 
-The first Broadcaster slice provides:
+Broadcaster provides two compatible authoring paths:
+
+- **Channel Studio** for calendar programming and visual arrangement,
+- **Classic Edit** for the original compact sequential/shuffle workflow.
+
+Together they provide:
 
 - a real Broadcaster home showing the active lineup,
 - current and next programming projected from the real Guide,
 - mouse interaction inside the management surface,
 - keyboard navigation and text entry,
-- Create Channel,
+- New in Studio and Open Studio,
+- Create Channel through the Classic Builder remains available,
 - explicit Edit Existing Channel,
 - channel name and description,
 - numeric channel identity,
@@ -45,7 +52,14 @@ The first Broadcaster slice provides:
 - source selection from already indexed library roots,
 - real program-order preview before save,
 - immediate Guide/runtime reload after a successful save,
-- portable YAML output using Channel Definition 0.1.
+- a canonical Library media bin,
+- week and month calendar navigation,
+- drag media onto a day,
+- a horizontal video-editor-style program timeline,
+- drag-to-swap, drag-to-move-day, remove, and ±15-minute adjustments,
+- sequential or deterministic-shuffle Auto Fill for a visible week/month,
+- filler programming for every gap left between fixed blocks,
+- portable YAML output using Channel Definition 0.1 or 0.2.
 
 The current couch shell still accepts explicit channel YAML files at startup. Broadcaster-managed definitions are additionally discovered from the configured channel-definition directory, which defaults to:
 
@@ -79,7 +93,7 @@ Renumbering is deliberately not treated as a normal field edit because a channel
 
 Before creating or updating a definition, ChannelOS runs the candidate through:
 
-1. the public Channel Definition 0.1 validator,
+1. the public Channel Definition 0.1/0.2 validator,
 2. the canonical media resolver,
 3. the actual `ChannelRuntime.open` path against a disposable runtime database.
 
@@ -93,11 +107,21 @@ An explicit edit first copies the previous definition to a sibling `.bak` file, 
 
 These protections are not substitutes for future full Export My Television / version history, but they prevent the management UI from casually destroying a working channel definition.
 
-## Program preview
+## Program preview and Studio drafts
 
 Preview does not create a second scheduling engine.
 
 It resolves the candidate definition through the same canonical library and uses the same sequential order or `deterministic_shuffle_order` used by ChannelRuntime. Preview validation uses a disposable RuntimeStore, so previewing does not alter the actual Broadcast Clock or Viewer Clock.
+
+Channel Studio follows the same rule. Opening it loads a detached draft. Auto
+Fill writes real editable fixed blocks into that draft, not a decorative
+calendar cache. Only **Apply to Channel** invokes the normal create/update path.
+Apply validates the complete calendar, writes atomically, preserves the prior
+definition as `.bak` on edit, and reloads the authoritative lineup.
+
+The calendar itself is not a second scheduler. `ChannelRuntime` combines fixed
+0.2 calendar blocks with the existing sequential/shuffle cycle as gap filler.
+The Guide and decoder rollover continue to consume that same runtime truth.
 
 ## Immediate Guide integration
 
@@ -169,7 +193,9 @@ Mouse click        Select/open Broadcaster card
 
 Broadcaster list
 Up / Down          Select channel
-N                  New channel
+N                  New channel in Studio
+S                  Open selected channel in Studio
+C                  New channel in Classic Builder
 E / Enter          Edit selected channel
 Mouse click        Select channel
 Double click       Edit selected channel
@@ -179,6 +205,13 @@ Tab / Shift+Tab    Move through fields
 Mouse              Focus/edit controls
 Ctrl+S             Save
 Esc                Cancel editor / return
+
+Channel Studio
+Mouse drag         Add/move/swap program blocks
+Week / Month       Detailed schedule / calendar overview
+Auto Fill Range    Generate editable fixed blocks
+Ctrl+S             Validate and Apply to Channel
+Esc                Return to Broadcaster
 ```
 
 Text fields, combo boxes, spin boxes, check boxes, source controls, Preview, Save, and Cancel are all normal Qt controls, so mouse and keyboard behavior use the platform UI system rather than a parallel hand-coded text-entry mechanism.
@@ -202,9 +235,9 @@ The following Broadcaster work remains real future work rather than placeholder 
 - Add to Channel from Library,
 - explicit channel renumber workflow,
 - delete/remove channel with confirmation and continuity rules,
-- reorderable/manual programming lists,
-- programming blocks,
-- time-of-day schedules,
+- recurring weekly templates and calendar-copy tools,
+- undo/redo and unsaved-draft recovery,
+- direct clock-time entry and finer timeline snapping,
 - weighted rotations,
 - marathons,
 - feature/movie slots,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -196,3 +197,81 @@ def test_snapshot_lists_external_and_managed_channels_and_indexed_sources(tmp_pa
     assert snapshot["channels"][1]["managed"] is False
     assert snapshot["sourceOptions"] == [str(source)]
     assert snapshot["suggestedChannel"] == 1
+
+
+def test_studio_auto_fill_returns_editable_gapless_blocks(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source, name="Studio TV")
+    raw["fillerMode"] = "sequential"
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=3)
+
+    result = service.auto_fill_studio(raw, start.isoformat(), end.isoformat())
+
+    assert result["ok"] is True
+    assert len(result["blocks"]) == 6
+    assert result["blocks"][0]["startUtc"] == start.isoformat()
+    for left, right in zip(result["blocks"], result["blocks"][1:]):
+        assert left["endUtc"] == right["startUtc"]
+
+
+def test_studio_calendar_roundtrip_and_preview_use_stable_asset_ids(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    managed = tmp_path / "channels"
+    service = BroadcasterService((), managed, library)
+    media = service.studio_media()
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    raw = editor(44, source, name="Prime Time")
+    raw.update(
+        {
+            "mode": "calendar",
+            "fillerMode": "shuffle",
+            "calendarBlocks": [
+                {
+                    "assetId": media[0]["assetId"],
+                    "startUtc": start.isoformat(),
+                },
+                {
+                    "assetId": media[1]["assetId"],
+                    "startUtc": (start + timedelta(seconds=30)).isoformat(),
+                },
+            ],
+        }
+    )
+
+    preview = service.preview(raw)
+    created = service.create(raw)
+    loaded = load_channel(created.record.path)
+    draft = service.studio_draft(44)
+
+    assert preview["mode"] == "calendar"
+    assert preview["items"][0]["assetId"] == media[0]["assetId"]
+    assert loaded.schema_version == "0.2"
+    assert loaded.programming.mode == "calendar"
+    assert loaded.programming.filler_mode == "shuffle"
+    assert [block.asset_id for block in loaded.programming.calendar] == [
+        media[0]["assetId"],
+        media[1]["assetId"],
+    ]
+    assert draft["editingChannelNumber"] == 44
+    assert draft["calendarBlocks"][0]["title"] == "01-alpha"
+
+
+def test_studio_auto_fill_leaves_short_range_remainder_to_filler(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source)
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+
+    result = service.auto_fill_studio(
+        raw,
+        start.isoformat(),
+        (start + timedelta(seconds=75)).isoformat(),
+    )
+
+    assert len(result["blocks"]) == 2
+    assert result["blocks"][-1]["endUtc"] == (
+        start + timedelta(seconds=60)
+    ).isoformat()
+    assert "filler covers any short remainder" in result["message"]

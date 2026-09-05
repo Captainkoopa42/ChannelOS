@@ -41,6 +41,15 @@ class FakeChannelOS(QObject):
         self._settings = {
             "volumePercent": 100,
             "muted": False,
+            "audioOutputDeviceId": "",
+            "audioOutputDeviceName": "System Default",
+            "audioOutputDevices": [
+                {
+                    "deviceId": "",
+                    "name": "System Default",
+                    "available": True,
+                }
+            ],
             "skipBackSeconds": 10,
             "skipForwardSeconds": 30,
             "performanceProfile": "standard",
@@ -89,6 +98,14 @@ class FakeChannelOS(QObject):
     @Slot()
     def refresh(self) -> None:
         self.snapshotChanged.emit()
+
+    @Slot(result="QVariantMap")
+    def refreshAudioOutputDevices(self):
+        return {
+            "ok": True,
+            "message": "Audio outputs refreshed",
+            "settings": self._settings,
+        }
 
     def skipOnDemand(self, delta_seconds: float):
         self.skips.append(float(delta_seconds))

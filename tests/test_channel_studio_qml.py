@@ -25,6 +25,14 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
     assert "channelOS.updateChannel" in qml
     assert "channelOS.createChannel" in qml
     assert "Live television is unchanged until Apply" in qml
+    assert 'function leaveStudio()' in qml
+    assert 'hostWindow.screen = "home"' in qml
+    assert 'function openBroadcaster()' in qml
+    assert 'hostWindow.screen = "broadcaster"' in qml
+    assert 'text: "‹ Home"' in qml
+    assert 'text: "Channels"' in qml
+    assert "enabled: studioSurface.visible" in qml
+    assert "enabled: parent.visible" not in qml
 
 
 def test_broadcaster_keeps_classic_editor_and_routes_to_studio() -> None:

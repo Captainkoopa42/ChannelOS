@@ -548,6 +548,11 @@ Item {
 
     function leaveStudio() {
         if (hostWindow)
+            hostWindow.screen = "home"
+    }
+
+    function openBroadcaster() {
+        if (hostWindow)
             hostWindow.screen = "broadcaster"
     }
 
@@ -576,19 +581,20 @@ Item {
     }
 
     FocusScope {
+        id: studioSurface
         anchors.fill: parent
         visible: studioRoot.hostWindow && studioRoot.hostWindow.screen === "studio"
         focus: visible
 
         Shortcut {
             sequence: "Esc"
-            enabled: parent.visible
+            enabled: studioSurface.visible
             onActivated: studioRoot.leaveStudio()
         }
 
         Shortcut {
             sequence: "Ctrl+S"
-            enabled: parent.visible
+            enabled: studioSurface.visible
             onActivated: studioRoot.applyDraft()
         }
 
@@ -619,8 +625,13 @@ Item {
                     spacing: 12
 
                     Button {
-                        text: "‹ Broadcaster"
+                        text: "‹ Home"
                         onClicked: studioRoot.leaveStudio()
+                    }
+
+                    Button {
+                        text: "Channels"
+                        onClicked: studioRoot.openBroadcaster()
                     }
 
                     ColumnLayout {

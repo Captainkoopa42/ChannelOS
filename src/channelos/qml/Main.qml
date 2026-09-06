@@ -78,6 +78,8 @@ ApplicationWindow {
     // Context properties are cleared during engine teardown. Guarding
     // these bindings keeps shutdown quiet without changing runtime behavior.
     property var playback: channelOS ? channelOS.playback : ({ active: false })
+    readonly property string playbackError:
+        playback && playback.error ? String(playback.error) : ""
     property var homeTelevision: channelOS
                                 ? channelOS.homeTelevision
                                 : ({
@@ -655,9 +657,68 @@ ApplicationWindow {
                    ? homeVideoSlot.height
                    : guideVideoSlot.height)
 
-        visible: fullPresentation || showHomePreview || showGuidePreview
+        visible: (fullPresentation || showHomePreview || showGuidePreview)
+                 && root.playbackError.length === 0
         window: channelOSVideoWindow
         z: 50
+    }
+
+    Window {
+        id: playbackErrorOverlay
+        transientParent: root
+        flags: Qt.Tool
+               | Qt.FramelessWindowHint
+               | Qt.WindowDoesNotAcceptFocus
+               | Qt.WindowTransparentForInput
+        color: "transparent"
+        x: root.x + Math.round((root.width - width) / 2)
+        y: root.y + Math.round((root.height - height) / 2)
+        width: Math.min(760, root.width - 80)
+        height: 210
+        visible: root.visible
+                 && root.visibility !== Window.Minimized
+                 && root.playbackError.length > 0
+                 && (root.screen === "home"
+                     || root.screen === "guide"
+                     || root.screen === "live")
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 12
+            color: "#f20a1725"
+            border.color: root.liveRed
+            border.width: 2
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 24
+                spacing: 12
+
+                Text {
+                    text: "PLAYBACK UNAVAILABLE"
+                    color: root.liveRed
+                    font.pixelSize: 22
+                    font.weight: Font.Bold
+                    font.letterSpacing: 2
+                }
+
+                Text {
+                    width: parent.width
+                    text: root.playbackError
+                    color: root.textPrimary
+                    font.pixelSize: 16
+                    wrapMode: Text.Wrap
+                }
+
+                Text {
+                    width: parent.width
+                    text: "Return Home, restore the file if it moved, and re-scan that Library folder."
+                    color: root.textSecondary
+                    font.pixelSize: 14
+                    wrapMode: Text.Wrap
+                }
+            }
+        }
     }
 
     // Windows-safe television HUD architecture.

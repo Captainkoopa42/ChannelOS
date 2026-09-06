@@ -7,6 +7,7 @@ import pytest
 
 from channelos.library import IndexedMedia, MediaAsset, MediaLocation
 from channelos.models import ChannelDefinition
+from channelos.playback import PlaybackError
 from channelos.resolve import ResolvedChannel
 from channelos.runtime import ChannelRuntime, RuntimeStore, TelevisionRuntime
 from channelos.television import TelevisionSession
@@ -19,6 +20,7 @@ class FakeBackend:
         self.loaded: Path | None = None
         self.position = 0.0
         self.events: list[str] = []
+        self.error_message: str | None = None
 
     def load(self, path):
         self.loaded = Path(path)
@@ -54,6 +56,9 @@ class FakeBackend:
 
     def set_rate(self, rate):
         return None
+
+    def playback_error(self):
+        return self.error_message
 
 
 def make_resolved(tmp_path: Path, number: int, durations: list[float]) -> ResolvedChannel:
@@ -115,6 +120,21 @@ def test_tune_intent_loads_broadcast_asset_and_seeks_to_live_offset(tmp_path: Pa
     assert backend.loaded == tmp_path / "7" / "01.mp4"
     assert backend.position == pytest.approx(12.0)
     assert backend.events == ["load", "play", "seek"]
+
+
+def test_sync_surfaces_asynchronous_decoder_failure_and_allows_reload(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    session, backend = make_session(tmp_path, epoch)
+    session.tune(7, now=epoch)
+    backend.error_message = "decoder failed"
+
+    with pytest.raises(PlaybackError, match="decoder failed"):
+        session.sync(now=epoch + timedelta(seconds=1))
+
+    assert session.loaded_asset_id is None
+    assert session.loaded_program_started_at is None
 
 
 def test_channel_up_and_previous_follow_independent_broadcast_clocks(tmp_path: Path) -> None:

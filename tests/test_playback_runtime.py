@@ -77,6 +77,15 @@ def test_native_video_surface_validates_platform_and_handle() -> None:
         playback.NativeVideoSurface("windows", 0)
 
 
+def test_libvlc_rejects_a_missing_media_path_before_decoder_start(
+    tmp_path: Path,
+) -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+
+    with pytest.raises(playback.PlaybackError, match="Media file is unavailable"):
+        backend.load(tmp_path / "moved-movie.mkv")
+
+
 class _FakePlayer:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
@@ -90,6 +99,9 @@ class _FakePlayer:
     def set_nsobject(self, handle: int) -> None:
         self.calls.append(("macos", handle))
 
+    def get_state(self):
+        return "error"
+
 
 @pytest.mark.parametrize("platform", ["windows", "x11", "macos"])
 def test_libvlc_routes_native_surface_to_platform_method(platform: str) -> None:
@@ -100,6 +112,20 @@ def test_libvlc_routes_native_surface_to_platform_method(platform: str) -> None:
     backend.attach_video_surface(playback.NativeVideoSurface(platform, 4242))
 
     assert player.calls == [(platform, 4242)]
+
+
+def test_libvlc_reports_asynchronous_decoder_failure(tmp_path: Path) -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+    backend._player = _FakePlayer()
+    backend._vlc = type(
+        "FakeVlc",
+        (),
+        {"State": type("State", (), {"Error": "error"})},
+    )
+    backend._loaded_path = tmp_path / "movie.mkv"
+
+    assert "could not open or decode" in str(backend.playback_error())
+    assert str(backend._loaded_path) in str(backend.playback_error())
 
 
 class _AudioDeviceNode:

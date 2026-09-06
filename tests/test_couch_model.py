@@ -226,6 +226,10 @@ def test_couch_qml_asset_is_present() -> None:
     assert "audioHudContainer" in text
     assert "liveHudContainer" not in text
     assert "channelOS ? channelOS.playback" in text
+    assert "readonly property string playbackError" in text
+    assert "id: playbackErrorOverlay" in text
+    assert 'text: "PLAYBACK UNAVAILABLE"' in text
+    assert "root.playbackError.length === 0" in text
     assert "channelOS ? channelOS.onDemand" in text
     assert "BEHIND LIVE" in text
     assert "NEXT" in text
@@ -268,6 +272,8 @@ def test_couch_qml_asset_is_present() -> None:
     assert "self._controller.enterLiveFromHome()" in couch_qt
     assert '"reused": True' in couch_qt
     assert "def startHomePlayback" in couch_qt
+    assert "def _publish_playback_failure" in couch_qt
+    assert 'video_window.setColor(QColor("#000000"))' in couch_qt
     assert "NativeWindowStartupGate" in couch_qt
     assert "def _start_home_video_when_ready" in couch_qt
     assert "sample_native_windows" in couch_qt

@@ -4,7 +4,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from .playback import PlaybackBackend
+from .playback import PlaybackBackend, PlaybackError
 from .runtime import (
     ChannelRuntimeError,
     TelevisionRuntime,
@@ -168,6 +168,15 @@ class TelevisionSession:
 
     def sync(self, *, now: datetime | None = None) -> TuneDecision:
         """Keep decoder playback aligned when the Viewer Clock crosses a program boundary."""
+
+        error_probe = getattr(self.backend, "playback_error", None)
+        error = error_probe() if callable(error_probe) else None
+        if error:
+            # Make an explicit user retry reload the media instead of retaining
+            # the failed decoder selection as though it were still active.
+            self.loaded_asset_id = None
+            self.loaded_program_started_at = None
+            raise PlaybackError(error)
 
         decision = self.runtime.status(now=now)
         selected = decision.viewer_selection

@@ -140,6 +140,11 @@ class PlaybackBackend(ABC):
 
         return False
 
+    def playback_error(self) -> str | None:
+        """Return an asynchronous decoder failure, when one has occurred."""
+
+        return None
+
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         """Attach a native presentation target when this backend supports embedding."""
 
@@ -177,6 +182,7 @@ class LibVLCBackend(PlaybackBackend):
             ) from exc
 
         self._vlc: Any = vlc
+        self._loaded_path: Path | None = None
         try:
             self._instance = vlc.Instance(*instance_options)
             self._player = self._instance.media_player_new()
@@ -212,8 +218,21 @@ class LibVLCBackend(PlaybackBackend):
 
     def load(self, path: str | Path) -> None:
         media_path = Path(path).expanduser().resolve(strict=False)
+        if not media_path.is_file():
+            raise PlaybackError(
+                "Media file is unavailable: "
+                f"{media_path}. Restore the file or re-scan its Library folder."
+            )
+        try:
+            with media_path.open("rb"):
+                pass
+        except OSError as exc:
+            raise PlaybackError(
+                f"Media file cannot be read: {media_path} ({exc})"
+            ) from exc
         media = self._instance.media_new_path(str(media_path))
         self._player.set_media(media)
+        self._loaded_path = media_path
 
     def play(self) -> None:
         result = self._player.play()
@@ -246,6 +265,23 @@ class LibVLCBackend(PlaybackBackend):
             return self._player.get_state() == self._vlc.State.Ended
         except Exception:
             return False
+
+    def playback_error(self) -> str | None:
+        try:
+            failed = self._player.get_state() == self._vlc.State.Error
+        except Exception:
+            return None
+        if not failed:
+            return None
+        target = (
+            str(self._loaded_path)
+            if self._loaded_path is not None
+            else "the selected media"
+        )
+        return (
+            f"libVLC could not open or decode {target}. "
+            "Verify the file still plays in VLC, then re-scan its Library folder."
+        )
 
     def set_volume(self, percent: int) -> None:
         if not 0 <= percent <= 100:

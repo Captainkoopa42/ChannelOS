@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
-from PySide6.QtGui import QGuiApplication, QWindow
+from PySide6.QtGui import QColor, QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
@@ -494,7 +494,8 @@ class CouchController(QObject):
             return
         try:
             decision = self._actions.sync()
-        except (ChannelRuntimeError, PlaybackError, ValueError):
+        except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+            self._publish_playback_failure(exc)
             return
 
         self._playback = self._decision_view(decision)
@@ -564,9 +565,8 @@ class CouchController(QObject):
             return
         try:
             decision = self._actions.continue_watching(default_channel=1)
-        except (ChannelRuntimeError, PlaybackError, ValueError):
-            # No saved television continuity and no real CH001 means Home stays
-            # on its presentation-only static state.
+        except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+            self._publish_playback_failure(exc)
             return
         self._publish(decision)
 
@@ -701,6 +701,38 @@ class CouchController(QObject):
             "playback": self._playback,
         }
 
+    def _publish_playback_failure(self, exc: Exception) -> dict[str, object]:
+        """Expose decoder failures instead of leaving a blank native surface."""
+
+        message = str(exc)
+        if (
+            not bool(self._playback.get("active"))
+            and str(self._playback.get("error", "")) == message
+        ):
+            return {
+                "ok": False,
+                "message": message,
+                "playback": self._playback,
+            }
+        failed = dict(self._playback)
+        failed["active"] = False
+        failed["error"] = message
+        self._playback = failed
+
+        home = dict(self._home_television)
+        home["playbackError"] = message
+        home["stateLabel"] = "PLAYBACK UNAVAILABLE"
+        self._home_television = home
+
+        self.playbackChanged.emit()
+        self.homeTelevisionChanged.emit()
+        return {"ok": False, "message": message, "playback": failed}
+
+    def _action_error(self, exc: Exception) -> dict[str, object]:
+        if isinstance(exc, PlaybackError):
+            return self._publish_playback_failure(exc)
+        return self._error(exc)
+
     @staticmethod
     def _error(exc: Exception) -> dict[str, object]:
         return {"ok": False, "message": str(exc)}
@@ -739,7 +771,7 @@ class CouchController(QObject):
             )
             return self._publish(decision)
         except (GuideError, ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(int, result="QVariantMap")
     def playLibraryIndex(self, index: int) -> dict[str, object]:
@@ -844,21 +876,21 @@ class CouchController(QObject):
             decision = self._actions.play() if self._actions.paused else self._actions.pause()
             return self._publish(decision)
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def goLive(self) -> dict[str, object]:
         try:
             return self._publish(self._actions.go_live())
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(float, result="QVariantMap")
     def skip(self, delta_seconds: float) -> dict[str, object]:
         try:
             return self._publish(self._actions.skip(float(delta_seconds)))
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(int, result="QVariantMap")
     def changeChannel(self, direction: int) -> dict[str, object]:
@@ -871,7 +903,7 @@ class CouchController(QObject):
                 raise ValueError("channel direction must be -1 or 1")
             return self._publish(decision)
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(int, result="QVariantMap")
     def tuneChannel(self, channel_number: int) -> dict[str, object]:
@@ -882,14 +914,14 @@ class CouchController(QObject):
                 self._actions.tune(int(channel_number))
             )
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def previousChannel(self) -> dict[str, object]:
         try:
             return self._publish(self._actions.previous_channel())
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def continueWatching(self) -> dict[str, object]:
@@ -900,7 +932,7 @@ class CouchController(QObject):
                 self._actions.continue_watching(default_channel=1)
             )
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def enterLiveFromHome(self) -> dict[str, object]:
@@ -2246,6 +2278,7 @@ def run_qt(
     # parenting a bare QWindow to the QQuickWindow, which proved unreliable on
     # the Windows D3D11/libVLC path.
     video_window = QWindow()
+    video_window.setColor(QColor("#000000"))
     video_window.setFlag(Qt.WindowType.FramelessWindowHint, True)
     video_window.setFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
     engine.rootContext().setContextProperty("channelOSVideoWindow", video_window)

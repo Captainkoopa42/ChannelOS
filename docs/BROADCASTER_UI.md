@@ -110,11 +110,13 @@ These protections are not substitutes for future full Export My Television / ver
 
 ### Delete is recoverable and lineup-safe
 
-Classic Edit exposes **Delete Channel** only for Broadcaster-managed channel
-definitions. Confirmation is required. ChannelOS validates the remaining
-lineup, moves the YAML definition to a dated `.deleted-*.bak` recovery file,
-clears that channel's Broadcast Clock, Viewer Clock, and tuning references, and
-then reloads the Guide. Original media files are never removed.
+The Broadcaster channel list and Classic Edit expose **Delete Channel** for
+Broadcaster-managed definitions, including calendar channels selected in the
+lineup. Confirmation is required. ChannelOS validates the remaining lineup,
+moves the YAML definition to a dated `.deleted-*.bak` recovery file, clears that
+channel's Broadcast Clock, Viewer Clock, and tuning references, and then
+reloads the Guide. Original media files are never removed. If the replacement
+lineup cannot load, ChannelOS restores the definition from the recovery file.
 
 The final active channel cannot be deleted, and externally supplied YAML files
 remain under the control of the person or tool that supplied them.

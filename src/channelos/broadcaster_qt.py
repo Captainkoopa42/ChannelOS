@@ -34,10 +34,10 @@ from .couch_qt import (
     CouchKeyFilter,
     _start_home_video_when_ready,
 )
-from .guide import GuideService
+from .guide import GuideError, GuideService
 from .library import MediaLibrary, normalize_path
 from .models import ChannelValidationError
-from .playback import NativeVideoSurface
+from .playback import NativeVideoSurface, PlaybackError
 from .resolve import resolve_channel
 from .runtime import ChannelRuntime, ChannelRuntimeError, RuntimeStore, TelevisionRuntime
 from .scanner import MediaScanner, ScanCancelled, ScanProgress, ScanSummary
@@ -642,9 +642,18 @@ class BroadcasterCouchController(CouchController):
     def deleteChannel(self, channel_number: int) -> dict[str, object]:
         try:
             result = self._broadcaster.delete(int(channel_number))
-            self._reload_lineup()
+            try:
+                self._reload_lineup()
+                self.refreshBroadcaster()
+            except Exception:
+                # A deletion is not committed unless the replacement lineup
+                # can take over. Put the definition back and restore the prior
+                # Guide before returning the original error to the UI.
+                self._broadcaster.restore_deleted(result)
+                self._reload_lineup()
+                self.refreshBroadcaster()
+                raise
             self._runtime_store.delete_channel(result.record.channel_number)
-            self.refreshBroadcaster()
             definition = result.record.definition
             return {
                 "ok": True,
@@ -660,7 +669,9 @@ class BroadcasterCouchController(CouchController):
             BroadcasterError,
             ChannelRuntimeError,
             ChannelValidationError,
+            GuideError,
             OSError,
+            PlaybackError,
             ValueError,
         ) as exc:
             return self._error(exc)

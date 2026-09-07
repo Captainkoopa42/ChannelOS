@@ -154,6 +154,13 @@ def test_delete_managed_channel_keeps_recovery_backup(tmp_path: Path) -> None:
     )
     assert result.backup_path.name.endswith(".bak")
 
+    service.restore_deleted(result)
+
+    assert service.channel_numbers == (7, 12)
+    assert deleted_record.path.is_file()
+    assert deleted_record.path.read_text(encoding="utf-8") == original
+    assert not result.backup_path.exists()
+
 
 def test_delete_refuses_to_remove_the_only_channel(tmp_path: Path) -> None:
     library, source = make_library(tmp_path)

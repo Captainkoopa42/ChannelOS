@@ -749,3 +749,21 @@ class BroadcasterService:
             raise
 
         return ChannelDeleteResult(record=existing, backup_path=backup)
+
+    def restore_deleted(self, result: ChannelDeleteResult) -> None:
+        """Roll back an uncommitted lineup deletion from its recovery file."""
+
+        original = self._normalize_path(result.record.path)
+        backup = self._normalize_path(result.backup_path)
+        if original.exists():
+            raise ChannelConflictError(
+                f"cannot restore Channel {result.record.definition.display_number}; "
+                f"{original} already exists"
+            )
+        if not backup.is_file():
+            raise ChannelNotFoundError(
+                f"cannot restore Channel {result.record.definition.display_number}; "
+                f"recovery backup {backup} is unavailable"
+            )
+        os.replace(backup, original)
+        self.refresh()

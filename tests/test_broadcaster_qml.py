@@ -42,7 +42,7 @@ class FakeChannelOS(QObject):
     def __init__(self) -> None:
         super().__init__()
         self._snapshot = {
-            "channelCount": 1,
+            "channelCount": 2,
             "suggestedChannel": 25,
             "managedDirectory": "channels",
             "sourceOptions": ["C:/Owned Media"],
@@ -62,6 +62,22 @@ class FakeChannelOS(QObject):
                     "managed": True,
                     "nowTitle": "Current Program",
                     "nextTitle": "Next Program",
+                },
+                {
+                    "channelNumber": 8,
+                    "displayNumber": "008",
+                    "name": "Second Channel",
+                    "description": "Deletion leaves this channel active",
+                    "mode": "calendar",
+                    "preserveEpisodeOrder": False,
+                    "avoidRepeatDays": 0,
+                    "numberWidth": 3,
+                    "sources": ["C:/Owned Media"],
+                    "sourceCount": 1,
+                    "path": "channels/channel-0008.yaml",
+                    "managed": True,
+                    "nowTitle": "Second Program",
+                    "nextTitle": "Later Program",
                 }
             ],
         }
@@ -113,8 +129,12 @@ class FakeChannelOS(QObject):
     def deleteChannel(self, channel_number):
         assert channel_number == 7
         self._snapshot = dict(self._snapshot)
-        self._snapshot["channels"] = []
-        self._snapshot["channelCount"] = 0
+        self._snapshot["channels"] = [
+            channel
+            for channel in self._snapshot["channels"]
+            if channel["channelNumber"] != channel_number
+        ]
+        self._snapshot["channelCount"] = len(self._snapshot["channels"])
         self._snapshot["suggestedChannel"] = 1
         self.broadcasterChanged.emit()
         return {
@@ -167,7 +187,15 @@ def test_broadcaster_qml_instantiates_headlessly() -> None:
 
     invoked = QMetaObject.invokeMethod(
         item,
-        "deleteEditingChannel",
+        "requestDeleteChannel",
+        Qt.ConnectionType.DirectConnection,
+    )
+    assert invoked
+    assert item.property("pendingDeleteChannelNumber") == 7
+
+    invoked = QMetaObject.invokeMethod(
+        item,
+        "deleteSelectedChannel",
         Qt.ConnectionType.DirectConnection,
     )
     assert invoked
@@ -175,6 +203,7 @@ def test_broadcaster_qml_instantiates_headlessly() -> None:
     assert item.property("editorMode") == "list"
     assert item.property("editingChannelNumber") == 0
     assert item.property("feedbackMessage") == "deleted with recovery backup"
+    assert item.property("pendingDeleteChannelNumber") == 0
 
     host.screen = "home"
     app.processEvents()
@@ -194,8 +223,11 @@ def test_broadcaster_paths_always_bind_as_strings() -> None:
 
     assert "snapshot.managedDirectory\n                                                  || \"\"" in text
     assert 'text: "Delete Channel"' in text
-    assert "channelOS.deleteChannel(editingChannelNumber)" in text
-    assert "standardButtons: Dialog.Yes | Dialog.Cancel" in text
+    assert "channelOS.deleteChannel(pendingDeleteChannelNumber)" in text
+    assert "DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole" in text
+    assert "function canDeleteSelectedChannel()" in text
+    assert "event.key === Qt.Key_Delete" in text
+    assert 'text: "DEL  Delete"' in text
 
 
 def test_home_shortcut_escapes_library_navigation() -> None:

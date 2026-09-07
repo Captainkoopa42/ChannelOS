@@ -29,6 +29,9 @@ Item {
     property int selectedChannelIndex: 0
     property string editorMode: "list"
     property int editingChannelNumber: 0
+    property int pendingDeleteChannelNumber: 0
+    property string pendingDeleteDisplayNumber: "---"
+    property string pendingDeleteName: ""
     property string feedbackMessage: ""
     property bool feedbackIsError: false
     property var previewData: ({ ok: false, items: [] })
@@ -236,15 +239,36 @@ Item {
         }
     }
 
+    function canDeleteSelectedChannel() {
+        return channels.length > 1 && Boolean(selectedChannel().managed)
+    }
+
+    function deleteUnavailableReason() {
+        if (channels.length <= 1)
+            return "Create a replacement before deleting the final channel"
+        if (!selectedChannel().managed)
+            return "External channel files cannot be deleted from Broadcaster"
+        return ""
+    }
+
     function requestDeleteChannel() {
-        if (editorMode !== "edit" || editingChannelNumber <= 0)
+        if (!channels.length)
             return
+        if (!canDeleteSelectedChannel()) {
+            feedbackMessage = deleteUnavailableReason()
+            feedbackIsError = true
+            return
+        }
+        var channel = selectedChannel()
+        pendingDeleteChannelNumber = Number(channel.channelNumber)
+        pendingDeleteDisplayNumber = String(channel.displayNumber || "---")
+        pendingDeleteName = String(channel.name || "Untitled Channel")
         deleteChannelDialog.open()
     }
 
-    function deleteEditingChannel() {
+    function deleteSelectedChannel() {
         var removedIndex = selectedChannelIndex
-        var result = channelOS.deleteChannel(editingChannelNumber)
+        var result = channelOS.deleteChannel(pendingDeleteChannelNumber)
         setResult(result)
 
         if (result && result.ok) {
@@ -257,6 +281,9 @@ Item {
                         Math.min(removedIndex, channels.length - 1))
             broadcasterFocus.forceActiveFocus()
         }
+        pendingDeleteChannelNumber = 0
+        pendingDeleteDisplayNumber = "---"
+        pendingDeleteName = ""
     }
 
     function leaveBroadcaster() {
@@ -371,6 +398,9 @@ Item {
                 event.accepted = true
             } else if (event.key === Qt.Key_C) {
                 beginCreate()
+                event.accepted = true
+            } else if (event.key === Qt.Key_Delete) {
+                requestDeleteChannel()
                 event.accepted = true
             } else if (event.key === Qt.Key_E
                        || event.key === Qt.Key_Return
@@ -631,13 +661,13 @@ Item {
 
                     Button {
                         text: "New in Studio"
-                        width: (parent.width - 36) / 4
+                        width: (parent.width - 48) / 5
                         onClicked: broadcasterRoot.openStudio(0)
                     }
 
                     Button {
                         text: "Open Studio"
-                        width: (parent.width - 36) / 4
+                        width: (parent.width - 48) / 5
                         enabled: broadcasterRoot.channels.length > 0
                         onClicked: broadcasterRoot.openStudio(
                                        broadcasterRoot.selectedChannel().channelNumber)
@@ -645,7 +675,7 @@ Item {
 
                     Button {
                         text: "Classic New"
-                        width: (parent.width - 36) / 4
+                        width: (parent.width - 48) / 5
                         onClicked: broadcasterRoot.beginCreate()
                     }
 
@@ -654,10 +684,22 @@ Item {
                               && broadcasterRoot.selectedChannel().mode === "calendar"
                               ? "Studio Channel"
                               : "Classic Edit"
-                        width: (parent.width - 36) / 4
+                        width: (parent.width - 48) / 5
                         enabled: broadcasterRoot.channels.length > 0
                                  && broadcasterRoot.selectedChannel().mode !== "calendar"
                         onClicked: broadcasterRoot.beginEdit()
+                    }
+
+                    Button {
+                        text: "Delete Channel"
+                        width: (parent.width - 48) / 5
+                        enabled: broadcasterRoot.editorMode === "list"
+                                 && broadcasterRoot.canDeleteSelectedChannel()
+                        palette.buttonText: broadcasterRoot.danger
+                        onClicked: broadcasterRoot.requestDeleteChannel()
+                        ToolTip.visible: hovered && !enabled
+                                         && broadcasterRoot.editorMode === "list"
+                        ToolTip.text: broadcasterRoot.deleteUnavailableReason()
                     }
                 }
             }
@@ -709,6 +751,28 @@ Item {
                             width: parent.width
                             height: 1
                             color: broadcasterRoot.line
+                        }
+
+                        Rectangle {
+                            visible: broadcasterRoot.feedbackMessage.length > 0
+                            width: parent.width
+                            height: listFeedbackText.implicitHeight + 28
+                            radius: 7
+                            color: broadcasterRoot.feedbackIsError
+                                   ? "#401c25" : "#123628"
+                            border.color: broadcasterRoot.feedbackIsError
+                                          ? broadcasterRoot.danger
+                                          : broadcasterRoot.liveGreen
+
+                            Text {
+                                id: listFeedbackText
+                                anchors.fill: parent
+                                anchors.margins: 14
+                                text: broadcasterRoot.feedbackMessage
+                                color: broadcasterRoot.textPrimary
+                                font.pixelSize: 14
+                                wrapMode: Text.WordWrap
+                            }
                         }
 
                         GridLayout {
@@ -877,7 +941,7 @@ Item {
 
                                 Text {
                                     width: parent.width
-                                    text: "Creating a channel can never silently replace an existing channel number. Editing is an explicit separate action, writes atomically, and preserves a .bak copy of the prior definition."
+                                    text: "Creating never overwrites another channel. Editing writes atomically and preserves a .bak copy. Deleting requires confirmation and retains a dated recovery definition."
                                     color: broadcasterRoot.textPrimary
                                     font.pixelSize: 14
                                     wrapMode: Text.WordWrap
@@ -1325,15 +1389,11 @@ Item {
                                 text: "Delete Channel"
                                 width: 150
                                 visible: broadcasterRoot.editorMode === "edit"
-                                enabled: broadcasterRoot.selectedChannel().managed
-                                         && broadcasterRoot.channels.length > 1
-                                flat: true
+                                enabled: broadcasterRoot.canDeleteSelectedChannel()
                                 palette.buttonText: broadcasterRoot.danger
                                 onClicked: broadcasterRoot.requestDeleteChannel()
                                 ToolTip.visible: hovered && !enabled
-                                ToolTip.text: broadcasterRoot.channels.length <= 1
-                                              ? "Create a replacement before deleting the final channel"
-                                              : "External channel files cannot be deleted from Broadcaster"
+                                ToolTip.text: broadcasterRoot.deleteUnavailableReason()
                             }
 
                             Item {
@@ -1386,6 +1446,7 @@ Item {
                 Text { text: "S  Open Studio"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "C  Classic New"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "E / ENTER  Edit"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
+                Text { text: "DEL  Delete"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "TAB  Fields"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "CTRL+S  Save"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "ESC  Back / Cancel"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
@@ -1409,15 +1470,59 @@ Item {
         id: deleteChannelDialog
         anchors.centerIn: parent
         modal: true
+        dim: true
+        padding: 24
+        closePolicy: Popup.CloseOnEscape
         title: "Delete Channel "
-               + broadcasterRoot.selectedChannel().displayNumber + "?"
-        standardButtons: Dialog.Yes | Dialog.Cancel
-        onAccepted: broadcasterRoot.deleteEditingChannel()
+               + broadcasterRoot.pendingDeleteDisplayNumber + "?"
+        palette.window: broadcasterRoot.panelRaised
+        palette.windowText: broadcasterRoot.textPrimary
+        palette.button: broadcasterRoot.panelSoft
+        palette.buttonText: broadcasterRoot.textPrimary
+        background: Rectangle {
+            radius: 8
+            color: broadcasterRoot.panelRaised
+            border.color: broadcasterRoot.line
+            border.width: 1
+        }
+        onRejected: {
+            broadcasterRoot.pendingDeleteChannelNumber = 0
+            broadcasterRoot.pendingDeleteDisplayNumber = "---"
+            broadcasterRoot.pendingDeleteName = ""
+        }
+
+        footer: DialogButtonBox {
+            spacing: 12
+            padding: 16
+            background: Rectangle {
+                color: broadcasterRoot.panel
+                border.color: broadcasterRoot.line
+                border.width: 1
+            }
+            Button {
+                text: "Cancel"
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            Button {
+                text: "Delete Channel"
+                palette.buttonText: broadcasterRoot.danger
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+
+        onAccepted: broadcasterRoot.deleteSelectedChannel()
 
         contentItem: Text {
             width: 460
-            text: "This removes the channel from the live lineup and clears its saved clock state. The channel definition is kept as a dated recovery backup. Your media files are never deleted."
+            text: "Remove Channel "
+                  + broadcasterRoot.pendingDeleteDisplayNumber + " — "
+                  + broadcasterRoot.pendingDeleteName
+                  + " from the live lineup?\n\n"
+                  + "Its saved channel and viewer clocks will be cleared. "
+                  + "The definition is kept as a dated recovery backup, and "
+                  + "your media files are never deleted."
             color: broadcasterRoot.textPrimary
+            font.pixelSize: 15
             wrapMode: Text.Wrap
         }
     }

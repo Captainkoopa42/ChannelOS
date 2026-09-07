@@ -8,7 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
-from PySide6.QtGui import QColor, QGuiApplication, QWindow
+from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
@@ -2293,7 +2293,6 @@ def run_qt(
     # parenting a bare QWindow to the QQuickWindow, which proved unreliable on
     # the Windows D3D11/libVLC path.
     video_window = QWindow()
-    video_window.setColor(QColor("#000000"))
     video_window.setFlag(Qt.WindowType.FramelessWindowHint, True)
     video_window.setFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
     engine.rootContext().setContextProperty("channelOSVideoWindow", video_window)

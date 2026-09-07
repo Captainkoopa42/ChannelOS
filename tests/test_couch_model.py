@@ -274,14 +274,14 @@ def test_couch_qml_asset_is_present() -> None:
     assert '"reused": True' in couch_qt
     assert "def startHomePlayback" in couch_qt
     assert "def _publish_playback_failure" in couch_qt
-    assert 'video_window.setColor(QColor("#000000"))' in couch_qt
+    assert "video_window.setColor" not in couch_qt
     broadcaster_qt = (
         Path(__file__).resolve().parents[1]
         / "src"
         / "channelos"
         / "broadcaster_qt.py"
     ).read_text(encoding="utf-8")
-    assert 'video_window.setColor(QColor("#000000"))' in broadcaster_qt
+    assert "video_window.setColor" not in broadcaster_qt
     assert "NativeWindowStartupGate" in couch_qt
     assert "def _start_home_video_when_ready" in couch_qt
     assert "sample_native_windows" in couch_qt

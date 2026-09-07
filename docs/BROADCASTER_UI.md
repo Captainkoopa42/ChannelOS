@@ -117,6 +117,8 @@ moves the YAML definition to a dated `.deleted-*.bak` recovery file, clears that
 channel's Broadcast Clock, Viewer Clock, and tuning references, and then
 reloads the Guide. Original media files are never removed. If the replacement
 lineup cannot load, ChannelOS restores the definition from the recovery file.
+If the deleted channel was playing, the next surviving channel takes over live;
+otherwise the existing feed and its Viewer Clock continue across the reload.
 
 The final active channel cannot be deleted, and externally supplied YAML files
 remain under the control of the person or tool that supplied them.

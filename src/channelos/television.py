@@ -146,6 +146,44 @@ class TelevisionSession:
         self._apply_selection(decision, play=True)
         return decision
 
+    def restore_after_lineup_change(
+        self,
+        channel_number: int,
+        *,
+        paused: bool,
+        now: datetime | None = None,
+    ) -> TuneDecision:
+        """Recreate decoder output without discarding Viewer Clock continuity."""
+
+        current_time = require_aware_utc(now or utc_now())
+        target = int(channel_number)
+        if self.runtime.current_channel == target:
+            # Reapply the persisted running/paused intent to the newly-created
+            # session. ViewerClock.play/pause preserve its scheduled position.
+            decision = (
+                self.runtime.pause(now=current_time)
+                if paused
+                else self.runtime.play(now=current_time)
+            )
+        else:
+            # The prior channel was removed. A surviving replacement starts at
+            # its live Broadcast Clock instead of inheriting deleted continuity.
+            decision = self.runtime.tune(
+                target,
+                now=current_time,
+                return_behavior="live",
+            )
+            paused = False
+
+        # A freshly-created native decoder must play at least once to build its
+        # video output. For paused continuity, establish the picture/seek first
+        # and then pause it on the same frame.
+        self._apply_selection(decision, play=True)
+        if paused:
+            self.backend.pause()
+            self.paused = True
+        return decision
+
     def pause(self, *, now: datetime | None = None) -> TuneDecision:
         decision = self.runtime.pause(now=now)
         self.backend.pause()

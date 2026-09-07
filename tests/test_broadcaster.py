@@ -153,6 +153,7 @@ def test_delete_managed_channel_keeps_recovery_backup(tmp_path: Path) -> None:
         "channel-0007.yaml.deleted-"
     )
     assert result.backup_path.name.endswith(".bak")
+    assert result.replacement_channel_number == 12
 
     service.restore_deleted(result)
 

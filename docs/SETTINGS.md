@@ -43,8 +43,9 @@ thumbnails until the cache fits.
 Audio Output, volume, and mute changes apply to both Live TV and On Demand and
 become the next-launch defaults. A choice is remembered even when that decoder
 has not been created yet. System Default deliberately returns routing to the
-operating system. If a saved device is disconnected, Settings marks it as
-currently unavailable and keeps System Default available as the safe fallback.
+operating system. Before the first media load, ChannelOS validates a saved
+destination against the outputs currently exposed by libVLC. A disconnected
+device falls back to System Default and that safe choice is persisted.
 Skip choices apply to both television and On Demand control intents.
 
 ## Truthful presentation

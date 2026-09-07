@@ -123,14 +123,14 @@ def test_libvlc_reports_asynchronous_decoder_failure(tmp_path: Path) -> None:
         {"State": type("State", (), {"Error": "error"})},
     )
     backend._loaded_path = tmp_path / "movie.mkv"
-    backend._play_started_at = None
-    backend._surface = None
 
     assert "could not open or decode" in str(backend.playback_error())
     assert str(backend._loaded_path) in str(backend.playback_error())
 
 
-def test_libvlc_reports_playing_without_a_video_output(tmp_path: Path) -> None:
+def test_libvlc_does_not_latch_transient_zero_video_output_as_an_error(
+    tmp_path: Path,
+) -> None:
     class NoVideoPlayer:
         def get_state(self):
             return "playing"
@@ -146,12 +146,22 @@ def test_libvlc_reports_playing_without_a_video_output(tmp_path: Path) -> None:
         {"State": type("State", (), {"Error": "error", "Playing": "playing"})},
     )
     backend._loaded_path = tmp_path / "movie.mkv"
-    backend._surface = playback.NativeVideoSurface("windows", 4242)
-    backend._play_started_at = 0.0
 
-    message = str(backend.playback_error())
-    assert "created no video output" in message
-    assert "native windows window 4242" in message
+    assert backend.playback_error() is None
+
+
+def test_missing_saved_audio_output_falls_back_to_system_default() -> None:
+    devices = (
+        playback.AudioOutputDevice("speakers-id", "Desktop Speakers"),
+        playback.AudioOutputDevice("headphones-id", "USB Headphones"),
+    )
+
+    assert (
+        playback.resolve_audio_output_device_id("headphones-id", devices)
+        == "headphones-id"
+    )
+    assert playback.resolve_audio_output_device_id("unplugged-id", devices) == ""
+    assert playback.resolve_audio_output_device_id("", devices) == ""
 
 
 class _AudioDeviceNode:

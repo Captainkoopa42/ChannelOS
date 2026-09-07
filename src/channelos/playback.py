@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sys
-import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +18,6 @@ class PlaybackUnavailableError(PlaybackError):
 
 VLC_RUNTIME_ENV = "CHANNELOS_VLC_DIR"
 IS_WINDOWS = os.name == "nt"
-VIDEO_OUTPUT_GRACE_SECONDS = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +40,22 @@ class AudioOutputDevice:
 
     device_id: str
     name: str
+
+
+def resolve_audio_output_device_id(
+    saved_device_id: str,
+    available_devices: tuple[AudioOutputDevice, ...],
+) -> str:
+    """Return a usable saved destination or the system-default identifier."""
+
+    selected = str(saved_device_id)
+    if not selected:
+        return ""
+    return (
+        selected
+        if any(device.device_id == selected for device in available_devices)
+        else ""
+    )
 
 
 def _bundled_vlc_runtime_candidates() -> tuple[Path, ...]:
@@ -185,8 +199,6 @@ class LibVLCBackend(PlaybackBackend):
 
         self._vlc: Any = vlc
         self._loaded_path: Path | None = None
-        self._surface: NativeVideoSurface | None = None
-        self._play_started_at: float | None = None
         try:
             self._instance = vlc.Instance(*instance_options)
             self._player = self._instance.media_player_new()
@@ -204,7 +216,6 @@ class LibVLCBackend(PlaybackBackend):
         """Point libVLC at a ChannelOS-owned native child window."""
 
         handle = int(surface.window_id)
-        self._surface = surface
         try:
             if surface.platform == "windows":
                 self._player.set_hwnd(handle)
@@ -238,13 +249,11 @@ class LibVLCBackend(PlaybackBackend):
         media = self._instance.media_new_path(str(media_path))
         self._player.set_media(media)
         self._loaded_path = media_path
-        self._play_started_at = None
 
     def play(self) -> None:
         result = self._player.play()
         if isinstance(result, int) and result < 0:
             raise PlaybackError("libVLC could not start playback")
-        self._play_started_at = time.monotonic()
 
     def pause(self) -> None:
         if hasattr(self._player, "set_pause"):
@@ -254,7 +263,6 @@ class LibVLCBackend(PlaybackBackend):
 
     def stop(self) -> None:
         self._player.stop()
-        self._play_started_at = None
 
     def seek(self, seconds: float) -> None:
         milliseconds = max(0, int(seconds * 1000))
@@ -290,31 +298,12 @@ class LibVLCBackend(PlaybackBackend):
                 "Verify the file still plays in VLC, then re-scan its Library folder."
             )
 
-        started_at = self._play_started_at
-        playing_state = getattr(self._vlc.State, "Playing", None)
-        if (
-            started_at is None
-            or state != playing_state
-            or time.monotonic() - started_at < VIDEO_OUTPUT_GRACE_SECONDS
-        ):
-            return None
-        try:
-            video_outputs = int(self._player.has_vout())
-        except (AttributeError, TypeError, ValueError):
-            return None
-        if video_outputs > 0:
-            return None
-
-        surface = (
-            f"native {self._surface.platform} window {self._surface.window_id}"
-            if self._surface is not None
-            else "the native video surface"
-        )
-        return (
-            f"libVLC reports playback for {target}, but created no video output "
-            f"for {surface}. Return Home and retry; if this repeats, keep the "
-            "ChannelOS Home video diagnostics from PowerShell."
-        )
+        # A zero vout count is not a decoder error by itself. Qt deliberately
+        # hides the native video child on management screens, and libVLC can
+        # also recreate its vout briefly during seeks and window transitions.
+        # Treat only libVLC's explicit Error state as fatal so a transient or
+        # intentionally hidden surface cannot latch playback off.
+        return None
 
     def set_volume(self, percent: int) -> None:
         if not 0 <= percent <= 100:

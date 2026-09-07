@@ -472,8 +472,21 @@ class BroadcasterCouchController(CouchController):
         except (OSError, ValueError) as exc:
             return self._error(exc)
 
-    def _reload_lineup(self) -> None:
-        """Rebuild Guide/TV objects from saved portable definitions."""
+    def _reload_lineup(
+        self,
+        *,
+        replacement_channel_number: int | None = None,
+    ) -> None:
+        """Rebuild Guide/TV objects while preserving active playback."""
+
+        restore_playback = (
+            bool(self._playback.get("active"))
+            and not self._on_demand.active
+        )
+        prior_channel_number = int(
+            self._playback.get("channelNumber", 0) or 0
+        )
+        prior_paused = bool(self._playback.get("paused", False))
 
         runtimes: list[ChannelRuntime] = []
         for record in self._broadcaster.records:
@@ -487,9 +500,6 @@ class BroadcasterCouchController(CouchController):
 
         if not runtimes:
             raise BroadcasterError("the active television lineup cannot be empty")
-
-        previous_actions = self._actions
-        previous_actions.stop()
 
         service = GuideService(tuple(runtimes))
         television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
@@ -507,6 +517,23 @@ class BroadcasterCouchController(CouchController):
         if self._video_surface is not None:
             actions.attach_video_surface(self._video_surface)
 
+        restore_channel_number: int | None = None
+        if restore_playback:
+            if prior_channel_number in television.channels:
+                restore_channel_number = prior_channel_number
+            elif replacement_channel_number in television.channels:
+                restore_channel_number = replacement_channel_number
+                prior_paused = False
+            else:
+                restore_channel_number = television.channel_numbers[0]
+                prior_paused = False
+
+        # Nothing that can invalidate the replacement lineup has touched the
+        # working decoder yet. Retire it only after every definition/runtime
+        # object and presentation target above has been accepted.
+        previous_actions = self._actions
+        previous_actions.stop()
+
         self._service = service
         self._actions = actions
         self._snapshot = build_couch_snapshot(service)
@@ -514,8 +541,22 @@ class BroadcasterCouchController(CouchController):
         self.snapshotChanged.emit()
         self.homeTelevisionChanged.emit()
 
-        self._playback = {"active": False}
-        self.playbackChanged.emit()
+        if restore_channel_number is None:
+            self._playback = {"active": False}
+            self.playbackChanged.emit()
+            return
+
+        try:
+            decision = actions.restore_after_lineup_change(
+                restore_channel_number,
+                paused=prior_paused,
+            )
+            self._publish(decision)
+        except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+            # The saved lineup is valid even if the native decoder cannot be
+            # recreated. Keep its runtime active and show the normal retryable
+            # playback failure instead of silently leaving a blank surface.
+            self._publish_playback_failure(exc)
 
     @staticmethod
     def _editor_mapping(value: object) -> dict[str, Any]:
@@ -643,7 +684,11 @@ class BroadcasterCouchController(CouchController):
         try:
             result = self._broadcaster.delete(int(channel_number))
             try:
-                self._reload_lineup()
+                self._reload_lineup(
+                    replacement_channel_number=(
+                        result.replacement_channel_number
+                    )
+                )
                 self.refreshBroadcaster()
             except Exception:
                 # A deletion is not committed unless the replacement lineup

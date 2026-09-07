@@ -316,12 +316,14 @@ lower-third as a bounded transient top-level window. This preserves the old HUD
 appearance while allowing Windows to alpha-compose it without covering the
 entire video surface.
 
-The feature branch now reports native-surface attachment failures, decoder
-errors, missing files, and the case where libVLC enters `Playing` without
-creating a video output. That replaces a silent black picture with an actionable
-error, but it does not claim that every Windows driver or maximize/restore path
-has been validated. A real-machine Windows run remains the release gate for the
-current playback changes.
+The feature branch reports native-surface attachment failures, explicit libVLC
+decoder errors, and missing files. A transient zero-video-output reading is not
+treated as fatal: the native child is intentionally hidden on management
+screens and can be recreated briefly during seeks or window transitions.
+Channel lineup rebuilds preserve an active feed and Viewer Clock; deleting the
+tuned channel selects a surviving replacement instead of leaving a blank
+player. A real-machine Windows run remains the release gate for the current
+playback changes.
 
 ### Separate On Demand session
 

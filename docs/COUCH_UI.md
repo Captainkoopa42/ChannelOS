@@ -110,6 +110,12 @@ instead of repeatedly mapping nested item coordinates. Returning to Live expands
 that same surface back to the root. Guide browsing therefore keeps the tuned
 channel running while selection/program metadata can move independently.
 
+Broadcaster create, edit, Studio apply, and delete operations also rebuild the
+Guide without abandoning that active presentation. The replacement playback
+session restores the current Viewer Clock and pause state. When the tuned
+channel itself is deleted, the adjacent surviving channel becomes the live
+replacement.
+
 ### Guide
 
 The Guide is a full-screen modern cable grid:

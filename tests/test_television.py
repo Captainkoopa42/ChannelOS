@@ -185,6 +185,75 @@ def test_resume_tuning_uses_saved_viewer_position(tmp_path: Path) -> None:
     assert backend.position == pytest.approx(20.0)
 
 
+def test_lineup_reload_restores_running_viewer_clock(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    original, _ = make_session(tmp_path, epoch)
+    original.tune(7, now=epoch + timedelta(seconds=5))
+
+    restored, backend = make_session(tmp_path, epoch)
+    decision = restored.restore_after_lineup_change(
+        7,
+        paused=False,
+        now=epoch + timedelta(seconds=20),
+    )
+
+    assert decision.channel_number == 7
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=20)
+    assert backend.position == pytest.approx(20.0)
+    assert backend.events == ["load", "play", "seek"]
+
+
+def test_lineup_reload_rebuilds_picture_then_restores_pause(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    original, _ = make_session(tmp_path, epoch)
+    original.tune(7, now=epoch)
+    original.pause(now=epoch + timedelta(seconds=10))
+
+    restored, backend = make_session(tmp_path, epoch)
+    decision = restored.restore_after_lineup_change(
+        7,
+        paused=True,
+        now=epoch + timedelta(seconds=30),
+    )
+
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=10)
+    assert restored.paused
+    assert backend.position == pytest.approx(10.0)
+    assert backend.events == ["load", "play", "seek", "pause"]
+
+
+def test_lineup_reload_tunes_survivor_when_current_channel_was_removed(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    original, _ = make_session(tmp_path, epoch)
+    original.tune(7, now=epoch)
+
+    store = original.runtime.store
+    surviving = ChannelRuntime.open(
+        make_resolved(tmp_path, 12, [20.0, 20.0, 20.0]),
+        store,
+        now=epoch,
+    )
+    backend = FakeBackend()
+    restored = TelevisionSession(
+        TelevisionRuntime((surviving,), store),
+        backend,
+    )
+
+    decision = restored.restore_after_lineup_change(
+        12,
+        paused=True,
+        now=epoch + timedelta(seconds=25),
+    )
+
+    assert decision.channel_number == 12
+    assert decision.is_live
+    assert restored.runtime.current_channel == 12
+    assert not restored.paused
+    assert backend.events == ["load", "play", "seek"]
+
+
 def test_watch_from_beginning_fractional_boundary_keeps_exact_clock_and_correct_asset(
     tmp_path: Path,
 ) -> None:

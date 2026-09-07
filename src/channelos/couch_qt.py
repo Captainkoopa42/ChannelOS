@@ -21,7 +21,12 @@ from .couch_model import build_couch_snapshot
 from .guide import GuideError, GuideService
 from .library import IndexedMedia, MediaLibrary
 from .on_demand import OnDemandSession, OnDemandState
-from .playback import NativeVideoSurface, PlaybackError
+from .playback import (
+    AudioOutputDevice,
+    NativeVideoSurface,
+    PlaybackError,
+    resolve_audio_output_device_id,
+)
 from .runtime import (
     ChannelRuntimeError,
     OnDemandWatchState,
@@ -39,6 +44,38 @@ from .settings import (
 )
 from .television import TelevisionSession
 from .window_startup import NativeWindowSnapshot, NativeWindowStartupGate
+
+
+def _resolved_audio_output_rows(
+    discovered: tuple[AudioOutputDevice, ...],
+    selected_device_id: str,
+) -> tuple[list[dict[str, object]], str]:
+    """Build stable Settings rows and fall back from a missing saved device."""
+
+    devices: list[dict[str, object]] = [
+        {
+            "deviceId": "",
+            "name": "System Default",
+            "available": True,
+        }
+    ]
+    known = {""}
+    for device in discovered:
+        if device.device_id in known:
+            continue
+        devices.append(
+            {
+                "deviceId": device.device_id,
+                "name": device.name,
+                "available": True,
+            }
+        )
+        known.add(device.device_id)
+
+    return devices, resolve_audio_output_device_id(
+        selected_device_id,
+        discovered,
+    )
 
 
 class CouchController(QObject):
@@ -275,48 +312,44 @@ class CouchController(QObject):
 
         try:
             discovered = self._actions.list_audio_output_devices()
-        except (PlaybackError, ValueError) as exc:
+            devices, effective_device_id = _resolved_audio_output_rows(
+                discovered,
+                self._settings.audio_output_device_id,
+            )
+        except (OSError, PlaybackError, ValueError) as exc:
             return {
                 "ok": False,
                 "message": f"Audio outputs could not be refreshed: {exc}",
                 "settings": self.settings,
             }
 
-        devices: list[dict[str, object]] = [
-            {
-                "deviceId": "",
-                "name": "System Default",
-                "available": True,
-            }
-        ]
-        known = {""}
-        for device in discovered:
-            if device.device_id in known:
-                continue
-            devices.append(
-                {
-                    "deviceId": device.device_id,
-                    "name": device.name,
-                    "available": True,
-                }
-            )
-            known.add(device.device_id)
-
         selected = self._settings.audio_output_device_id
-        if selected and selected not in known:
-            devices.append(
-                {
-                    "deviceId": selected,
-                    "name": "Saved device (currently unavailable)",
-                    "available": False,
+        message = ""
+        if selected != effective_device_id:
+            settings = replace(
+                self._settings,
+                audio_output_device_id=effective_device_id,
+            )
+            try:
+                self._settings_store.save(settings)
+                self._settings = settings
+                self._actions.set_audio_output_device(None)
+                self._on_demand.set_audio_output_device(None)
+            except (OSError, PlaybackError, ValueError) as exc:
+                return {
+                    "ok": False,
+                    "message": f"Audio fallback could not be applied: {exc}",
+                    "settings": self.settings,
                 }
+            message = (
+                "The saved audio output is unavailable; using System Default."
             )
 
         self._audio_output_devices = devices
         self.settingsChanged.emit()
         return {
             "ok": True,
-            "message": "",
+            "message": message,
             "settings": self.settings,
         }
 
@@ -556,6 +589,10 @@ class CouchController(QObject):
         self._on_demand.attach_video_surface(surface)
         self._surface_ready = True
         self._surface_error = ""
+        # Validate a persisted audio destination before the first media load.
+        # A disconnected headset must not leave an otherwise healthy startup
+        # silently routed to a device that no longer exists.
+        self.refreshAudioOutputDevices()
 
     @Slot()
     def startHomePlayback(self) -> None:
@@ -1699,20 +1736,28 @@ class CouchKeyFilter(QObject):
 
     def _adjust_selected_setting(self, direction: int) -> bool:
         selection = int(self._window.property("settingsSelection"))
-        names = (
-            "performanceProfile",
-            "volume",
-            "muted",
-            "skipBack",
-            "skipForward",
-            "generateVideoThumbnails",
-            "artworkCacheLimit",
-            "backgroundArtworkDuringPlayback",
-            "reducedMotion",
-        )
-        if not 0 <= selection < len(names):
+        if selection == 1:
+            result = self._controller.changeDisplayMode(direction)
+        else:
+            names = {
+                0: "performanceProfile",
+                2: "audioOutput",
+                3: "volume",
+                4: "muted",
+                5: "skipBack",
+                6: "skipForward",
+                7: "generateVideoThumbnails",
+                8: "artworkCacheLimit",
+                9: "backgroundArtworkDuringPlayback",
+                10: "reducedMotion",
+            }
+            name = names.get(selection)
+            if name is None:
+                return False
+            result = self._controller.adjustSetting(name, direction)
+        if not bool(result.get("ok", False)):
+            self._notify(result)
             return False
-        result = self._controller.adjustSetting(names[selection], direction)
         self._notify(result)
         if "volume" in result:
             self._window.setProperty(
@@ -1878,7 +1923,7 @@ class CouchKeyFilter(QObject):
                 current = int(self._window.property("settingsSelection"))
                 self._window.setProperty(
                     "settingsSelection",
-                    min(10, current + 1),
+                    min(12, current + 1),
                 )
                 return True
             if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
@@ -1886,11 +1931,11 @@ class CouchKeyFilter(QObject):
                 return self._adjust_selected_setting(direction)
             if intent is ControlIntent.SELECT:
                 selection = int(self._window.property("settingsSelection"))
-                if selection == 9:
+                if selection == 11:
                     result = self._controller.clearArtworkCache()
                     self._notify(result)
                     return True
-                if selection == 10:
+                if selection == 12:
                     result = self._controller.resetSettings()
                     self._notify(result)
                     self._window.setProperty(

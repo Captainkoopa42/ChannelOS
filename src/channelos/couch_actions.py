@@ -205,6 +205,23 @@ class CouchActions:
         self._last_decision = decision
         return decision
 
+    def restore_after_lineup_change(
+        self,
+        channel_number: int,
+        *,
+        paused: bool,
+        at: datetime | None = None,
+    ) -> TuneDecision:
+        """Resume one active feed after its Guide/runtime objects are rebuilt."""
+
+        decision = self._ensure_session().restore_after_lineup_change(
+            int(channel_number),
+            paused=bool(paused),
+            now=at,
+        )
+        self._last_decision = decision
+        return decision
+
     def sync(self, *, at: datetime | None = None) -> TuneDecision:
         """Synchronize decoder playback with the authoritative Viewer Clock."""
 

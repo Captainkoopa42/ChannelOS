@@ -657,8 +657,10 @@ ApplicationWindow {
                    ? homeVideoSlot.height
                    : guideVideoSlot.height)
 
-        visible: (fullPresentation || showHomePreview || showGuidePreview)
-                 && root.playbackError.length === 0
+        // Keep the native child alive while an error is shown. Destroying or
+        // hiding the target in response to a presentation warning prevents
+        // libVLC from recovering on its existing surface.
+        visible: fullPresentation || showHomePreview || showGuidePreview
         window: channelOSVideoWindow
         z: 50
     }

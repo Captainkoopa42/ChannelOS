@@ -55,6 +55,7 @@ class ChannelSaveResult:
 class ChannelDeleteResult:
     record: ChannelRecord
     backup_path: Path
+    replacement_channel_number: int
 
 
 def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
@@ -724,6 +725,15 @@ class BroadcasterService:
                 f"{existing.path} no longer exists"
             )
 
+        ordered_numbers = list(self.channel_numbers)
+        removed_index = ordered_numbers.index(number)
+        remaining_numbers = [
+            candidate for candidate in ordered_numbers if candidate != number
+        ]
+        replacement_channel_number = remaining_numbers[
+            min(removed_index, len(remaining_numbers) - 1)
+        ]
+
         # Prove the remaining lineup can still open before moving anything.
         for record in self.records:
             if record.channel_number != number:
@@ -748,7 +758,11 @@ class BroadcasterService:
             self.refresh()
             raise
 
-        return ChannelDeleteResult(record=existing, backup_path=backup)
+        return ChannelDeleteResult(
+            record=existing,
+            backup_path=backup,
+            replacement_channel_number=replacement_channel_number,
+        )
 
     def restore_deleted(self, result: ChannelDeleteResult) -> None:
         """Roll back an uncommitted lineup deletion from its recovery file."""

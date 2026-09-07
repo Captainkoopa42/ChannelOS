@@ -283,9 +283,8 @@ The Windows development machine has validated:
 
 Major remaining couch/release work includes:
 
-- native controller/Steam Input real-machine validation,
+- SteamOS/Steam Input validation beyond the completed Windows XInput hardware gate,
 - selected-title backdrop and richer artwork presentation polish,
-- Library -> Add to Channel authoring flow,
 - normal-user playback-runtime packaging,
 - SteamOS/controller validation,
 - autostart/crash recovery,

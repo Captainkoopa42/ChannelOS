@@ -182,9 +182,17 @@ Sequential schedules preserve effective source order. Shuffle schedules derive t
 
 If the signature is unchanged after restart, the original epoch is reused and the Broadcast Clock continues naturally.
 
-If the programming inputs change, ChannelOS creates a new epoch. This avoids projecting an old timeline onto a different schedule.
+If repeating sequential/shuffle programming inputs change, ChannelOS creates a
+new epoch. This avoids projecting an old cycle onto a different schedule.
 
-The same mechanism handles missing files. A rescan marks a disappeared location offline, resolution changes the eligible media set, the signature changes, and the channel re-anchors using surviving online media.
+Calendar definitions are different: their fixed blocks already contain absolute
+UTC intent. A calendar edit updates the schedule signature while preserving the
+existing filler epoch and Viewer Clock, so adding a future program does not
+restart today's channel or erase a paused/behind-live position.
+
+For repeating channels, the same re-anchor mechanism handles missing files. A
+calendar channel instead preserves its filler clock; a fixed block whose asset
+is unavailable is rejected during validation rather than silently weakened.
 
 ## Viewer Clock
 

@@ -10,6 +10,7 @@ from .playback import (
     LibVLCBackend,
     NativeVideoSurface,
     PlaybackBackend,
+    PlaybackError,
 )
 
 BackendFactory = Callable[[], PlaybackBackend]
@@ -136,6 +137,10 @@ class OnDemandSession:
         ended = False
 
         if self._backend is not None:
+            error_probe = getattr(self._backend, "playback_error", None)
+            error = error_probe() if callable(error_probe) else None
+            if error:
+                raise PlaybackError(error)
             ended = bool(self._backend.has_ended())
             position = max(
                 0.0,

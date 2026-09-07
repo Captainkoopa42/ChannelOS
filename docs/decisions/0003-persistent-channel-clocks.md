@@ -63,7 +63,16 @@ For sequential programming, effective source order participates in the schedule.
 
 If the signature is unchanged after restart, the original epoch survives.
 
-If programming inputs change — including a previously indexed location disappearing after a rescan or a programming-policy change — ChannelOS re-anchors the schedule instead of applying the old epoch to a different sequence. Saved Viewer Clock continuity for that channel is discarded because it no longer identifies the same schedule.
+If sequential/shuffle inputs change — including a previously indexed location
+disappearing after a rescan or a programming-policy change — ChannelOS
+re-anchors the schedule instead of applying the old epoch to a different
+sequence. Saved Viewer Clock continuity for that repeating channel is discarded
+because it no longer identifies the same schedule.
+
+Channel Definition 0.2 calendar edits are the explicit exception. Fixed blocks
+already carry absolute UTC intent, so their signature can change while the
+filler epoch and saved Viewer Clock remain intact. An unavailable asset named by
+a fixed block is rejected rather than silently removed.
 
 ### Repeat avoidance
 

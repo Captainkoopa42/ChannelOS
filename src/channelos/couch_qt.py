@@ -507,7 +507,11 @@ class CouchController(QObject):
     def refreshOnDemand(self) -> None:
         if not self._on_demand.active:
             return
-        state = self._on_demand.state()
+        try:
+            state = self._on_demand.state()
+        except PlaybackError as exc:
+            self._publish_playback_failure(exc)
+            return
         self._persist_on_demand_state(state)
         self._on_demand_view = self._on_demand_state_view(state)
         self.onDemandChanged.emit()
@@ -573,6 +577,9 @@ class CouchController(QObject):
     def set_video_surface_error(self, message: str) -> None:
         self._surface_ready = False
         self._surface_error = message
+        self._publish_playback_failure(
+            PlaybackError(f"Native video surface is unavailable: {message}")
+        )
 
     def _home_view_from_decision(
         self,
@@ -806,6 +813,9 @@ class CouchController(QObject):
             self._on_demand.set_volume(self._volume)
             self._on_demand.set_muted(self._muted)
             self._on_demand_view = self._on_demand_state_view(state)
+            if "error" in self._playback:
+                self._playback = {"active": False}
+                self.playbackChanged.emit()
             self.onDemandChanged.emit()
 
             return {
@@ -819,7 +829,7 @@ class CouchController(QObject):
             }
 
         except (PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def toggleOnDemandPause(self) -> dict[str, object]:
@@ -839,7 +849,7 @@ class CouchController(QObject):
             }
 
         except (PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(float, result="QVariantMap")
     def skipOnDemand(self, delta_seconds: float) -> dict[str, object]:
@@ -855,15 +865,20 @@ class CouchController(QObject):
             }
 
         except (PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def stopOnDemand(self) -> dict[str, object]:
         if self._on_demand.active:
-            self._persist_on_demand_state(
-                self._on_demand.state(),
-                force=True,
-            )
+            try:
+                self._persist_on_demand_state(
+                    self._on_demand.state(),
+                    force=True,
+                )
+            except PlaybackError:
+                # Returning Home must remain available even when the decoder
+                # has already failed and cannot provide a final playhead.
+                pass
         self._on_demand.stop()
         self._on_demand_view = {"active": False}
         self.onDemandChanged.emit()

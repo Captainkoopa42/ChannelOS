@@ -1,6 +1,8 @@
 name: windows-package
 
 on:
+  push:
+    branches: ["agent/broadcaster-channel-builder"]
   pull_request:
   workflow_dispatch:
 

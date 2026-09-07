@@ -130,7 +130,9 @@ After a successful create/edit, the couch application rebuilds the active `Guide
 Consequences:
 
 - unchanged schedules retain their persisted epochs,
-- a changed schedule signature receives the existing runtime's normal re-anchor behavior,
+- changed sequential/shuffle cycles receive the normal re-anchor behavior,
+- calendar edits preserve the existing filler epoch and Viewer Clock while
+  applying their absolute UTC blocks,
 - the newly created channel appears in the Guide immediately,
 - numeric tuning addresses the new lineup immediately,
 - the UI does not maintain a fake second copy of channel truth.
@@ -232,12 +234,11 @@ indexed owned media
 
 The following Broadcaster work remains real future work rather than placeholder claims:
 
-- Add to Channel from Library,
 - explicit channel renumber workflow,
 - delete/remove channel with confirmation and continuity rules,
 - recurring weekly templates and calendar-copy tools,
-- undo/redo and unsaved-draft recovery,
-- direct clock-time entry and finer timeline snapping,
+- undo/redo and durable unsaved-draft recovery,
+- finer timeline snapping beyond exact HH:MM entry and ±15-minute adjustment,
 - weighted rotations,
 - marathons,
 - feature/movie slots,

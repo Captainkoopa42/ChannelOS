@@ -234,7 +234,6 @@ Still needed for the intended consumer Library:
 - Movies / Television / seasons / episodes,
 - metadata,
 - collections/favorites,
-- Library -> Add to Channel,
 - richer filtering and organization.
 
 Estimated completion:
@@ -271,12 +270,14 @@ Implemented:
 - automatic filler in calendar gaps,
 - UTC portable starts with local-time presentation,
 - full resolver/runtime validation before Apply.
+- discard confirmation for unapplied drafts,
+- exact local HH:MM start entry alongside ±15-minute adjustment,
+- preserved filler/Viewer Clock continuity when calendar definitions change.
 
 Still needed:
 
-- Library -> Add to Channel,
 - recurring schedule templates and copy-week tools,
-- undo/redo and unsaved-draft recovery,
+- undo/redo and durable draft recovery across application restarts,
 - weighted rotations,
 - time-of-day schedules,
 - marathons/feature slots,
@@ -287,8 +288,10 @@ Still needed:
 
 Estimated mode completion:
 
-**90-95% of the minimum first-release Broadcaster, with recurring and richer
-rule-based programming intentionally later.**
+- **Broadcaster scheduling/runtime foundation: 85-90%**
+- **Channel Studio user experience: 65-75%**
+
+Recurring templates and richer rule-based programming remain intentionally later.
 
 ---
 
@@ -306,9 +309,18 @@ ChannelOS owns television state and control. libVLC remains a replaceable playba
 
 The libVLC target is a native child window. A second full-screen transparent native child above it proved unsafe across Windows maximize/restore transitions: the video could remain active while presentation was obscured.
 
-The validated architecture keeps the native video surface unchanged, uses small bounded native overlays where appropriate, and renders the translucent lower-third as a bounded transient top-level window. This preserves the old HUD appearance while allowing Windows to alpha-compose it without covering the entire video surface.
+The validated normal path keeps the native video surface unchanged, uses small
+bounded native overlays where appropriate, and renders the translucent
+lower-third as a bounded transient top-level window. This preserves the old HUD
+appearance while allowing Windows to alpha-compose it without covering the
+entire video surface.
 
-No decoder restart or HWND-rebind recovery loop is required for maximize/restore.
+The feature branch now reports native-surface attachment failures, decoder
+errors, missing files, and the case where libVLC enters `Playing` without
+creating a video output. That replaces a silent black picture with an actionable
+error, but it does not claim that every Windows driver or maximize/restore path
+has been validated. A real-machine Windows run remains the release gate for the
+current playback changes.
 
 ### Separate On Demand session
 
@@ -329,8 +341,8 @@ When On Demand temporarily owns the presentation surface, ChannelOS may stop the
 
 ## Important remaining first-release work
 
-1. Native controller/Steam Input real-machine validation (the Windows XInput
-   adapter is implemented; hardware behavior has not yet passed the gate).
+1. SteamOS/Steam Input platform validation beyond the completed Windows 8BitDo
+   XInput hardware gate.
 2. Normal-user libVLC/runtime packaging.
 3. Windows installer / repeatable package.
 4. Linux and SteamOS validation.
@@ -339,9 +351,8 @@ When On Demand temporarily owns the presentation surface, ChannelOS may stop the
    notices are complete).
 6. Crash recovery, clean-machine testing, and ordinary-user hardening.
 
-Library -> Add to Channel remains defined by the Channel Studio concept and is
-intentionally queued behind the current input and packaging work so its
-authoring behavior can be designed deliberately.
+Library -> Add to Channel is implemented against the canonical Library and safe
+Broadcaster update path, including duplicate/source-coverage protection.
 
 ---
 

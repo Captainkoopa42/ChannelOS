@@ -25,6 +25,7 @@ Item {
     property var hostWindow: null
     property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
     property var mediaLibrary: draftData.media || []
+    property var blocksByDay: ({})
     property string viewMode: "week"
     property date anchorDate: new Date()
     property string selectedDayKey: dayKey(new Date())
@@ -32,8 +33,14 @@ Item {
     property int selectedBlockIndex: -1
     property bool dirty: false
     property bool loading: false
+    property string pendingExitDestination: ""
     property string feedbackMessage: ""
     property bool feedbackIsError: false
+
+    onSelectedBlockIndexChanged:
+        exactTimeField.text = selectedBlockTimeText()
+    onBlocksByDayChanged:
+        exactTimeField.text = selectedBlockTimeText()
 
     function pad(value) {
         return Number(value) < 10 ? "0" + Number(value) : String(value)
@@ -189,8 +196,10 @@ Item {
 
     function sortBlocks() {
         var blocks = []
-        while (calendarBlocks.count > 0) {
-            var current = calendarBlocks.get(0)
+        for (var currentIndex = 0;
+             currentIndex < calendarBlocks.count;
+             ++currentIndex) {
+            var current = calendarBlocks.get(currentIndex)
             blocks.push({
                 assetId: current.assetId,
                 title: current.title,
@@ -200,14 +209,35 @@ Item {
                 startUtc: current.startUtc,
                 endUtc: current.endUtc
             })
-            calendarBlocks.remove(0)
         }
         blocks.sort(function(left, right) {
             return new Date(left.startUtc).getTime()
                     - new Date(right.startUtc).getTime()
         })
+        calendarBlocks.clear()
         for (var index = 0; index < blocks.length; ++index)
             calendarBlocks.append(blocks[index])
+        rebuildBlockIndex()
+    }
+
+    function rebuildBlockIndex() {
+        var indexByDay = ({})
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            var key = dayKey(new Date(block.startUtc))
+            if (!indexByDay[key])
+                indexByDay[key] = []
+            indexByDay[key].push({
+                modelIndex: index,
+                assetId: block.assetId,
+                title: block.title,
+                startUtc: block.startUtc,
+                durationSeconds: block.durationSeconds
+            })
+        }
+        // Replacing the object gives every calendar cell one predictable
+        // binding update instead of making 42 cells rescan the complete model.
+        blocksByDay = indexByDay
     }
 
     function loadDraft() {
@@ -290,21 +320,7 @@ Item {
     }
 
     function blocksForDay(day) {
-        var target = dayKey(day)
-        var result = []
-        for (var index = 0; index < calendarBlocks.count; ++index) {
-            var block = calendarBlocks.get(index)
-            if (dayKey(new Date(block.startUtc)) === target) {
-                result.push({
-                    modelIndex: index,
-                    assetId: block.assetId,
-                    title: block.title,
-                    startUtc: block.startUtc,
-                    durationSeconds: block.durationSeconds
-                })
-            }
-        }
-        return result
+        return blocksByDay[dayKey(day)] || []
     }
 
     function visibleBlocks() {
@@ -425,6 +441,45 @@ Item {
                         + Number(block.durationSeconds || 0) * 1000)
             calendarBlocks.setProperty(index, "endUtc", previousEnd.toISOString())
         }
+        rebuildBlockIndex()
+    }
+
+    function selectedBlockTimeText() {
+        if (selectedBlockIndex < 0
+                || selectedBlockIndex >= calendarBlocks.count)
+            return ""
+        return Qt.formatTime(
+                    new Date(calendarBlocks.get(selectedBlockIndex).startUtc),
+                    "HH:mm")
+    }
+
+    function setSelectedTime(value) {
+        if (selectedBlockIndex < 0
+                || selectedBlockIndex >= calendarBlocks.count)
+            return
+        var match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(
+                    String(value || "").trim())
+        if (!match) {
+            feedbackMessage = "Enter an exact local time as HH:MM, for example 20:00."
+            feedbackIsError = true
+            return
+        }
+        var block = calendarBlocks.get(selectedBlockIndex)
+        var start = new Date(block.startUtc)
+        start.setHours(Number(match[1]), Number(match[2]), 0, 0)
+        calendarBlocks.setProperty(selectedBlockIndex,
+                                   "startUtc", start.toISOString())
+        calendarBlocks.setProperty(
+                    selectedBlockIndex,
+                    "endUtc",
+                    new Date(start.getTime()
+                             + Number(block.durationSeconds || 0) * 1000).toISOString())
+        resolveOverlaps()
+        dirty = true
+        exactTimeField.text = selectedBlockTimeText()
+        feedbackMessage = "Selected program moved to "
+                + Qt.formatDateTime(start, "ddd MMM d, h:mm AP") + "."
+        feedbackIsError = false
     }
 
     function nudgeSelected(seconds) {
@@ -451,6 +506,7 @@ Item {
         if (blockIndex < 0 || blockIndex >= calendarBlocks.count)
             return
         calendarBlocks.remove(blockIndex)
+        rebuildBlockIndex()
         selectedBlockIndex = Math.min(blockIndex, calendarBlocks.count - 1)
         dirty = true
         feedbackMessage = "Program removed from the draft. Uncovered time will use filler."
@@ -506,6 +562,7 @@ Item {
                 ++removed
             }
         }
+        rebuildBlockIndex()
         dirty = dirty || removed > 0
         selectedBlockIndex = -1
         feedbackMessage = removed > 0
@@ -546,14 +603,29 @@ Item {
             anchorDate = addDays(anchorDate, Number(amount) * 7)
     }
 
-    function leaveStudio() {
+    function requestExit(destination) {
+        pendingExitDestination = String(destination)
+        if (dirty) {
+            discardDraftDialog.open()
+            return
+        }
+        finishExit()
+    }
+
+    function finishExit() {
+        var destination = pendingExitDestination || "home"
+        pendingExitDestination = ""
+        dirty = false
         if (hostWindow)
-            hostWindow.screen = "home"
+            hostWindow.screen = destination
+    }
+
+    function leaveStudio() {
+        requestExit("home")
     }
 
     function openBroadcaster() {
-        if (hostWindow)
-            hostWindow.screen = "broadcaster"
+        requestExit("broadcaster")
     }
 
     function handleControllerIntent(intent) {
@@ -588,13 +660,13 @@ Item {
 
         Shortcut {
             sequence: "Esc"
-            enabled: studioSurface.visible
+            enabled: studioSurface.visible && !discardDraftDialog.visible
             onActivated: studioRoot.leaveStudio()
         }
 
         Shortcut {
             sequence: "Ctrl+S"
-            enabled: studioSurface.visible
+            enabled: studioSurface.visible && !discardDraftDialog.visible
             onActivated: studioRoot.applyDraft()
         }
 
@@ -1187,6 +1259,19 @@ Item {
                         enabled: studioRoot.selectedBlockIndex >= 0
                         onClicked: studioRoot.nudgeSelected(900)
                     }
+                    TextField {
+                        id: exactTimeField
+                        Layout.preferredWidth: 88
+                        enabled: studioRoot.selectedBlockIndex >= 0
+                        placeholderText: "HH:MM"
+                        text: studioRoot.selectedBlockTimeText()
+                        validator: RegularExpressionValidator {
+                            regularExpression: /^([01]?\d|2[0-3]):[0-5]\d$/
+                        }
+                        onAccepted: studioRoot.setSelectedTime(text)
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Exact local start time"
+                    }
                 }
 
                 ListView {
@@ -1349,6 +1434,23 @@ Item {
                 color: studioRoot.textSecondary
                 font.pixelSize: 11
             }
+        }
+    }
+
+    Dialog {
+        id: discardDraftDialog
+        anchors.centerIn: parent
+        modal: true
+        title: "Discard unapplied Channel Studio changes?"
+        standardButtons: Dialog.Yes | Dialog.Cancel
+        onAccepted: studioRoot.finishExit()
+        onRejected: studioRoot.pendingExitDestination = ""
+
+        contentItem: Text {
+            width: 390
+            text: "This draft has changes that have not been applied to the channel."
+            color: studioRoot.textPrimary
+            wrapMode: Text.Wrap
         }
     }
 

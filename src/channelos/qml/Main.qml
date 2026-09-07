@@ -680,7 +680,8 @@ ApplicationWindow {
                  && root.playbackError.length > 0
                  && (root.screen === "home"
                      || root.screen === "guide"
-                     || root.screen === "live")
+                     || root.screen === "live"
+                     || root.screen === "ondemand")
 
         Rectangle {
             anchors.fill: parent

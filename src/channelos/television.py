@@ -104,8 +104,10 @@ class TelevisionSession:
             boundary_selection,
             offset_seconds=0.0,
             program_started_at=started_at,
-            program_ends_at=started_at
-            + timedelta(seconds=boundary_selection.program.duration_seconds),
+            # Calendar filler can be clipped by the next fixed block. Preserve
+            # that authoritative occurrence boundary instead of restoring the
+            # source asset's full duration.
+            program_ends_at=boundary_selection.program_ends_at,
         )
         decision = replace(
             decision,

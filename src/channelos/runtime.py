@@ -564,6 +564,7 @@ class RuntimeStore:
         signature: str,
         *,
         now: datetime | None = None,
+        preserve_clock_on_change: bool = False,
     ) -> PersistedChannelRuntime:
         current = require_aware_utc(now or utc_now())
         with self.connect() as connection:
@@ -573,7 +574,14 @@ class RuntimeStore:
             ).fetchone()
 
             if row is None or row["schedule_signature"] != signature:
-                epoch_text = datetime_to_text(current)
+                preserve_existing_clock = (
+                    row is not None and preserve_clock_on_change
+                )
+                epoch_text = (
+                    str(row["epoch_utc"])
+                    if preserve_existing_clock
+                    else datetime_to_text(current)
+                )
                 connection.execute(
                     """
                     INSERT INTO channel_runtime(
@@ -584,16 +592,22 @@ class RuntimeStore:
                         epoch_utc = excluded.epoch_utc,
                         updated_at = excluded.updated_at
                     """,
-                    (channel_number, signature, epoch_text, epoch_text),
+                    (
+                        channel_number,
+                        signature,
+                        epoch_text,
+                        datetime_to_text(current),
+                    ),
                 )
-                connection.execute(
-                    "DELETE FROM viewer_runtime WHERE channel_number = ?",
-                    (channel_number,),
-                )
+                if not preserve_existing_clock:
+                    connection.execute(
+                        "DELETE FROM viewer_runtime WHERE channel_number = ?",
+                        (channel_number,),
+                    )
                 return PersistedChannelRuntime(
                     channel_number=channel_number,
                     schedule_signature=signature,
-                    epoch_utc=current,
+                    epoch_utc=datetime_from_text(epoch_text),
                 )
 
         return PersistedChannelRuntime(
@@ -851,6 +865,10 @@ class ChannelRuntime:
             channel.definition.channel,
             signature,
             now=now,
+            # Calendar blocks already carry absolute UTC intent. Editing a
+            # future block must not restart today's filler cycle or erase the
+            # viewer's paused/behind-live position.
+            preserve_clock_on_change=(programming.mode == "calendar"),
         )
         return cls(
             channel=channel,

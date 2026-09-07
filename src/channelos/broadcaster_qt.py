@@ -821,6 +821,7 @@ def run_qt(
     engine.rootContext().setContextProperty("channelOS", controller)
 
     video_window = QWindow()
+    video_window.setColor(QColor("#000000"))
     video_window.setFlag(Qt.WindowType.FramelessWindowHint, True)
     video_window.setFlag(Qt.WindowType.WindowDoesNotAcceptFocus, True)
     engine.rootContext().setContextProperty("channelOSVideoWindow", video_window)

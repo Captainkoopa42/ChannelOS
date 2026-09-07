@@ -123,9 +123,35 @@ def test_libvlc_reports_asynchronous_decoder_failure(tmp_path: Path) -> None:
         {"State": type("State", (), {"Error": "error"})},
     )
     backend._loaded_path = tmp_path / "movie.mkv"
+    backend._play_started_at = None
+    backend._surface = None
 
     assert "could not open or decode" in str(backend.playback_error())
     assert str(backend._loaded_path) in str(backend.playback_error())
+
+
+def test_libvlc_reports_playing_without_a_video_output(tmp_path: Path) -> None:
+    class NoVideoPlayer:
+        def get_state(self):
+            return "playing"
+
+        def has_vout(self):
+            return 0
+
+    backend = object.__new__(playback.LibVLCBackend)
+    backend._player = NoVideoPlayer()
+    backend._vlc = type(
+        "FakeVlc",
+        (),
+        {"State": type("State", (), {"Error": "error", "Playing": "playing"})},
+    )
+    backend._loaded_path = tmp_path / "movie.mkv"
+    backend._surface = playback.NativeVideoSurface("windows", 4242)
+    backend._play_started_at = 0.0
+
+    message = str(backend.playback_error())
+    assert "created no video output" in message
+    assert "native windows window 4242" in message
 
 
 class _AudioDeviceNode:

@@ -17,6 +17,7 @@ from channelos.runtime import (
     ReturnChoiceRequired,
     RuntimeStore,
     TelevisionRuntime,
+    ViewerClock,
 )
 
 UTC = timezone.utc
@@ -190,7 +191,7 @@ def test_calendar_runtime_rejects_overlapping_fixed_blocks(tmp_path: Path) -> No
         )
 
 
-def test_calendar_edit_changes_schedule_signature_and_epoch(tmp_path: Path) -> None:
+def test_calendar_edit_preserves_epoch_and_viewer_clock(tmp_path: Path) -> None:
     resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
     epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
     store = RuntimeStore(tmp_path / "runtime.db")
@@ -199,6 +200,12 @@ def test_calendar_edit_changes_schedule_signature_and_epoch(tmp_path: Path) -> N
         store,
         now=epoch,
     )
+    viewer = ViewerClock(
+        schedule_time_utc=epoch + timedelta(seconds=12),
+        observed_at_utc=epoch + timedelta(seconds=12),
+        running=False,
+    )
+    store.save_viewer(resolved.definition.channel, viewer, now=epoch)
     changed_at = epoch + timedelta(minutes=5)
     changed = ChannelRuntime.open(
         calendar_channel(resolved, [(epoch + timedelta(hours=2), 0)]),
@@ -207,7 +214,8 @@ def test_calendar_edit_changes_schedule_signature_and_epoch(tmp_path: Path) -> N
     )
 
     assert changed.signature != first.signature
-    assert changed.epoch_utc == changed_at
+    assert changed.epoch_utc == first.epoch_utc
+    assert store.load_viewer(resolved.definition.channel) == viewer
 
 
 def test_channel_epoch_survives_runtime_restart(tmp_path: Path) -> None:

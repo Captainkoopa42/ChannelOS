@@ -20,19 +20,24 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
     assert 'Drag.keys: ["channelos-block"]' in qml
     assert 'text: "−15 min"' in qml
     assert 'text: "+15 min"' in qml
+    assert 'placeholderText: "HH:MM"' in qml
     assert 'text: "FILLER SOURCES  •  "' in qml
     assert "channelOS.autoFillStudio" in qml
     assert "channelOS.updateChannel" in qml
     assert "channelOS.createChannel" in qml
     assert "Live television is unchanged until Apply" in qml
     assert 'function leaveStudio()' in qml
-    assert 'hostWindow.screen = "home"' in qml
+    assert 'requestExit("home")' in qml
     assert 'function openBroadcaster()' in qml
-    assert 'hostWindow.screen = "broadcaster"' in qml
+    assert 'requestExit("broadcaster")' in qml
+    assert "hostWindow.screen = destination" in qml
     assert 'text: "‹ Home"' in qml
     assert 'text: "Channels"' in qml
     assert "enabled: studioSurface.visible" in qml
     assert "enabled: parent.visible" not in qml
+    assert 'title: "Discard unapplied Channel Studio changes?"' in qml
+    assert "function rebuildBlockIndex()" in qml
+    assert "calendarBlocks.clear()" in qml
 
 
 def test_broadcaster_keeps_classic_editor_and_routes_to_studio() -> None:

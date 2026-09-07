@@ -6,7 +6,7 @@ import pytest
 
 from channelos.library import IndexedMedia, MediaAsset, MediaLocation
 from channelos.on_demand import OnDemandSession
-from channelos.playback import NativeVideoSurface, PlaybackBackend
+from channelos.playback import NativeVideoSurface, PlaybackBackend, PlaybackError
 
 
 class FakeBackend(PlaybackBackend):
@@ -18,6 +18,7 @@ class FakeBackend(PlaybackBackend):
         self.volume = 50
         self.muted = False
         self.audio_output_device_id = None
+        self.error_message = None
         self.events = []
 
     def attach_video_surface(self, surface):
@@ -48,6 +49,9 @@ class FakeBackend(PlaybackBackend):
 
     def has_ended(self):
         return self.ended
+
+    def playback_error(self):
+        return self.error_message
 
     def set_volume(self, percent):
         self.volume = int(percent)
@@ -179,6 +183,16 @@ def test_on_demand_stop_clears_media(tmp_path):
     assert not session.active
     assert not session.state().active
     assert backend.events[-1] == "stop"
+
+
+def test_on_demand_state_surfaces_an_asynchronous_decoder_failure(tmp_path):
+    backend = FakeBackend()
+    session = OnDemandSession(backend_factory=lambda: backend)
+    session.play_media(make_media(tmp_path))
+    backend.error_message = "video output failed"
+
+    with pytest.raises(PlaybackError, match="video output failed"):
+        session.state()
 
 
 def test_rewind_from_ended_media_restarts_decoder(tmp_path):

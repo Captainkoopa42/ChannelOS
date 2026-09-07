@@ -160,7 +160,7 @@ Rich Library work still remaining:
 - [x] Persistent local Continue Watching and resume state for the default viewer
 - [ ] Recently Added
 - [ ] Favorites
-- [ ] Add to Channel — future workflow is defined in the [Channel Studio concept](design/CHANNEL_STUDIO_CONCEPT.md)
+- [x] Add to Channel through the safe existing-channel update path
 - [ ] Friendly normalized format/media labels
 - [ ] Rich title and metadata presentation
 

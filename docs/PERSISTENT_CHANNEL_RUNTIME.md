@@ -81,9 +81,16 @@ schedule signature
 schedule epoch
 ```
 
-If ChannelOS restarts and the signature is unchanged, the original epoch survives. If resolved programming inputs change, ChannelOS deliberately creates a new epoch rather than pretending the old timeline still maps cleanly onto different media.
+If ChannelOS restarts and the signature is unchanged, the original epoch
+survives. If resolved sequential/shuffle inputs change, ChannelOS deliberately
+creates a new epoch rather than pretending the old cycle still maps cleanly
+onto different media. Calendar edits preserve the existing filler epoch and
+Viewer Clock because their fixed blocks already carry absolute UTC intent.
 
-This also provides the current missing-file recovery behavior: after a rescan marks a missing location offline, the resolved online media set changes, the schedule signature changes, and the channel re-anchors using surviving media.
+For repeating channels this also provides missing-file recovery: after a rescan
+marks a location offline, the signature changes and the channel re-anchors using
+surviving media. Calendar channels preserve their filler clock and reject an
+unavailable explicitly scheduled asset during validation.
 
 ## Viewer Clock
 

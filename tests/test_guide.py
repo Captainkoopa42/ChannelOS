@@ -219,6 +219,7 @@ def test_calendar_guide_shows_fixed_blocks_and_filler_from_runtime_truth(tmp_pat
 
     assert [program.display_label for program in programs] == ["01", "01", "00"]
     assert programs[0].end_utc == fixed_start
+    assert programs[0].duration_seconds == pytest.approx(10.0)
     assert "automatic filler" in programs[0].explanation[1]
     assert programs[1].start_utc == fixed_start
     assert "Channel Studio calendar programming" in programs[1].explanation

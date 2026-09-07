@@ -230,6 +230,7 @@ def test_couch_qml_asset_is_present() -> None:
     assert "id: playbackErrorOverlay" in text
     assert 'text: "PLAYBACK UNAVAILABLE"' in text
     assert "root.playbackError.length === 0" in text
+    assert '|| root.screen === "ondemand"' in text
     assert "channelOS ? channelOS.onDemand" in text
     assert "BEHIND LIVE" in text
     assert "NEXT" in text
@@ -274,6 +275,13 @@ def test_couch_qml_asset_is_present() -> None:
     assert "def startHomePlayback" in couch_qt
     assert "def _publish_playback_failure" in couch_qt
     assert 'video_window.setColor(QColor("#000000"))' in couch_qt
+    broadcaster_qt = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "channelos"
+        / "broadcaster_qt.py"
+    ).read_text(encoding="utf-8")
+    assert 'video_window.setColor(QColor("#000000"))' in broadcaster_qt
     assert "NativeWindowStartupGate" in couch_qt
     assert "def _start_home_video_when_ready" in couch_qt
     assert "sample_native_windows" in couch_qt

@@ -120,7 +120,9 @@ def _program_from_selection(
         display_label=selection.media.location.path.stem,
         start_utc=start,
         end_utc=end,
-        duration_seconds=selection.program.duration_seconds,
+        # A fixed calendar block may interrupt a filler asset. Guide duration
+        # describes the scheduled occurrence, not the uncut source file.
+        duration_seconds=max(0.0, (end - start).total_seconds()),
         programming_mode=runtime.channel.definition.programming.mode,
         explanation=_explanation(runtime, selection),
         is_current=start <= reference < end,

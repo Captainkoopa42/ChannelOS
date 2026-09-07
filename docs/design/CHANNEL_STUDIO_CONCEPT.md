@@ -139,8 +139,9 @@ marathons, nested collections, and multiple editor lanes remain later work.
 ## Decisions made for the first implementation
 
 - Studio writes the explicit portable Channel Definition `0.2` calendar extension.
-- Applying a changed calendar changes the schedule signature and uses the normal
-  runtime re-anchor/Viewer Clock invalidation behavior.
+- Applying a changed calendar changes the schedule signature while preserving
+  the existing filler epoch and Viewer Clock. Absolute future blocks therefore
+  do not restart today's channel or erase paused/behind-live continuity.
 - Classic Builder remains available, while Studio is the safe editor for a
   calendar channel so advanced blocks are not silently erased.
 - Fixed blocks reference stable Library asset IDs; source roots remain the
@@ -148,7 +149,7 @@ marathons, nested collections, and multiple editor lanes remain later work.
 - The initial canvas is a clock-based week/month horizon with one timeline lane.
 - Opening, browsing, Auto Fill, and drag/drop remain draft-only. Apply is explicit.
 
-Undo/redo, durable unsaved-draft recovery, and recurring calendar templates are
+Undo/redo, durable draft recovery across application restarts, and recurring calendar templates are
 still intentionally unresolved.
 
 ## Product intent in one sentence

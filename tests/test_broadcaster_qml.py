@@ -59,7 +59,7 @@ class FakeChannelOS(QObject):
                     "sources": ["C:/Owned Media"],
                     "sourceCount": 1,
                     "path": "test-channel-07.yaml",
-                    "managed": False,
+                    "managed": True,
                     "nowTitle": "Current Program",
                     "nextTitle": "Next Program",
                 }
@@ -109,6 +109,21 @@ class FakeChannelOS(QObject):
             "backupPath": "test-channel-07.yaml.bak",
         }
 
+    @Slot(int, result="QVariantMap")
+    def deleteChannel(self, channel_number):
+        assert channel_number == 7
+        self._snapshot = dict(self._snapshot)
+        self._snapshot["channels"] = []
+        self._snapshot["channelCount"] = 0
+        self._snapshot["suggestedChannel"] = 1
+        self.broadcasterChanged.emit()
+        return {
+            "ok": True,
+            "message": "deleted with recovery backup",
+            "channelNumber": channel_number,
+            "backupPath": "channels/channel-0007.yaml.deleted.bak",
+        }
+
 
 def test_broadcaster_qml_instantiates_headlessly() -> None:
     app = QGuiApplication.instance() or QGuiApplication([])
@@ -150,6 +165,17 @@ def test_broadcaster_qml_instantiates_headlessly() -> None:
     assert item.property("selectedChannelIndex") == 0
     assert item.property("feedbackMessage") == ""
 
+    invoked = QMetaObject.invokeMethod(
+        item,
+        "deleteEditingChannel",
+        Qt.ConnectionType.DirectConnection,
+    )
+    assert invoked
+    app.processEvents()
+    assert item.property("editorMode") == "list"
+    assert item.property("editingChannelNumber") == 0
+    assert item.property("feedbackMessage") == "deleted with recovery backup"
+
     host.screen = "home"
     app.processEvents()
     assert host.screen == "home"
@@ -167,6 +193,9 @@ def test_broadcaster_paths_always_bind_as_strings() -> None:
     text = qml_path.read_text(encoding="utf-8")
 
     assert "snapshot.managedDirectory\n                                                  || \"\"" in text
+    assert 'text: "Delete Channel"' in text
+    assert "channelOS.deleteChannel(editingChannelNumber)" in text
+    assert "standardButtons: Dialog.Yes | Dialog.Cancel" in text
 
 
 def test_home_shortcut_escapes_library_navigation() -> None:

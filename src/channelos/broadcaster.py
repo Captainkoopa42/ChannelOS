@@ -51,6 +51,12 @@ class ChannelSaveResult:
     backup_path: Path | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ChannelDeleteResult:
+    record: ChannelRecord
+    backup_path: Path
+
+
 def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
     """Serialize the portable channel contract without runtime-only state."""
 
@@ -681,3 +687,65 @@ class BroadcasterService:
             record=self._records[definition.channel],
             backup_path=backup,
         )
+
+    def delete(self, channel_number: int) -> ChannelDeleteResult:
+        """Remove one managed definition while retaining a recovery backup."""
+
+        number = int(channel_number)
+        try:
+            existing = self._records[number]
+        except KeyError as exc:
+            raise ChannelNotFoundError(
+                f"channel {number} is no longer in the active lineup"
+            ) from exc
+
+        if len(self._records) <= 1:
+            raise BroadcasterError(
+                "ChannelOS requires at least one active channel. Create its "
+                "replacement before deleting this channel."
+            )
+        if not existing.managed:
+            raise BroadcasterError(
+                f"Channel {existing.definition.display_number} was loaded from "
+                f"an external definition at {existing.path}. ChannelOS will not "
+                "delete files outside its managed channel directory."
+            )
+        if any(
+            self._path_key(path) == self._path_key(existing.path)
+            for path in self._explicit_paths
+        ):
+            raise BroadcasterError(
+                f"Channel {existing.definition.display_number} was supplied as "
+                "an explicit startup path and cannot be deleted in Broadcaster."
+            )
+        if not existing.path.is_file():
+            raise ChannelNotFoundError(
+                f"cannot delete Channel {existing.definition.display_number}; "
+                f"{existing.path} no longer exists"
+            )
+
+        # Prove the remaining lineup can still open before moving anything.
+        for record in self.records:
+            if record.channel_number != number:
+                self._resolve_and_validate(record.definition)
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = existing.path.with_name(
+            f"{existing.path.name}.deleted-{timestamp}.bak"
+        )
+        suffix = 1
+        while backup.exists():
+            backup = existing.path.with_name(
+                f"{existing.path.name}.deleted-{timestamp}-{suffix}.bak"
+            )
+            suffix += 1
+
+        os.replace(existing.path, backup)
+        try:
+            self.refresh()
+        except Exception:
+            os.replace(backup, existing.path)
+            self.refresh()
+            raise
+
+        return ChannelDeleteResult(record=existing, backup_path=backup)

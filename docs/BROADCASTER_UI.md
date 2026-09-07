@@ -45,6 +45,7 @@ Together they provide:
 - New in Studio and Open Studio,
 - Create Channel through the Classic Builder remains available,
 - explicit Edit Existing Channel,
+- confirmed deletion of managed Classic channels with recovery backups,
 - channel name and description,
 - numeric channel identity,
 - sequential or deterministic-shuffle programming,
@@ -107,6 +108,17 @@ An explicit edit first copies the previous definition to a sibling `.bak` file, 
 
 These protections are not substitutes for future full Export My Television / version history, but they prevent the management UI from casually destroying a working channel definition.
 
+### Delete is recoverable and lineup-safe
+
+Classic Edit exposes **Delete Channel** only for Broadcaster-managed channel
+definitions. Confirmation is required. ChannelOS validates the remaining
+lineup, moves the YAML definition to a dated `.deleted-*.bak` recovery file,
+clears that channel's Broadcast Clock, Viewer Clock, and tuning references, and
+then reloads the Guide. Original media files are never removed.
+
+The final active channel cannot be deleted, and externally supplied YAML files
+remain under the control of the person or tool that supplied them.
+
 ## Program preview and Studio drafts
 
 Preview does not create a second scheduling engine.
@@ -125,7 +137,7 @@ The Guide and decoder rollover continue to consume that same runtime truth.
 
 ## Immediate Guide integration
 
-After a successful create/edit, the couch application rebuilds the active `GuideService` and `TelevisionRuntime` from the saved portable definitions while reusing the real persistent `RuntimeStore`.
+After a successful create, edit, or delete, the couch application rebuilds the active `GuideService` and `TelevisionRuntime` from the saved portable definitions while reusing the real persistent `RuntimeStore`.
 
 Consequences:
 
@@ -235,7 +247,7 @@ indexed owned media
 The following Broadcaster work remains real future work rather than placeholder claims:
 
 - explicit channel renumber workflow,
-- delete/remove channel with confirmation and continuity rules,
+- restoring a channel directly from its dated deletion backup,
 - recurring weekly templates and calendar-copy tools,
 - undo/redo and durable unsaved-draft recovery,
 - finer timeline snapping beyond exact HH:MM entry and ±15-minute adjustment,

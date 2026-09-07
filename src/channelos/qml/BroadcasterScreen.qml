@@ -236,6 +236,29 @@ Item {
         }
     }
 
+    function requestDeleteChannel() {
+        if (editorMode !== "edit" || editingChannelNumber <= 0)
+            return
+        deleteChannelDialog.open()
+    }
+
+    function deleteEditingChannel() {
+        var removedIndex = selectedChannelIndex
+        var result = channelOS.deleteChannel(editingChannelNumber)
+        setResult(result)
+
+        if (result && result.ok) {
+            snapshot = channelOS.broadcasterSnapshot
+            editorMode = "list"
+            editingChannelNumber = 0
+            previewData = ({ ok: false, items: [] })
+            selectedChannelIndex = Math.max(
+                        0,
+                        Math.min(removedIndex, channels.length - 1))
+            broadcasterFocus.forceActiveFocus()
+        }
+    }
+
     function leaveBroadcaster() {
         editorMode = "list"
         resetFeedback()
@@ -1297,8 +1320,27 @@ Item {
                                 onClicked: broadcasterRoot.cancelEditor()
                             }
 
+                            Button {
+                                id: deleteChannelButton
+                                text: "Delete Channel"
+                                width: 150
+                                visible: broadcasterRoot.editorMode === "edit"
+                                enabled: broadcasterRoot.selectedChannel().managed
+                                         && broadcasterRoot.channels.length > 1
+                                flat: true
+                                palette.buttonText: broadcasterRoot.danger
+                                onClicked: broadcasterRoot.requestDeleteChannel()
+                                ToolTip.visible: hovered && !enabled
+                                ToolTip.text: broadcasterRoot.channels.length <= 1
+                                              ? "Create a replacement before deleting the final channel"
+                                              : "External channel files cannot be deleted from Broadcaster"
+                            }
+
                             Item {
-                                width: Math.max(0, parent.width - 130 - 160 - 160 - 36)
+                                width: Math.max(
+                                           0,
+                                           parent.width - 130 - 160 - 160 - 36
+                                           - (deleteChannelButton.visible ? 162 : 0))
                                 height: 1
                             }
 
@@ -1360,6 +1402,23 @@ Item {
                 width: parent.width * 0.30
                 horizontalAlignment: Text.AlignRight
             }
+        }
+    }
+
+    Dialog {
+        id: deleteChannelDialog
+        anchors.centerIn: parent
+        modal: true
+        title: "Delete Channel "
+               + broadcasterRoot.selectedChannel().displayNumber + "?"
+        standardButtons: Dialog.Yes | Dialog.Cancel
+        onAccepted: broadcasterRoot.deleteEditingChannel()
+
+        contentItem: Text {
+            width: 460
+            text: "This removes the channel from the live lineup and clears its saved clock state. The channel definition is kept as a dated recovery backup. Your media files are never deleted."
+            color: broadcasterRoot.textPrimary
+            wrapMode: Text.Wrap
         }
     }
 

@@ -136,6 +136,56 @@ def test_explicit_edit_creates_backup_and_locks_channel_identity(tmp_path: Path)
     assert load_channel(updated.record.path).channel == 12
 
 
+def test_delete_managed_channel_keeps_recovery_backup(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    deleted_record = service.create(editor(7, source, name="Delete Me")).record
+    service.create(editor(12, source, name="Keep Me"))
+    original = deleted_record.path.read_text(encoding="utf-8")
+
+    result = service.delete(7)
+
+    assert service.channel_numbers == (12,)
+    assert not deleted_record.path.exists()
+    assert result.backup_path.is_file()
+    assert result.backup_path.read_text(encoding="utf-8") == original
+    assert result.backup_path.name.startswith(
+        "channel-0007.yaml.deleted-"
+    )
+    assert result.backup_path.name.endswith(".bak")
+
+
+def test_delete_refuses_to_remove_the_only_channel(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    created = service.create(editor(7, source)).record
+
+    with pytest.raises(BroadcasterError, match="at least one active channel"):
+        service.delete(7)
+
+    assert created.path.is_file()
+    assert service.channel_numbers == (7,)
+
+
+def test_delete_refuses_external_channel_definition(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    managed = tmp_path / "channels"
+    managed.mkdir()
+    external = tmp_path / "external-channel.yaml"
+    external.write_text(
+        serialize_channel(definition_from_editor(editor(7, source))),
+        encoding="utf-8",
+    )
+    service = BroadcasterService((external,), managed, library)
+    service.create(editor(12, source))
+
+    with pytest.raises(BroadcasterError, match="external definition"):
+        service.delete(7)
+
+    assert external.is_file()
+    assert service.channel_numbers == (7, 12)
+
+
 def test_invalid_unindexed_source_fails_before_any_file_is_written(tmp_path: Path) -> None:
     library, _ = make_library(tmp_path)
     managed = tmp_path / "channels"

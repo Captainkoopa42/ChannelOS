@@ -258,6 +258,7 @@ Implemented:
 - duplicate number/file overwrite prevention,
 - explicit Edit path with identity lock,
 - `.bak` backup before updates,
+- confirmed managed-channel deletion with dated recovery backup and clock cleanup,
 - atomic replace,
 - portable Channel Definition 0.1/0.2 YAML in `channels/`,
 - immediate Guide/runtime/numeric-tuning reload,
@@ -269,7 +270,7 @@ Implemented:
 - editable sequential/shuffle Auto Fill,
 - automatic filler in calendar gaps,
 - UTC portable starts with local-time presentation,
-- full resolver/runtime validation before Apply.
+- full resolver/runtime validation before Apply,
 - discard confirmation for unapplied drafts,
 - exact local HH:MM start entry alongside ±15-minute adjustment,
 - preserved filler/Viewer Clock continuity when calendar definitions change.

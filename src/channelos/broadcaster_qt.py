@@ -638,6 +638,33 @@ class BroadcasterCouchController(CouchController):
         ) as exc:
             return self._error(exc)
 
+    @Slot(int, result="QVariantMap")
+    def deleteChannel(self, channel_number: int) -> dict[str, object]:
+        try:
+            result = self._broadcaster.delete(int(channel_number))
+            self._reload_lineup()
+            self._runtime_store.delete_channel(result.record.channel_number)
+            self.refreshBroadcaster()
+            definition = result.record.definition
+            return {
+                "ok": True,
+                "message": (
+                    f"Deleted Channel {definition.display_number} - "
+                    f"{definition.name}. Its media files were not changed. "
+                    f"Recovery backup: {result.backup_path.name}"
+                ),
+                "channelNumber": definition.channel,
+                "backupPath": str(result.backup_path),
+            }
+        except (
+            BroadcasterError,
+            ChannelRuntimeError,
+            ChannelValidationError,
+            OSError,
+            ValueError,
+        ) as exc:
+            return self._error(exc)
+
 
 class BroadcasterKeyFilter(CouchKeyFilter):
     """Add management navigation without stealing editor/search text input."""

@@ -653,6 +653,25 @@ class RuntimeStore:
             running=bool(row["running"]),
         )
 
+    def delete_channel(self, channel_number: int) -> None:
+        """Forget channel-specific clocks and stale tuning references."""
+
+        number = int(channel_number)
+        with self.connect() as connection:
+            connection.execute(
+                "DELETE FROM viewer_runtime WHERE channel_number = ?",
+                (number,),
+            )
+            connection.execute(
+                "DELETE FROM channel_runtime WHERE channel_number = ?",
+                (number,),
+            )
+            for key in ("current_channel", "previous_channel"):
+                connection.execute(
+                    "DELETE FROM runtime_meta WHERE key = ? AND value = ?",
+                    (key, str(number)),
+                )
+
     def save_on_demand_watch(
         self,
         asset_id: str,

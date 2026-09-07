@@ -218,6 +218,28 @@ def test_calendar_edit_preserves_epoch_and_viewer_clock(tmp_path: Path) -> None:
     assert store.load_viewer(resolved.definition.channel) == viewer
 
 
+def test_delete_channel_clears_clocks_and_only_matching_tuning(tmp_path: Path) -> None:
+    store = RuntimeStore(tmp_path / "runtime.db")
+    now = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    store.ensure_channel(7, "schedule-seven", now=now)
+    store.save_viewer(
+        7,
+        ViewerClock(now, now, running=False),
+        now=now,
+    )
+    store.set_tuning(7, 12)
+
+    store.delete_channel(7)
+
+    assert store.load_viewer(7) is None
+    assert store.get_tuning() == (None, 12)
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT 1 FROM channel_runtime WHERE channel_number = 7"
+        ).fetchone()
+    assert row is None
+
+
 def test_channel_epoch_survives_runtime_restart(tmp_path: Path) -> None:
     resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)

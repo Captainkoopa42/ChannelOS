@@ -7,6 +7,28 @@
 
 ---
 
+## 0. Branch ownership for future development agents
+
+Keep platform work separated deliberately:
+
+- `ChannelOS-for-Linux` owns Linux-specific implementation, packaging,
+  real-machine validation, and Ubuntu/Linux workflow changes.
+- `agent/broadcaster-channel-builder` owns the active Windows ChannelOS 2.0
+  Broadcaster and Channel Studio work.
+- Do not add the Windows Broadcaster branch to Linux/Ubuntu push triggers as
+  part of a Windows task. Linux CI is not evidence that native Windows HWND,
+  libVLC, packaging, or display behavior works.
+- Do not merge, switch, or copy changes between these branches merely because
+  code appears portable. A portable fix should be reviewed and moved
+  deliberately under an explicit cross-platform task.
+
+Future Linux work should add its Linux QML runtime coverage here when the
+corresponding Broadcaster/Studio implementation is intentionally brought over.
+Until then, keep that coverage and all Windows playback gates with their owning
+branch.
+
+---
+
 ## 1. Purpose
 
 This document defines what is required to make ChannelOS a genuine Linux

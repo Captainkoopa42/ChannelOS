@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import io
 import json
 import zipfile
 from pathlib import Path
@@ -42,6 +43,7 @@ def _fake_runtime_package(path: Path) -> dict[str, object]:
         "source_prefix": "build/x64/",
         "download_url": "https://api.nuget.org/example.nupkg",
         "sha256": digest,
+        "size": path.stat().st_size,
         "license": "LGPL-2.1-or-later",
         "project_url": "https://example.invalid",
         "corresponding_source": "https://example.invalid/source",
@@ -55,6 +57,62 @@ def test_runtime_lock_pins_current_lgpl_package() -> None:
     assert lock["version"] == "3.0.23.1"
     assert lock["license"] == "LGPL-2.1-or-later"
     assert len(lock["sha256"]) == 64
+    assert lock["size"] == 134279001
+
+
+def test_runtime_download_retries_a_truncated_response(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = tmp_path / "source.nupkg"
+    lock = _fake_runtime_package(archive)
+    expected = archive.read_bytes()
+    responses = [expected[:100], expected[:200], expected]
+
+    class Download(io.BytesIO):
+        def __enter__(self) -> "Download":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self.close()
+
+    def fake_urlopen(_request: object, timeout: int) -> Download:
+        assert timeout == 120
+        return Download(responses.pop(0))
+
+    monkeypatch.setattr(package_windows.urllib.request, "urlopen", fake_urlopen)
+
+    downloaded = package_windows.download_locked_runtime(lock, tmp_path / "cache")
+
+    assert downloaded.read_bytes() == expected
+    assert responses == []
+
+
+def test_runtime_download_explains_repeated_verification_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = tmp_path / "source.nupkg"
+    lock = _fake_runtime_package(archive)
+
+    class Download(io.BytesIO):
+        def __enter__(self) -> "Download":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            self.close()
+
+    monkeypatch.setattr(
+        package_windows.urllib.request,
+        "urlopen",
+        lambda _request, timeout: Download(b"truncated"),
+    )
+
+    with pytest.raises(
+        package_windows.PackageError,
+        match="failed verification after 3 attempts",
+    ):
+        package_windows.download_locked_runtime(lock, tmp_path / "cache")
 
 
 def test_runtime_staging_copies_only_runtime_files(tmp_path: Path) -> None:

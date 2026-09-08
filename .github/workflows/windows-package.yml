@@ -3,6 +3,7 @@ name: windows-package
 on:
   push:
     branches: ["agent/broadcaster-channel-builder"]
+    tags: ["working-studio-beta-testing-*"]
   pull_request:
   workflow_dispatch:
 

@@ -22,6 +22,7 @@ PACKAGING_ROOT = PROJECT_ROOT / "packaging" / "windows"
 RUNTIME_LOCK_PATH = PACKAGING_ROOT / "runtime-lock.json"
 SPEC_PATH = PACKAGING_ROOT / "ChannelOS.spec"
 REQUIRED_VLC_FILES = ("libvlc.dll", "libvlccore.dll")
+RUNTIME_DOWNLOAD_ATTEMPTS = 3
 PACKAGE_LICENSE_DOCUMENTS = (
     "LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
@@ -81,6 +82,7 @@ def load_runtime_lock(path: Path = RUNTIME_LOCK_PATH) -> dict[str, Any]:
         "source_prefix",
         "download_url",
         "sha256",
+        "size",
         "license",
         "project_url",
         "corresponding_source",
@@ -106,21 +108,51 @@ def download_locked_runtime(lock: dict[str, Any], cache_directory: Path) -> Path
         return destination
 
     temporary = destination.with_suffix(".download")
-    temporary.unlink(missing_ok=True)
-    try:
-        with urllib.request.urlopen(lock["download_url"], timeout=120) as response:
-            with temporary.open("wb") as output:
-                shutil.copyfileobj(response, output)
-        actual = sha256_file(temporary)
-        if actual != lock["sha256"]:
-            raise PackageError(
-                "libVLC download hash mismatch: "
-                f"expected {lock['sha256']}, received {actual}"
-            )
-        temporary.replace(destination)
-    finally:
+    last_error = "unknown download failure"
+    for attempt in range(1, RUNTIME_DOWNLOAD_ATTEMPTS + 1):
         temporary.unlink(missing_ok=True)
-    return destination
+        try:
+            request = urllib.request.Request(
+                lock["download_url"],
+                headers={"User-Agent": "ChannelOS-Windows-Packager/0.0.2"},
+            )
+            with urllib.request.urlopen(request, timeout=120) as response:
+                with temporary.open("wb") as output:
+                    shutil.copyfileobj(response, output)
+
+            actual_size = temporary.stat().st_size
+            if actual_size != lock["size"]:
+                raise PackageError(
+                    "libVLC download size mismatch: "
+                    f"expected {lock['size']} bytes, received {actual_size} bytes"
+                )
+
+            actual_hash = sha256_file(temporary)
+            if actual_hash != lock["sha256"]:
+                raise PackageError(
+                    "libVLC download hash mismatch: "
+                    f"expected {lock['sha256']}, received {actual_hash}"
+                )
+
+            temporary.replace(destination)
+            return destination
+        except (OSError, PackageError) as exc:
+            last_error = str(exc)
+            if attempt < RUNTIME_DOWNLOAD_ATTEMPTS:
+                print(
+                    "libVLC download did not pass verification "
+                    f"(attempt {attempt}/{RUNTIME_DOWNLOAD_ATTEMPTS}); retrying...",
+                    file=sys.stderr,
+                )
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    raise PackageError(
+        "libVLC download failed verification after "
+        f"{RUNTIME_DOWNLOAD_ATTEMPTS} attempts. Last error: {last_error}. "
+        "If every attempt reports the same wrong size or hash, a proxy, VPN, "
+        "antivirus web filter, or unstable connection may be changing the download."
+    )
 
 
 def _safe_member(name: str) -> PurePosixPath:

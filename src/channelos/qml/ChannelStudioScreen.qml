@@ -25,6 +25,7 @@ Item {
     property var hostWindow: null
     property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
     property var mediaLibrary: draftData.media || []
+    property var groupsLibrary: draftData.groups || []
     property var blocksByDay: ({})
     property string viewMode: "week"
     property date anchorDate: new Date()
@@ -141,10 +142,16 @@ Item {
              blockIndex < calendarBlocks.count;
              ++blockIndex) {
             var block = calendarBlocks.get(blockIndex)
-            blocks.push({
+            var item = {
                 assetId: String(block.assetId),
                 startUtc: String(block.startUtc)
-            })
+            }
+            var fillerIds = parseAssetIds(block.fillerAssetIdsJson)
+            if (fillerIds.length) {
+                item.fillerMode = String(block.fillerMode || "sequential")
+                item.fillerAssetIds = fillerIds
+            }
+            blocks.push(item)
         }
 
         return {
@@ -204,7 +211,10 @@ Item {
             sourceRoot: String(block.sourceRoot || media.sourceRoot || ""),
             durationSeconds: duration,
             startUtc: start.toISOString(),
-            endUtc: end.toISOString()
+            endUtc: end.toISOString(),
+            fillerMode: String(block.fillerMode || ""),
+            fillerAssetIdsJson: JSON.stringify(block.fillerAssetIds || []),
+            fillerGroupName: String(block.fillerGroupName || "")
         })
     }
 
@@ -224,7 +234,11 @@ Item {
             sourceRoot: String(block.sourceRoot || media.sourceRoot || ""),
             durationSeconds: duration,
             startUtc: start.toISOString(),
-            endUtc: end.toISOString()
+            endUtc: end.toISOString(),
+            fillerMode: String(block.fillerMode || ""),
+            fillerAssetIdsJson: String(block.fillerAssetIdsJson
+                                       || JSON.stringify(block.fillerAssetIds || [])),
+            fillerGroupName: String(block.fillerGroupName || "")
         }
     }
 
@@ -241,7 +255,10 @@ Item {
                 sourceRoot: current.sourceRoot,
                 durationSeconds: current.durationSeconds,
                 startUtc: current.startUtc,
-                endUtc: current.endUtc
+                endUtc: current.endUtc,
+                fillerMode: current.fillerMode,
+                fillerAssetIdsJson: current.fillerAssetIdsJson,
+                fillerGroupName: current.fillerGroupName
             })
         }
         blocks.sort(function(left, right) {
@@ -295,6 +312,7 @@ Item {
 
         draftData = result.draft || ({})
         mediaLibrary = draftData.media || []
+        groupsLibrary = draftData.groups || []
         editingChannelNumber = Number(draftData.editingChannelNumber || 0)
         channelNumberField.text = String(draftData.channel || 1)
         channelNameField.text = String(draftData.name || "")
@@ -351,6 +369,112 @@ Item {
         }
         result.sort()
         return result
+    }
+
+    function parseAssetIds(value) {
+        try {
+            var parsed = JSON.parse(String(value || "[]"))
+            return Array.isArray(parsed) ? parsed : []
+        } catch (error) {
+            return []
+        }
+    }
+
+    function selectedDayAssetIds() {
+        var ids = []
+        var seen = ({})
+        var blocks = blocksByDay[selectedDayKey] || []
+        for (var index = 0; index < blocks.length; ++index) {
+            var assetId = String(blocks[index].assetId || "")
+            if (assetId.length && !seen[assetId]) {
+                seen[assetId] = true
+                ids.push(assetId)
+            }
+        }
+        return ids
+    }
+
+    function createGroupFromSelectedDay() {
+        var ids = selectedDayAssetIds()
+        if (!ids.length) {
+            feedbackMessage = "The selected day has no fixed programs to save as a group."
+            feedbackIsError = true
+            return
+        }
+        var result = channelOS.createStudioGroup(
+                    groupNameField.text,
+                    ids,
+                    groupModeBox.currentText.toLowerCase())
+        if (!result || !result.ok) {
+            feedbackMessage = result && result.message
+                    ? String(result.message) : "Program group could not be saved."
+            feedbackIsError = true
+            return
+        }
+        groupsLibrary = result.groups || []
+        groupNameField.text = ""
+        feedbackMessage = String(result.message)
+        feedbackIsError = false
+    }
+
+    function assignSelectedGroupAsFiller() {
+        if (selectedBlockIndex < 0 || selectedBlockIndex >= calendarBlocks.count) {
+            feedbackMessage = "Select a show on the timeline first."
+            feedbackIsError = true
+            return
+        }
+        if (groupChoiceBox.currentIndex < 0
+                || groupChoiceBox.currentIndex >= groupsLibrary.length) {
+            feedbackMessage = "Create or select a reusable group first."
+            feedbackIsError = true
+            return
+        }
+        var group = groupsLibrary[groupChoiceBox.currentIndex]
+        if (Number(group.availableCount || 0) !== Number(group.memberCount || 0)) {
+            feedbackMessage = "Every item in this group must be locally available before assignment."
+            feedbackIsError = true
+            return
+        }
+        var groupMedia = group.media || []
+        for (var mediaIndex = 0; mediaIndex < groupMedia.length; ++mediaIndex)
+            appendSource(groupMedia[mediaIndex].sourceRoot)
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerMode",
+                                   String(group.mode || "sequential"))
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerAssetIdsJson",
+                                   JSON.stringify(group.assetIds || []))
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerGroupName",
+                                   String(group.name || "Program group"))
+        dirty = true
+        feedbackMessage = "“" + group.name + "” will fill the gap after the selected show."
+        feedbackIsError = false
+    }
+
+    function clearSelectedShowFiller() {
+        if (selectedBlockIndex < 0 || selectedBlockIndex >= calendarBlocks.count)
+            return
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerMode", "")
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerAssetIdsJson", "[]")
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerGroupName", "")
+        dirty = true
+        feedbackMessage = "The selected show now returns to normal channel filler."
+        feedbackIsError = false
+    }
+
+    function deleteSelectedGroup() {
+        if (groupChoiceBox.currentIndex < 0
+                || groupChoiceBox.currentIndex >= groupsLibrary.length)
+            return
+        var group = groupsLibrary[groupChoiceBox.currentIndex]
+        var result = channelOS.deleteStudioGroup(String(group.groupId))
+        if (!result || !result.ok) {
+            feedbackMessage = result && result.message
+                    ? String(result.message) : "Program group could not be deleted."
+            feedbackIsError = true
+            return
+        }
+        groupsLibrary = result.groups || []
+        feedbackMessage = String(result.message)
+        feedbackIsError = false
     }
 
     function blocksForDay(day) {
@@ -440,7 +564,8 @@ Item {
             return
         var first = calendarBlocks.get(firstIndex)
         var second = calendarBlocks.get(secondIndex)
-        var fields = ["assetId", "title", "path", "sourceRoot", "durationSeconds"]
+        var fields = ["assetId", "title", "path", "sourceRoot", "durationSeconds",
+                      "fillerMode", "fillerAssetIdsJson", "fillerGroupName"]
         for (var fieldIndex = 0; fieldIndex < fields.length; ++fieldIndex) {
             var field = fields[fieldIndex]
             var firstValue = first[field]
@@ -1383,6 +1508,10 @@ Item {
                         font.pixelSize: 11
                     }
                     Button {
+                        text: "Groups & Show Filler"
+                        onClicked: programGroupDialog.open()
+                    }
+                    Button {
                         text: "−15 min"
                         enabled: studioRoot.selectedBlockIndex >= 0
                         onClicked: studioRoot.nudgeSelected(-900)
@@ -1484,6 +1613,16 @@ Item {
                                 text: studioRoot.durationLabel(timelineCard.blockData.durationSeconds)
                                 color: studioRoot.textSecondary
                                 font.pixelSize: 10
+                            }
+                            Text {
+                                width: parent.width
+                                visible: String(timelineCard.blockData.fillerGroupName || "").length > 0
+                                text: "AFTER SHOW  •  "
+                                      + String(timelineCard.blockData.fillerGroupName || "")
+                                color: studioRoot.warning
+                                font.pixelSize: 9
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
                             }
                             Rectangle {
                                 width: parent.width
@@ -1669,6 +1808,122 @@ Item {
             text: "This draft has changes that have not been applied to the channel."
             color: studioRoot.textPrimary
             wrapMode: Text.Wrap
+        }
+    }
+
+    Dialog {
+        id: programGroupDialog
+        anchors.centerIn: parent
+        width: Math.min(studioRoot.width - 80, 620)
+        modal: true
+        title: "Reusable Groups & Show-Specific Filler"
+        standardButtons: Dialog.Close
+
+        contentItem: ColumnLayout {
+            width: 560
+            spacing: 12
+
+            Text {
+                Layout.fillWidth: true
+                text: "Save the unique fixed programs on "
+                      + Qt.formatDate(new Date(studioRoot.selectedDayKey + "T00:00:00"),
+                                      "dddd, MMMM d")
+                      + " as a group reusable by every Channel Studio draft."
+                color: studioRoot.textSecondary
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                TextField {
+                    id: groupNameField
+                    Layout.fillWidth: true
+                    placeholderText: "Group name — e.g. Saturday Cartoons"
+                }
+                ComboBox {
+                    id: groupModeBox
+                    model: ["Sequential", "Shuffle"]
+                    Layout.preferredWidth: 130
+                }
+                Button {
+                    text: "Save Day as Group"
+                    enabled: groupNameField.text.trim().length > 0
+                             && studioRoot.selectedDayAssetIds().length > 0
+                    onClicked: studioRoot.createGroupFromSelectedDay()
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                height: 1
+                color: studioRoot.line
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Attach a group to the selected show. Once that show ends, "
+                      + "ChannelOS uses this group for the gap until the next fixed block."
+                color: studioRoot.textPrimary
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                ComboBox {
+                    id: groupChoiceBox
+                    Layout.fillWidth: true
+                    model: studioRoot.groupsLibrary
+                    textRole: "name"
+                }
+                Button {
+                    text: "Use After Selected Show"
+                    enabled: groupChoiceBox.count > 0
+                             && groupChoiceBox.currentIndex >= 0
+                             && groupChoiceBox.currentIndex < studioRoot.groupsLibrary.length
+                             && studioRoot.selectedBlockIndex >= 0
+                             && Number(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].availableCount || 0)
+                                === Number(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].memberCount || 0)
+                    onClicked: studioRoot.assignSelectedGroupAsFiller()
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: groupChoiceBox.currentIndex >= 0
+                      && groupChoiceBox.currentIndex < studioRoot.groupsLibrary.length
+                      ? Number(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].availableCount || 0)
+                        + " of "
+                        + Number(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].memberCount || 0)
+                        + " local items available • "
+                        + String(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].mode || "sequential")
+                      : "No reusable groups saved yet."
+                color: studioRoot.textSecondary
+                font.pixelSize: 11
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    text: "Use Normal Filler After Show"
+                    enabled: studioRoot.selectedBlockIndex >= 0
+                    onClicked: studioRoot.clearSelectedShowFiller()
+                }
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: "Delete Reusable Group"
+                    enabled: groupChoiceBox.count > 0
+                    onClicked: studioRoot.deleteSelectedGroup()
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Applied channels embed the group's asset IDs. Deleting or editing "
+                      + "the reusable authoring group cannot silently change a live channel."
+                color: studioRoot.warning
+                font.pixelSize: 10
+                wrapMode: Text.Wrap
+            }
         }
     }
 

@@ -82,6 +82,13 @@ def _explanation(runtime: ChannelRuntime, selection: BroadcastSelection) -> tupl
                 f"fixed calendar block {position} of {count}",
                 f"asset {selection.media.asset.asset_id}",
             )
+        if selection.origin == "show-filler":
+            return (
+                f"Channel {runtime.channel_number}",
+                "show-specific automatic filler",
+                "uses the reusable group attached to the preceding fixed show",
+                f"asset {selection.media.asset.asset_id}",
+            )
         return (
             f"Channel {runtime.channel_number}",
             f"{programming.filler_mode} automatic filler",

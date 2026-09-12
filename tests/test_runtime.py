@@ -175,6 +175,89 @@ def test_calendar_blocks_override_and_normal_cycle_fills_gaps(tmp_path: Path) ->
     assert after.offset_seconds == pytest.approx(5.0)
 
 
+def test_calendar_show_can_use_its_own_filler_group(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0, 60.0])
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    fixed_start = epoch + timedelta(seconds=40)
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.3",
+            "channel": resolved.definition.channel,
+            "name": resolved.definition.name,
+            "sources": [
+                {"path": str(source.path)}
+                for source in resolved.definition.sources
+            ],
+            "programming": {
+                "mode": "calendar",
+                "filler_mode": "sequential",
+                "calendar": [
+                    {
+                        "start_utc": fixed_start.isoformat(),
+                        "asset_id": resolved.media[2].asset.asset_id,
+                        "filler": {
+                            "mode": "sequential",
+                            "asset_ids": [resolved.media[1].asset.asset_id],
+                        },
+                    }
+                ],
+            },
+        }
+    )
+    runtime = ChannelRuntime.open(
+        ResolvedChannel(definition=definition, media=resolved.media),
+        RuntimeStore(tmp_path / "runtime.db"),
+        now=epoch,
+    )
+
+    before = runtime.broadcast_at(epoch + timedelta(seconds=35))
+    after = runtime.broadcast_at(fixed_start + timedelta(seconds=65))
+
+    assert before.origin == "filler"
+    assert after.origin == "show-filler"
+    assert after.media.location.path.name == "01.mp4"
+    assert after.offset_seconds == pytest.approx(5.0)
+
+
+def test_calendar_show_filler_rejects_media_outside_channel_sources(
+    tmp_path: Path,
+) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
+    start = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.3",
+            "channel": resolved.definition.channel,
+            "name": resolved.definition.name,
+            "sources": [
+                {"path": str(source.path)}
+                for source in resolved.definition.sources
+            ],
+            "programming": {
+                "mode": "calendar",
+                "filler_mode": "sequential",
+                "calendar": [
+                    {
+                        "start_utc": start.isoformat(),
+                        "asset_id": resolved.media[0].asset.asset_id,
+                        "filler": {
+                            "mode": "sequential",
+                            "asset_ids": ["sha256:missing"],
+                        },
+                    }
+                ],
+            },
+        }
+    )
+
+    with pytest.raises(ChannelRuntimeError, match="show-specific filler"):
+        ChannelRuntime.open(
+            ResolvedChannel(definition=definition, media=resolved.media),
+            RuntimeStore(tmp_path / "runtime.db"),
+            now=start,
+        )
+
+
 def test_calendar_runtime_rejects_overlapping_fixed_blocks(tmp_path: Path) -> None:
     resolved = build_resolved_channel(tmp_path, [60.0, 45.0])
     epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)

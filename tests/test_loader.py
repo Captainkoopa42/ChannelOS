@@ -97,6 +97,61 @@ def test_calendar_schema_normalizes_and_sorts_aware_starts() -> None:
     )
 
 
+def test_schema_0_3_accepts_self_contained_show_specific_filler() -> None:
+    channel = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.3",
+            "channel": 9,
+            "name": "Grouped Calendar TV",
+            "sources": [{"path": "/media/test"}],
+            "programming": {
+                "mode": "calendar",
+                "filler_mode": "sequential",
+                "calendar": [
+                    {
+                        "start_utc": "2026-09-08T10:00:00Z",
+                        "asset_id": "sha256:show",
+                        "filler": {
+                            "mode": "shuffle",
+                            "asset_ids": ["sha256:a", "sha256:b"],
+                        },
+                    }
+                ],
+            },
+        }
+    )
+
+    block = channel.programming.calendar[0]
+    assert block.filler is not None
+    assert block.filler.mode == "shuffle"
+    assert block.filler.asset_ids == ("sha256:a", "sha256:b")
+
+
+def test_show_specific_filler_rejects_duplicate_assets() -> None:
+    with pytest.raises(ChannelValidationError, match="contains duplicate"):
+        ChannelDefinition.from_mapping(
+            {
+                "schema_version": "0.3",
+                "channel": 9,
+                "name": "Grouped Calendar TV",
+                "sources": [{"path": "/media/test"}],
+                "programming": {
+                    "mode": "calendar",
+                    "calendar": [
+                        {
+                            "start_utc": "2026-09-08T10:00:00Z",
+                            "asset_id": "sha256:show",
+                            "filler": {
+                                "mode": "sequential",
+                                "asset_ids": ["sha256:a", "sha256:a"],
+                            },
+                        }
+                    ],
+                },
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("calendar", "message"),
     [

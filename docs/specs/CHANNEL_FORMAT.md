@@ -30,6 +30,7 @@ Required string. Supported values are:
 
 - `0.1` for sequential and shuffle channels,
 - `0.2` for the compatible calendar extension used by Channel Studio.
+- `0.3` for calendar blocks with an embedded show-specific filler pool.
 
 ### `channel`
 
@@ -117,6 +118,37 @@ aware UTC timestamps so the portable definition is unambiguous. Calendar
 blocks are one-time fixed starts. Before, between, and after those blocks, the
 configured filler cycle keeps the channel broadcasting without decoding every
 channel in the background.
+
+Draft 0.3 adds an optional `filler` mapping to an individual calendar block.
+Its `mode` is `sequential` or `shuffle`, and `asset_ids` is a non-empty list of
+stable Library assets. Once that fixed show ends, the block's filler pool airs
+until the next fixed block; gaps before the first block and blocks without this
+mapping continue using the channel-wide filler.
+
+```yaml
+schema_version: "0.3"
+channel: 9
+name: Saturday Television
+sources:
+  - path: /media/TV
+programming:
+  mode: calendar
+  filler_mode: sequential
+  calendar:
+    - start_utc: "2026-09-12T12:00:00+00:00"
+      asset_id: "sha256:show..."
+      filler:
+        mode: shuffle
+        asset_ids:
+          - "sha256:bumper-one..."
+          - "sha256:bumper-two..."
+```
+
+Reusable Studio groups are local authoring conveniences stored under the
+managed channel directory. When assigned to a show, their members are copied
+into the portable channel definition. Playback therefore remains offline and
+self-contained: later deleting a reusable group cannot silently change an
+already-applied channel.
 
 ### `presentation`
 

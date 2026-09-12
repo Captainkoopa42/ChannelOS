@@ -83,6 +83,22 @@ class FakeStudioController(QObject):
                 "fillerMode": "sequential",
                 "avoidRepeatDays": 0,
                 "sources": ["C:/Owned Media"],
+                "groups": [
+                    {
+                        "groupId": "test-group",
+                        "name": "Test Bumpers",
+                        "mode": "sequential",
+                        "assetIds": ["sha256:test"],
+                        "memberCount": 1,
+                        "availableCount": 1,
+                        "media": [
+                            {
+                                "assetId": "sha256:test",
+                                "sourceRoot": "C:/Owned Media",
+                            }
+                        ],
+                    }
+                ],
                 "media": [
                     {
                         "assetId": "sha256:test",
@@ -114,6 +130,27 @@ class FakeStudioController(QObject):
     @Slot(result="QVariantMap")
     def cancelStudioAutoFill(self):
         return {"ok": False, "message": "not active"}
+
+    @Slot(str, "QVariantList", str, result="QVariantMap")
+    def createStudioGroup(self, name: str, asset_ids, mode: str):
+        group = {
+            "groupId": "test-group",
+            "name": name,
+            "mode": mode,
+            "assetIds": list(asset_ids),
+            "memberCount": len(asset_ids),
+            "availableCount": len(asset_ids),
+        }
+        return {
+            "ok": True,
+            "message": "saved",
+            "group": group,
+            "groups": [group],
+        }
+
+    @Slot(str, result="QVariantMap")
+    def deleteStudioGroup(self, _group_id: str):
+        return {"ok": True, "message": "deleted", "groups": []}
 
     @Slot("QVariantMap", result="QVariantMap")
     def createChannel(self, _editor):
@@ -152,6 +189,15 @@ def test_channel_studio_component_loads_and_guards_an_unapplied_draft() -> None:
     assert item.property("editingChannelNumber") == 7
     assert item.property("selectedBlockIndex") == 0
     assert item.property("dirty") is False
+
+    assert QMetaObject.invokeMethod(
+        item,
+        "assignSelectedGroupAsFiller",
+        Qt.ConnectionType.DirectConnection,
+    )
+    assert item.property("dirty") is True
+    assert "Test Bumpers" in str(item.property("feedbackMessage"))
+    item.setProperty("dirty", False)
 
     controller.studioAutoFillCompleted.emit(
         {

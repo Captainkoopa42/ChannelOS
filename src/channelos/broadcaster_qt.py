@@ -672,6 +672,51 @@ class BroadcasterCouchController(CouchController):
         ) as exc:
             return self._error(exc)
 
+    @Slot(str, "QVariantList", str, result="QVariantMap")
+    def createStudioGroup(
+        self,
+        name: str,
+        asset_ids: list[object],
+        mode: str,
+    ) -> dict[str, object]:
+        try:
+            group = self._broadcaster.create_studio_group(
+                name,
+                (str(value) for value in asset_ids),
+                mode,
+            )
+            return {
+                "ok": True,
+                "message": (
+                    f"Saved reusable group {group['name']} with "
+                    f"{group['memberCount']} item(s)"
+                ),
+                "group": group,
+                "groups": self._broadcaster.studio_groups(),
+            }
+        except (
+            BroadcasterError,
+            ChannelValidationError,
+            OSError,
+            ValueError,
+        ) as exc:
+            return self._error(exc)
+
+    @Slot(str, result="QVariantMap")
+    def deleteStudioGroup(self, group_id: str) -> dict[str, object]:
+        try:
+            self._broadcaster.delete_studio_group(group_id)
+            return {
+                "ok": True,
+                "message": (
+                    "Reusable group deleted. Existing draft assignments keep "
+                    "their embedded media snapshot."
+                ),
+                "groups": self._broadcaster.studio_groups(),
+            }
+        except (BroadcasterError, OSError, ValueError) as exc:
+            return self._error(exc)
+
     def _set_studio_auto_fill(self, **changes: object) -> None:
         updated = dict(self._studio_auto_fill)
         updated.update(changes)

@@ -27,6 +27,11 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
     assert "onStudioAutoFillCompleted" in qml
     assert '"Cancel Auto Fill"' in qml
     assert "ProgressBar" in qml
+    assert 'text: "Groups & Show Filler"' in qml
+    assert "channelOS.createStudioGroup" in qml
+    assert "channelOS.deleteStudioGroup" in qml
+    assert "fillerAssetIdsJson" in qml
+    assert 'text: "Use After Selected Show"' in qml
     assert "channelOS.updateChannel" in qml
     assert "channelOS.createChannel" in qml
     assert "Live television is unchanged until Apply" in qml

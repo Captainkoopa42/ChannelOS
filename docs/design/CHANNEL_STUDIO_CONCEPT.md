@@ -126,6 +126,8 @@ The first Channel Studio slice now supports:
 - week and month calendar views,
 - fixed clock-based blocks stored as stable Library asset IDs,
 - sequential or shuffle filler for all uncovered time,
+- reusable local program groups that can be shared across Studio drafts,
+- show-specific sequential/shuffle filler after an individual fixed block,
 - background Auto Fill with visible progress and cooperative cancellation,
   generating real editable blocks for the visible range,
 - drag exact Library assets into the draft,
@@ -134,12 +136,13 @@ The first Channel Studio slice now supports:
 - preview durations and exact local calendar times,
 - return to the Classic Builder without losing representable information.
 
-Recurring weekly templates, weighted rotations, bumpers, virtual in/out points,
+Recurring weekly templates, weighted rotations, virtual in/out points,
 marathons, nested collections, and multiple editor lanes remain later work.
 
 ## Decisions made for the first implementation
 
-- Studio writes the explicit portable Channel Definition `0.2` calendar extension.
+- Studio writes portable Channel Definition `0.2` calendars and upgrades a
+  draft to `0.3` only when a show-specific filler snapshot is assigned.
 - Applying a changed calendar changes the schedule signature while preserving
   the existing filler epoch and Viewer Clock. Absolute future blocks therefore
   do not restart today's channel or erase paused/behind-live continuity.
@@ -147,6 +150,8 @@ marathons, nested collections, and multiple editor lanes remain later work.
   calendar channel so advanced blocks are not silently erased.
 - Fixed blocks reference stable Library asset IDs; source roots remain the
   dynamic filler pool.
+- Reusable groups are authoring templates. Applying one embeds its stable asset
+  IDs in schema 0.3, keeping live playback independent of mutable Studio state.
 - The initial canvas is a clock-based week/month horizon with one timeline lane.
 - Opening, browsing, Auto Fill, and drag/drop remain draft-only. Apply is explicit.
 - Auto Fill resolves and builds on a worker thread. The visible draft remains

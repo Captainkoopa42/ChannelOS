@@ -366,6 +366,69 @@ def test_studio_calendar_roundtrip_and_preview_use_stable_asset_ids(tmp_path: Pa
     assert draft["calendarBlocks"][0]["title"] == "01-alpha"
 
 
+def test_reusable_group_embeds_safe_show_filler_snapshot(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    managed = tmp_path / "channels"
+    service = BroadcasterService((), managed, library)
+    media = service.studio_media()
+    group = service.create_studio_group(
+        "Cartoon Bumpers",
+        [media[1]["assetId"], media[2]["assetId"]],
+        "shuffle",
+    )
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    raw = editor(45, source, name="Grouped Prime Time")
+    raw.update(
+        {
+            "mode": "calendar",
+            "fillerMode": "sequential",
+            "calendarBlocks": [
+                {
+                    "assetId": media[0]["assetId"],
+                    "startUtc": start.isoformat(),
+                    "fillerMode": group["mode"],
+                    "fillerAssetIds": group["assetIds"],
+                }
+            ],
+        }
+    )
+
+    created = service.create(raw)
+    loaded = load_channel(created.record.path)
+    draft = service.studio_draft(45)
+
+    assert loaded.schema_version == "0.3"
+    assert loaded.programming.calendar[0].filler is not None
+    assert loaded.programming.calendar[0].filler.asset_ids == tuple(
+        group["assetIds"]
+    )
+    assert draft["calendarBlocks"][0]["fillerGroupName"] == "Cartoon Bumpers"
+    assert service._studio_groups_path.parent == managed / "studio"
+
+    service.delete_studio_group(group["groupId"])
+
+    assert service.studio_groups() == []
+    reloaded = load_channel(created.record.path)
+    assert reloaded.programming.calendar[0].filler is not None
+    assert reloaded.programming.calendar[0].filler.asset_ids == tuple(
+        group["assetIds"]
+    )
+
+
+def test_reusable_group_names_are_unique_and_members_must_be_online(
+    tmp_path: Path,
+) -> None:
+    library, _ = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    media = service.studio_media()
+    service.create_studio_group("Bumpers", [media[0]["assetId"]], "sequential")
+
+    with pytest.raises(ChannelConflictError, match="already exists"):
+        service.create_studio_group("bumpers", [media[1]["assetId"]], "shuffle")
+    with pytest.raises(BroadcasterError, match="not currently available"):
+        service.create_studio_group("Missing", ["sha256:missing"], "sequential")
+
+
 def test_studio_auto_fill_leaves_short_range_remainder_to_filler(tmp_path: Path) -> None:
     library, source = make_library(tmp_path)
     service = BroadcasterService((), tmp_path / "channels", library)

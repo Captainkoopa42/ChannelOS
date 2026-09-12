@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,7 +13,11 @@ import yaml
 
 from .library import MediaLibrary
 from .loader import load_channel
-from .models import ChannelDefinition, ChannelValidationError
+from .models import (
+    CalendarBlockDefinition,
+    ChannelDefinition,
+    ChannelValidationError,
+)
 from .resolve import ResolvedChannel, resolve_channel
 from .runtime import (
     ChannelRuntime,
@@ -62,6 +67,14 @@ class ChannelDeleteResult:
     replacement_channel_number: int
 
 
+@dataclass(frozen=True, slots=True)
+class StudioGroup:
+    group_id: str
+    name: str
+    mode: str
+    asset_ids: tuple[str, ...]
+
+
 def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
     """Serialize the portable channel contract without runtime-only state."""
 
@@ -87,16 +100,26 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
             definition.programming.filler_mode
         )
         mapping["programming"]["calendar"] = [
-            {
-                "start_utc": block.start_utc.isoformat(),
-                "asset_id": block.asset_id,
-            }
+            _calendar_block_mapping(block)
             for block in definition.programming.calendar
         ]
     mapping["presentation"] = {
         "number_width": definition.presentation.number_width,
     }
     return mapping
+
+
+def _calendar_block_mapping(block: CalendarBlockDefinition) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "start_utc": block.start_utc.isoformat(),
+        "asset_id": block.asset_id,
+    }
+    if block.filler is not None:
+        result["filler"] = {
+            "mode": block.filler.mode,
+            "asset_ids": list(block.filler.asset_ids),
+        }
+    return result
 
 
 def serialize_channel(definition: ChannelDefinition) -> str:
@@ -136,20 +159,44 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
     if not isinstance(calendar_raw, (list, tuple)):
         raise ChannelValidationError("calendarBlocks must be a list")
     calendar = []
+    has_show_filler = False
     for index, block in enumerate(calendar_raw):
         if not isinstance(block, dict):
             raise ChannelValidationError(
                 f"calendarBlocks[{index}] must be a mapping"
             )
-        calendar.append(
-            {
-                "start_utc": str(block.get("startUtc", "")).strip(),
-                "asset_id": str(block.get("assetId", "")).strip(),
+        item = {
+            "start_utc": str(block.get("startUtc", "")).strip(),
+            "asset_id": str(block.get("assetId", "")).strip(),
+        }
+        filler_asset_ids = block.get("fillerAssetIds", [])
+        if not isinstance(filler_asset_ids, (list, tuple)):
+            raise ChannelValidationError(
+                f"calendarBlocks[{index}].fillerAssetIds must be a list"
+            )
+        normalized_filler_ids = [
+            str(asset_id).strip()
+            for asset_id in filler_asset_ids
+            if str(asset_id).strip()
+        ]
+        if normalized_filler_ids:
+            has_show_filler = True
+            item["filler"] = {
+                "mode": str(
+                    block.get("fillerMode", "sequential")
+                ).strip().lower(),
+                "asset_ids": normalized_filler_ids,
             }
-        )
+        calendar.append(item)
 
     mapping = {
-        "schema_version": "0.2" if mode == "calendar" else "0.1",
+        "schema_version": (
+            "0.3"
+            if mode == "calendar" and has_show_filler
+            else "0.2"
+            if mode == "calendar"
+            else "0.1"
+        ),
         "channel": _coerce_int(raw.get("channel"), "channel"),
         "name": str(raw.get("name", "")),
         "description": str(raw.get("description", "")).strip() or None,
@@ -355,6 +402,199 @@ class BroadcasterService:
             )
         return items
 
+    @property
+    def _studio_groups_path(self) -> Path:
+        # Authoring conveniences live beside managed channel definitions but
+        # outside their directory scan. Applied channels embed a snapshot of
+        # group members, so playback never depends on this private Studio file.
+        return self.managed_directory / "studio" / "program-groups.yaml"
+
+    def _load_studio_groups(self) -> tuple[StudioGroup, ...]:
+        path = self._studio_groups_path
+        if not path.exists():
+            return ()
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError) as exc:
+            raise BroadcasterError(
+                f"Studio program groups could not be read: {exc}"
+            ) from exc
+        if not isinstance(raw, dict) or set(raw) != {"schema_version", "groups"}:
+            raise BroadcasterError(
+                "Studio program groups must contain schema_version and groups"
+            )
+        if raw.get("schema_version") != 1 or not isinstance(raw.get("groups"), list):
+            raise BroadcasterError(
+                "Studio program groups use an unsupported local format"
+            )
+
+        groups: list[StudioGroup] = []
+        seen_ids: set[str] = set()
+        seen_names: set[str] = set()
+        for index, item in enumerate(raw["groups"]):
+            if not isinstance(item, dict) or set(item) != {
+                "id",
+                "name",
+                "mode",
+                "asset_ids",
+            }:
+                raise BroadcasterError(
+                    f"Studio program group {index} has an invalid shape"
+                )
+            group_id = str(item.get("id", "")).strip()
+            name = str(item.get("name", "")).strip()
+            mode = str(item.get("mode", "")).strip().lower()
+            raw_asset_ids = item.get("asset_ids")
+            if not group_id or group_id in seen_ids:
+                raise BroadcasterError(
+                    f"Studio program group {index} has a missing or duplicate id"
+                )
+            name_key = name.casefold()
+            if not name or name_key in seen_names:
+                raise BroadcasterError(
+                    f"Studio program group {index} has a missing or duplicate name"
+                )
+            if mode not in {"sequential", "shuffle"}:
+                raise BroadcasterError(
+                    f"Studio program group {name!r} has an invalid mode"
+                )
+            if not isinstance(raw_asset_ids, list) or not raw_asset_ids:
+                raise BroadcasterError(
+                    f"Studio program group {name!r} must contain media"
+                )
+            if len(raw_asset_ids) > 10_000:
+                raise BroadcasterError(
+                    f"Studio program group {name!r} cannot exceed 10000 media items"
+                )
+            asset_ids = tuple(str(value).strip() for value in raw_asset_ids)
+            if any(not value for value in asset_ids) or len(set(asset_ids)) != len(asset_ids):
+                raise BroadcasterError(
+                    f"Studio program group {name!r} has invalid media ids"
+                )
+            seen_ids.add(group_id)
+            seen_names.add(name_key)
+            groups.append(
+                StudioGroup(
+                    group_id=group_id,
+                    name=name,
+                    mode=mode,
+                    asset_ids=asset_ids,
+                )
+            )
+        return tuple(groups)
+
+    def _save_studio_groups(self, groups: Iterable[StudioGroup]) -> None:
+        ordered = sorted(groups, key=lambda group: group.name.casefold())
+        content = yaml.safe_dump(
+            {
+                "schema_version": 1,
+                "groups": [
+                    {
+                        "id": group.group_id,
+                        "name": group.name,
+                        "mode": group.mode,
+                        "asset_ids": list(group.asset_ids),
+                    }
+                    for group in ordered
+                ],
+            },
+            sort_keys=False,
+            allow_unicode=True,
+        )
+        self._atomic_write(self._studio_groups_path, content)
+
+    def studio_groups(self) -> list[dict[str, Any]]:
+        media_by_id = {
+            item["assetId"]: item
+            for item in self.studio_media()
+        }
+        result: list[dict[str, Any]] = []
+        for group in self._load_studio_groups():
+            available = [
+                media_by_id[asset_id]
+                for asset_id in group.asset_ids
+                if asset_id in media_by_id
+            ]
+            result.append(
+                {
+                    "groupId": group.group_id,
+                    "name": group.name,
+                    "mode": group.mode,
+                    "assetIds": list(group.asset_ids),
+                    "memberCount": len(group.asset_ids),
+                    "availableCount": len(available),
+                    "media": available,
+                }
+            )
+        return result
+
+    def create_studio_group(
+        self,
+        name: str,
+        asset_ids: Iterable[str],
+        mode: str,
+    ) -> dict[str, Any]:
+        normalized_name = str(name).strip()
+        if not normalized_name:
+            raise ChannelValidationError("program group name must not be empty")
+        if len(normalized_name) > 80:
+            raise ChannelValidationError(
+                "program group name cannot exceed 80 characters"
+            )
+        normalized_mode = str(mode).strip().lower()
+        if normalized_mode not in {"sequential", "shuffle"}:
+            raise ChannelValidationError(
+                "program group mode must be sequential or shuffle"
+            )
+        if isinstance(asset_ids, (str, bytes)):
+            raise ChannelValidationError("program group media must be a list")
+        unique_ids = tuple(dict.fromkeys(str(value).strip() for value in asset_ids))
+        if not unique_ids or any(not value for value in unique_ids):
+            raise ChannelValidationError(
+                "program group must contain at least one valid media asset"
+            )
+        if len(unique_ids) > 10_000:
+            raise ChannelValidationError(
+                "program group cannot exceed 10000 media items"
+            )
+        online_ids = {
+            item["assetId"]
+            for item in self.studio_media()
+        }
+        missing = [asset_id for asset_id in unique_ids if asset_id not in online_ids]
+        if missing:
+            raise BroadcasterError(
+                "program group contains media that is not currently available: "
+                + ", ".join(missing[:3])
+            )
+
+        groups = list(self._load_studio_groups())
+        if any(group.name.casefold() == normalized_name.casefold() for group in groups):
+            raise ChannelConflictError(
+                f"a Studio program group named {normalized_name!r} already exists"
+            )
+        group = StudioGroup(
+            group_id=uuid.uuid4().hex,
+            name=normalized_name,
+            mode=normalized_mode,
+            asset_ids=unique_ids,
+        )
+        groups.append(group)
+        self._save_studio_groups(groups)
+        return next(
+            item
+            for item in self.studio_groups()
+            if item["groupId"] == group.group_id
+        )
+
+    def delete_studio_group(self, group_id: str) -> None:
+        target = str(group_id).strip()
+        groups = list(self._load_studio_groups())
+        retained = [group for group in groups if group.group_id != target]
+        if len(retained) == len(groups):
+            raise BroadcasterError("Studio program group no longer exists")
+        self._save_studio_groups(retained)
+
     def studio_draft(self, channel_number: int = 0) -> dict[str, Any]:
         """Build a detached Studio draft; opening it never alters live TV."""
 
@@ -372,6 +612,7 @@ class BroadcasterService:
                 "sources": sources,
                 "calendarBlocks": [],
                 "media": self.studio_media(),
+                "groups": self.studio_groups(),
             }
 
         try:
@@ -384,6 +625,14 @@ class BroadcasterService:
         media_by_id = {
             item["assetId"]: item
             for item in self.studio_media()
+        }
+        groups = self.studio_groups()
+        group_names_by_snapshot = {
+            (
+                str(group["mode"]),
+                tuple(str(value) for value in group["assetIds"]),
+            ): str(group["name"])
+            for group in groups
         }
         blocks: list[dict[str, Any]] = []
         for block in definition.programming.calendar:
@@ -400,6 +649,24 @@ class BroadcasterService:
                     "endUtc": (
                         block.start_utc + timedelta(seconds=duration)
                     ).isoformat(),
+                    "fillerMode": (
+                        block.filler.mode
+                        if block.filler is not None
+                        else ""
+                    ),
+                    "fillerAssetIds": (
+                        list(block.filler.asset_ids)
+                        if block.filler is not None
+                        else []
+                    ),
+                    "fillerGroupName": (
+                        group_names_by_snapshot.get(
+                            (block.filler.mode, block.filler.asset_ids),
+                            "Embedded group",
+                        )
+                        if block.filler is not None
+                        else ""
+                    ),
                 }
             )
 
@@ -418,6 +685,7 @@ class BroadcasterService:
             "sources": [str(source.path) for source in definition.sources],
             "calendarBlocks": blocks,
             "media": list(media_by_id.values()),
+            "groups": groups,
         }
 
     @staticmethod

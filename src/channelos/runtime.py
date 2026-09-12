@@ -161,12 +161,15 @@ class CalendarTimeline:
         media: tuple[IndexedMedia, ...],
         filler_media: tuple[IndexedMedia, ...],
         calendar: tuple[CalendarBlockDefinition, ...],
+        *,
+        channel_number: int,
     ) -> None:
         self.filler = SequentialTimeline(filler_media)
         self.cycle_duration_seconds = self.filler.cycle_duration_seconds
         by_asset = {item.asset.asset_id: item for item in media}
 
         programs: list[ScheduledProgram] = []
+        gap_fillers: list[SequentialTimeline | None] = []
         starts: list[datetime] = []
         ends: list[datetime] = []
         previous_end: datetime | None = None
@@ -198,6 +201,30 @@ class CalendarTimeline:
                     duration_seconds=float(duration),
                 )
             )
+            if block.filler is None:
+                gap_fillers.append(None)
+            else:
+                filler_items: list[IndexedMedia] = []
+                for asset_id in block.filler.asset_ids:
+                    try:
+                        filler_items.append(by_asset[asset_id])
+                    except KeyError as exc:
+                        raise ChannelRuntimeError(
+                            "show-specific filler references media that is not "
+                            "online or is outside the channel sources: "
+                            f"{asset_id}"
+                        ) from exc
+                ordered_filler = tuple(filler_items)
+                if block.filler.mode == "shuffle":
+                    ordered_filler = deterministic_media_order(
+                        channel_number=channel_number,
+                        media=ordered_filler,
+                        namespace=(
+                            "show-filler:"
+                            + block.start_utc.isoformat(timespec="microseconds")
+                        ),
+                    )
+                gap_fillers.append(SequentialTimeline(ordered_filler))
             starts.append(start)
             ends.append(end)
             previous_end = end
@@ -207,6 +234,7 @@ class CalendarTimeline:
                 "calendar programming requires at least one fixed block"
             )
         self.programs = tuple(programs)
+        self._gap_fillers = tuple(gap_fillers)
         self._starts = tuple(starts)
         self._ends = tuple(ends)
 
@@ -233,7 +261,13 @@ class CalendarTimeline:
             if previous_index >= 0
             else epoch_utc
         )
-        filler = self.filler.selection_at(gap_anchor, at_utc)
+        filler_timeline = (
+            self._gap_fillers[previous_index]
+            if previous_index >= 0
+            and self._gap_fillers[previous_index] is not None
+            else self.filler
+        )
+        filler = filler_timeline.selection_at(gap_anchor, at_utc)
         next_start = (
             self._starts[insertion]
             if insertion < len(self._starts)
@@ -248,19 +282,31 @@ class CalendarTimeline:
             program_started_at=filler.program_started_at,
             program_ends_at=filler_end,
             cycle_index=filler.cycle_index,
-            origin="filler",
+            origin=(
+                "show-filler"
+                if previous_index >= 0
+                and self._gap_fillers[previous_index] is not None
+                else "filler"
+            ),
         )
 
 
-def deterministic_shuffle_order(channel: ResolvedChannel) -> tuple[IndexedMedia, ...]:
+def deterministic_media_order(
+    channel_number: int,
+    media: tuple[IndexedMedia, ...],
+    *,
+    namespace: str = "channel",
+) -> tuple[IndexedMedia, ...]:
     """Return a stable asset permutation independent of paths and process randomness."""
 
-    asset_ids = sorted(item.asset.asset_id for item in channel.media)
+    asset_ids = sorted(item.asset.asset_id for item in media)
     seed_payload = {
         "schema": 1,
-        "channel": channel.definition.channel,
+        "channel": int(channel_number),
         "asset_ids": asset_ids,
     }
+    if namespace != "channel":
+        seed_payload["namespace"] = str(namespace)
     encoded = json.dumps(seed_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     seed = hashlib.sha256(encoded).digest()
 
@@ -268,7 +314,14 @@ def deterministic_shuffle_order(channel: ResolvedChannel) -> tuple[IndexedMedia,
         digest = hashlib.sha256(seed + item.asset.asset_id.encode("utf-8")).digest()
         return digest, item.asset.asset_id
 
-    return tuple(sorted(channel.media, key=order_key))
+    return tuple(sorted(media, key=order_key))
+
+
+def deterministic_shuffle_order(channel: ResolvedChannel) -> tuple[IndexedMedia, ...]:
+    return deterministic_media_order(
+        channel.definition.channel,
+        channel.media,
+    )
 
 
 def _validate_shuffle_repeat_window(timeline: SequentialTimeline, avoid_repeat_days: int) -> None:
@@ -285,6 +338,19 @@ def _validate_shuffle_repeat_window(timeline: SequentialTimeline, avoid_repeat_d
         f"{avoid_repeat_days} day(s) without repeats: the eligible media pool spans only "
         f"{available_hours:.2f} hours. Add eligible media or reduce avoid_repeat_days."
     )
+
+
+def _calendar_signature_block(block: CalendarBlockDefinition) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "start_utc": block.start_utc.isoformat(timespec="microseconds"),
+        "asset_id": block.asset_id,
+    }
+    if block.filler is not None:
+        payload["filler"] = {
+            "mode": block.filler.mode,
+            "asset_ids": list(block.filler.asset_ids),
+        }
+    return payload
 
 
 def schedule_signature(channel: ResolvedChannel) -> str:
@@ -335,12 +401,7 @@ def schedule_signature(channel: ResolvedChannel) -> str:
             "avoid_repeat_days": programming.avoid_repeat_days,
             "filler_mode": programming.filler_mode,
             "calendar": [
-                {
-                    "start_utc": block.start_utc.isoformat(
-                        timespec="microseconds"
-                    ),
-                    "asset_id": block.asset_id,
-                }
+                _calendar_signature_block(block)
                 for block in programming.calendar
             ],
         },
@@ -865,6 +926,7 @@ class ChannelRuntime:
                 channel.media,
                 ordered_media,
                 programming.calendar,
+                channel_number=channel.definition.channel,
             )
             if programming.filler_mode == "shuffle":
                 _validate_shuffle_repeat_window(

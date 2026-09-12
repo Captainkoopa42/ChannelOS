@@ -142,6 +142,13 @@ The calendar itself is not a second scheduler. `ChannelRuntime` combines fixed
 0.2 calendar blocks with the existing sequential/shuffle cycle as gap filler.
 The Guide and decoder rollover continue to consume that same runtime truth.
 
+Schema 0.3 calendar blocks may additionally carry a show-specific filler pool.
+Studio can save the unique fixed programs from a selected day as a reusable
+local group, then attach that group's sequential or shuffle snapshot to a fixed
+show. The group fills only the gap after that show. Reusable groups are never a
+runtime dependency: applied channels embed stable asset IDs, so deleting a
+group later does not modify live programming.
+
 ## Immediate Guide integration
 
 After a successful create, edit, or delete, the couch application rebuilds the active `GuideService` and `TelevisionRuntime` from the saved portable definitions while reusing the real persistent `RuntimeStore`.

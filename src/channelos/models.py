@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2"}
+SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3"}
 SUPPORTED_PROGRAMMING_MODES = {"sequential", "shuffle", "calendar"}
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -28,11 +28,20 @@ class SourceDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class CalendarFillerDefinition:
+    """A self-contained media pool used after one fixed calendar show."""
+
+    mode: str
+    asset_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class CalendarBlockDefinition:
     """One fixed UTC program start in a Studio-authored calendar."""
 
     start_utc: datetime
     asset_id: str
+    filler: CalendarFillerDefinition | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,7 +122,7 @@ class ChannelDefinition:
             "preserve_episode_order",
             "avoid_repeat_days",
         }
-        if version == "0.2":
+        if version in {"0.2", "0.3"}:
             allowed_programming.update({"filler_mode", "calendar"})
         unknown_programming = set(raw_programming) - allowed_programming
         if unknown_programming:
@@ -167,10 +176,17 @@ class ChannelDefinition:
         calendar: list[CalendarBlockDefinition] = []
         seen_starts: set[datetime] = set()
         for index, item in enumerate(raw_calendar):
-            if not isinstance(item, dict) or set(item) != {"start_utc", "asset_id"}:
+            allowed_block = {"start_utc", "asset_id"}
+            if version == "0.3":
+                allowed_block.add("filler")
+            if (
+                not isinstance(item, dict)
+                or not {"start_utc", "asset_id"}.issubset(item)
+                or set(item) - allowed_block
+            ):
                 raise ChannelValidationError(
-                    f"programming.calendar[{index}] must contain exactly "
-                    "'start_utc' and 'asset_id'"
+                    f"programming.calendar[{index}] must contain 'start_utc' "
+                    "and 'asset_id' plus only supported optional fields"
                 )
             start_text = item["start_utc"]
             if not isinstance(start_text, str) or not start_text.strip():
@@ -198,10 +214,64 @@ class ChannelDefinition:
                 raise ChannelValidationError(
                     f"programming.calendar[{index}].asset_id must be a non-empty string"
                 )
+            filler: CalendarFillerDefinition | None = None
+            raw_filler = item.get("filler")
+            if raw_filler is not None:
+                if version != "0.3":
+                    raise ChannelValidationError(
+                        "show-specific filler requires schema_version '0.3'"
+                    )
+                if not isinstance(raw_filler, dict) or set(raw_filler) != {
+                    "mode",
+                    "asset_ids",
+                }:
+                    raise ChannelValidationError(
+                        f"programming.calendar[{index}].filler must contain "
+                        "exactly 'mode' and 'asset_ids'"
+                    )
+                block_filler_mode = raw_filler.get("mode")
+                if block_filler_mode not in {"sequential", "shuffle"}:
+                    raise ChannelValidationError(
+                        f"programming.calendar[{index}].filler.mode must be "
+                        "'sequential' or 'shuffle'"
+                    )
+                raw_asset_ids = raw_filler.get("asset_ids")
+                if not isinstance(raw_asset_ids, list) or not raw_asset_ids:
+                    raise ChannelValidationError(
+                        f"programming.calendar[{index}].filler.asset_ids must "
+                        "be a non-empty list"
+                    )
+                if len(raw_asset_ids) > 10000:
+                    raise ChannelValidationError(
+                        f"programming.calendar[{index}].filler.asset_ids cannot "
+                        "contain more than 10000 items"
+                    )
+                asset_ids: list[str] = []
+                seen_asset_ids: set[str] = set()
+                for asset_index, value in enumerate(raw_asset_ids):
+                    if not isinstance(value, str) or not value.strip():
+                        raise ChannelValidationError(
+                            f"programming.calendar[{index}].filler.asset_ids"
+                            f"[{asset_index}] must be a non-empty string"
+                        )
+                    normalized = value.strip()
+                    if normalized in seen_asset_ids:
+                        raise ChannelValidationError(
+                            f"programming.calendar[{index}].filler.asset_ids "
+                            f"contains duplicate {normalized}"
+                        )
+                    seen_asset_ids.add(normalized)
+                    asset_ids.append(normalized)
+                filler = CalendarFillerDefinition(
+                    mode=block_filler_mode,
+                    asset_ids=tuple(asset_ids),
+                )
+
             calendar.append(
                 CalendarBlockDefinition(
                     start_utc=start,
                     asset_id=asset_id.strip(),
+                    filler=filler,
                 )
             )
             seen_starts.add(start)

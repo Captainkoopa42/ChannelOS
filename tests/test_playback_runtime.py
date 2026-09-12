@@ -88,7 +88,7 @@ def test_libvlc_rejects_a_missing_media_path_before_decoder_start(
 
 class _FakePlayer:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, int]] = []
+        self.calls: list[tuple[str, object]] = []
 
     def set_hwnd(self, handle: int) -> None:
         self.calls.append(("windows", handle))
@@ -98,6 +98,19 @@ class _FakePlayer:
 
     def set_nsobject(self, handle: int) -> None:
         self.calls.append(("macos", handle))
+
+    def video_set_aspect_ratio(self, ratio) -> None:
+        self.calls.append(("aspect", ratio))
+
+    def video_set_crop_geometry(self, geometry) -> None:
+        self.calls.append(("crop", geometry))
+
+    def video_set_scale(self, scale: float) -> None:
+        self.calls.append(("scale", scale))
+
+    def play(self) -> int:
+        self.calls.append(("play", None))
+        return 0
 
     def get_state(self):
         return "error"
@@ -111,7 +124,27 @@ def test_libvlc_routes_native_surface_to_platform_method(platform: str) -> None:
 
     backend.attach_video_surface(playback.NativeVideoSurface(platform, 4242))
 
-    assert player.calls == [(platform, 4242)]
+    assert player.calls == [
+        (platform, 4242),
+        ("aspect", None),
+        ("crop", None),
+        ("scale", 0.0),
+    ]
+
+
+def test_libvlc_reapplies_source_aspect_fit_when_playback_starts() -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+    player = _FakePlayer()
+    backend._player = player
+
+    backend.play()
+
+    assert player.calls == [
+        ("play", None),
+        ("aspect", None),
+        ("crop", None),
+        ("scale", 0.0),
+    ]
 
 
 def test_libvlc_reports_asynchronous_decoder_failure(tmp_path: Path) -> None:

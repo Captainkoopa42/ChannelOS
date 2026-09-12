@@ -227,10 +227,25 @@ class LibVLCBackend(PlaybackBackend):
                 raise PlaybackUnavailableError(
                     f"libVLC does not support native video platform {surface.platform!r}"
                 )
+            self._fit_source_aspect_to_surface()
         except (AttributeError, TypeError, ValueError) as exc:
             raise PlaybackUnavailableError(
                 f"libVLC could not attach the {surface.platform} video surface"
             ) from exc
+
+    def _fit_source_aspect_to_surface(self) -> None:
+        """Preserve the source ratio while fitting it inside the native window.
+
+        libVLC keeps video-output overrides on the media player.  Explicitly
+        clearing them prevents a prior crop or forced ratio from stretching the
+        next programme when ChannelOS reuses the player and its HWND.  A scale
+        of zero is libVLC's autoscale mode: the complete picture fits inside
+        the available surface and any unused area becomes letterboxing.
+        """
+
+        self._player.video_set_aspect_ratio(None)
+        self._player.video_set_crop_geometry(None)
+        self._player.video_set_scale(0.0)
 
     def load(self, path: str | Path) -> None:
         media_path = Path(path).expanduser().resolve(strict=False)
@@ -254,6 +269,9 @@ class LibVLCBackend(PlaybackBackend):
         result = self._player.play()
         if isinstance(result, int) and result < 0:
             raise PlaybackError("libVLC could not start playback")
+        # Reapply after play() as libVLC can create a fresh video output when a
+        # programme changes or playback resumes after natural end-of-file.
+        self._fit_source_aspect_to_surface()
 
     def pause(self) -> None:
         if hasattr(self._player, "set_pause"):

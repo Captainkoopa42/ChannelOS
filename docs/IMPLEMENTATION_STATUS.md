@@ -166,6 +166,7 @@ Implemented:
 - Now / Next,
 - schedule progress,
 - D3D11VA hardware-decoded real-media validation,
+- source-native video aspect ratios fitted without distortion or implicit crop,
 - stable maximize/restore using a bounded translucent HUD architecture.
 - contextual Info drawers for Home, Guide, Library, Live, and On Demand.
 
@@ -315,6 +316,13 @@ bounded native overlays where appropriate, and renders the translucent
 lower-third as a bounded transient top-level window. This preserves the old HUD
 appearance while allowing Windows to alpha-compose it without covering the
 entire video surface.
+
+The playback backend explicitly clears forced aspect-ratio and crop overrides
+whenever the native surface is attached or playback starts. libVLC autoscaling
+then fits the complete source picture inside the available surface, preserving
+its native ratio and using letterboxing when the window shape differs. This is
+a playback-output rule only; ChannelOS never rewrites or transcodes the user's
+media.
 
 The feature branch reports native-surface attachment failures, explicit libVLC
 decoder errors, and missing files. A transient zero-video-output reading is not

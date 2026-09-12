@@ -130,8 +130,11 @@ Preview does not create a second scheduling engine.
 It resolves the candidate definition through the same canonical library and uses the same sequential order or `deterministic_shuffle_order` used by ChannelRuntime. Preview validation uses a disposable RuntimeStore, so previewing does not alter the actual Broadcast Clock or Viewer Clock.
 
 Channel Studio follows the same rule. Opening it loads a detached draft. Auto
-Fill writes real editable fixed blocks into that draft, not a decorative
-calendar cache. Only **Apply to Channel** invokes the normal create/update path.
+Fill resolves local media and builds its result on a worker thread with visible
+progress and cancellation. The current draft is left untouched unless that
+background job succeeds, at which point its real editable fixed blocks replace
+the requested range rather than writing a decorative calendar cache. Only
+**Apply to Channel** invokes the normal create/update path.
 Apply validates the complete calendar, writes atomically, preserves the prior
 definition as `.bak` on edit, and reloads the authoritative lineup.
 

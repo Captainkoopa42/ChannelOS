@@ -6,7 +6,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import yaml
 
@@ -24,6 +24,10 @@ from .runtime import (
 
 class BroadcasterError(RuntimeError):
     """Base error for user-facing channel management."""
+
+
+class StudioAutoFillCancelled(BroadcasterError):
+    """Raised when the user cancels detached Studio Auto Fill generation."""
 
 
 class ChannelConflictError(BroadcasterError):
@@ -435,9 +439,22 @@ class BroadcasterService:
         raw: dict[str, Any],
         start_text: str,
         end_text: str,
+        *,
+        on_progress: Callable[[int, int, str], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> dict[str, Any]:
         """Generate editable calendar blocks from the selected channel sources."""
 
+        def check_cancelled() -> None:
+            if should_cancel is not None and should_cancel():
+                raise StudioAutoFillCancelled("Studio Auto Fill was cancelled")
+
+        def publish(current: int, total: int, message: str) -> None:
+            if on_progress is not None:
+                on_progress(int(current), int(total), message)
+
+        check_cancelled()
+        publish(0, 0, "Validating the selected range…")
         start = self._studio_timestamp(start_text, "calendar start")
         end = self._studio_timestamp(end_text, "calendar end")
         if end <= start:
@@ -454,7 +471,10 @@ class BroadcasterService:
         pool_editor["mode"] = filler_mode
         pool_editor["calendarBlocks"] = []
         definition = definition_from_editor(pool_editor)
+        check_cancelled()
+        publish(0, 0, "Resolving indexed local media…")
         resolved = self._resolve_and_validate(definition)
+        check_cancelled()
         if filler_mode == "shuffle":
             ordered = deterministic_shuffle_order(resolved)
         else:
@@ -463,7 +483,11 @@ class BroadcasterService:
         blocks: list[dict[str, Any]] = []
         cursor = start
         index = 0
+        range_seconds = max(1, int((end - start).total_seconds()))
+        last_percent = -1
+        publish(0, range_seconds, "Building the editable schedule…")
         while cursor < end and len(blocks) < 10000:
+            check_cancelled()
             media = ordered[index % len(ordered)]
             duration = float(media.asset.duration_seconds or 0.0)
             if duration <= 0:
@@ -486,7 +510,20 @@ class BroadcasterService:
             )
             cursor = block_end
             index += 1
+            completed_seconds = min(
+                range_seconds,
+                int((cursor - start).total_seconds()),
+            )
+            percent = int(completed_seconds * 100 / range_seconds)
+            if percent != last_percent:
+                publish(
+                    completed_seconds,
+                    range_seconds,
+                    f"Scheduled {len(blocks)} program block(s)…",
+                )
+                last_percent = percent
 
+        check_cancelled()
         hit_limit = cursor < end and len(blocks) >= 10000
         message = (
             f"Auto-filled {len(blocks)} editable program blocks from "
@@ -500,7 +537,7 @@ class BroadcasterService:
         else:
             message += "the normal filler covers any short remainder"
 
-        return {
+        result = {
             "ok": True,
             "message": message,
             "startUtc": start.isoformat(),
@@ -509,6 +546,8 @@ class BroadcasterService:
             "hitBlockLimit": hit_limit,
             "blocks": blocks,
         }
+        publish(range_seconds, range_seconds, "Auto Fill schedule ready")
+        return result
 
     def _resolve_and_validate(
         self,

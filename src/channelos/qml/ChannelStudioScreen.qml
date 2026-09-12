@@ -36,6 +36,20 @@ Item {
     property string pendingExitDestination: ""
     property string feedbackMessage: ""
     property bool feedbackIsError: false
+    property bool autoFillApplying: false
+    property var pendingAutoFillBlocks: []
+    property int pendingAutoFillIndex: 0
+    property string pendingAutoFillMessage: ""
+    readonly property var autoFillState: channelOS
+            ? channelOS.studioAutoFill
+            : ({ active: false, phase: "idle", current: 0, total: 0,
+                 percent: 0, message: "" })
+    readonly property bool autoFillBusy: Boolean(autoFillState.active)
+                                         || autoFillApplying
+    readonly property int autoFillApplyPercent: pendingAutoFillBlocks.length > 0
+            ? Math.min(100, Math.floor(pendingAutoFillIndex * 100
+                                      / pendingAutoFillBlocks.length))
+            : 0
 
     onSelectedBlockIndexChanged:
         exactTimeField.text = selectedBlockTimeText()
@@ -194,6 +208,26 @@ Item {
         })
     }
 
+    function blockObject(block) {
+        var media = mediaForAsset(block.assetId)
+        var duration = Number(block.durationSeconds
+                              || media.durationSeconds
+                              || 0)
+        var start = new Date(String(block.startUtc))
+        var end = block.endUtc
+                ? new Date(String(block.endUtc))
+                : new Date(start.getTime() + duration * 1000)
+        return {
+            assetId: String(block.assetId),
+            title: String(block.title || media.title || "Untitled"),
+            path: String(block.path || media.path || ""),
+            sourceRoot: String(block.sourceRoot || media.sourceRoot || ""),
+            durationSeconds: duration,
+            startUtc: start.toISOString(),
+            endUtc: end.toISOString()
+        }
+    }
+
     function sortBlocks() {
         var blocks = []
         for (var currentIndex = 0;
@@ -241,7 +275,7 @@ Item {
     }
 
     function loadDraft() {
-        if (!channelOS || loading)
+        if (!channelOS || loading || autoFillBusy)
             return
         loading = true
         feedbackMessage = "Loading detached Studio draft…"
@@ -514,10 +548,12 @@ Item {
     }
 
     function autoFillVisibleRange() {
+        if (autoFillBusy)
+            return
         if (!channelNameField.text.trim().length) {
             channelNameField.text = "Channel " + channelNumberField.text
         }
-        var result = channelOS.autoFillStudio(
+        var result = channelOS.startStudioAutoFill(
                     editorObject(),
                     visibleStart().toISOString(),
                     visibleEnd().toISOString())
@@ -529,27 +565,71 @@ Item {
             return
         }
 
-        var startMs = new Date(result.startUtc).getTime()
-        var endMs = new Date(result.endUtc).getTime()
-        for (var index = calendarBlocks.count - 1; index >= 0; --index) {
-            var existing = calendarBlocks.get(index)
-            var blockMs = new Date(existing.startUtc).getTime()
-            var blockEndMs = new Date(existing.endUtc).getTime()
-            if (blockMs < endMs && blockEndMs > startMs)
-                calendarBlocks.remove(index)
-        }
-        var blocks = result.blocks || []
-        for (var blockIndex = 0; blockIndex < blocks.length; ++blockIndex)
-            appendBlock(blocks[blockIndex])
-        sortBlocks()
-        selectedBlockIndex = calendarBlocks.count ? 0 : -1
-        dirty = true
         feedbackMessage = String(result.message)
-                + ". Drag, reorder, or remove anything before Apply."
         feedbackIsError = false
     }
 
+    function acceptAutoFillResult(result) {
+        if (!result || !result.ok)
+            return
+        var startMs = new Date(result.startUtc).getTime()
+        var endMs = new Date(result.endUtc).getTime()
+        var replacement = []
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var existing = calendarBlocks.get(index)
+            var blockMs = new Date(existing.startUtc).getTime()
+            var blockEndMs = new Date(existing.endUtc).getTime()
+            if (!(blockMs < endMs && blockEndMs > startMs))
+                replacement.push(blockObject(existing))
+        }
+        var blocks = result.blocks || []
+        for (var blockIndex = 0; blockIndex < blocks.length; ++blockIndex)
+            replacement.push(blockObject(blocks[blockIndex]))
+        replacement.sort(function(left, right) {
+            return new Date(left.startUtc).getTime()
+                    - new Date(right.startUtc).getTime()
+        })
+
+        // ListModel insertion is intentionally chunked. A two-month range can
+        // contain thousands of short clips, and appending them in one JavaScript
+        // turn would freeze the same GUI thread the background worker protects.
+        pendingAutoFillBlocks = replacement
+        pendingAutoFillIndex = 0
+        pendingAutoFillMessage = String(result.message)
+        autoFillApplying = true
+        calendarBlocks.clear()
+        autoFillApplyTimer.start()
+    }
+
+    function applyAutoFillBatch() {
+        var endIndex = Math.min(pendingAutoFillIndex + 128,
+                                pendingAutoFillBlocks.length)
+        while (pendingAutoFillIndex < endIndex) {
+            calendarBlocks.append(
+                        pendingAutoFillBlocks[pendingAutoFillIndex])
+            ++pendingAutoFillIndex
+        }
+        if (pendingAutoFillIndex < pendingAutoFillBlocks.length)
+            return
+
+        autoFillApplyTimer.stop()
+        pendingAutoFillBlocks = []
+        pendingAutoFillIndex = 0
+        autoFillApplying = false
+        rebuildBlockIndex()
+        selectedBlockIndex = calendarBlocks.count ? 0 : -1
+        dirty = true
+        feedbackMessage = pendingAutoFillMessage
+                + ". Drag, reorder, or remove anything before Apply."
+        pendingAutoFillMessage = ""
+        feedbackIsError = false
+        if (pendingExitDestination.length)
+            requestExit(pendingExitDestination)
+    }
+
     function clearVisibleRange() {
+        if (autoFillBusy)
+            return
         var startMs = visibleStart().getTime()
         var endMs = visibleEnd().getTime()
         var removed = 0
@@ -572,6 +652,11 @@ Item {
     }
 
     function applyDraft() {
+        if (autoFillBusy) {
+            feedbackMessage = "Wait for Auto Fill to finish, or cancel it, before applying."
+            feedbackIsError = true
+            return
+        }
         if (calendarBlocks.count === 0) {
             feedbackMessage = "Add or Auto Fill at least one program before applying a calendar channel."
             feedbackIsError = true
@@ -605,6 +690,17 @@ Item {
 
     function requestExit(destination) {
         pendingExitDestination = String(destination)
+        if (autoFillApplying) {
+            feedbackMessage = "Finishing the prepared schedule before leaving Studio…"
+            feedbackIsError = false
+            return
+        }
+        if (autoFillState.active) {
+            channelOS.cancelStudioAutoFill()
+            feedbackMessage = "Cancelling Auto Fill before leaving Studio…"
+            feedbackIsError = false
+            return
+        }
         if (dirty) {
             discardDraftDialog.open()
             return
@@ -631,6 +727,11 @@ Item {
     function handleControllerIntent(intent) {
         if (!hostWindow || hostWindow.screen !== "studio")
             return
+        if (autoFillBusy) {
+            if (intent === "BACK")
+                requestExit("home")
+            return
+        }
         if (intent === "BACK")
             leaveStudio()
         else if (intent === "LEFT")
@@ -649,6 +750,33 @@ Item {
         function onScreenChanged() {
             if (studioRoot.hostWindow.screen === "studio")
                 studioRoot.loadDraft()
+            else if (studioRoot.autoFillBusy)
+                channelOS.cancelStudioAutoFill()
+        }
+    }
+
+    Timer {
+        id: autoFillApplyTimer
+        interval: 0
+        repeat: true
+        onTriggered: studioRoot.applyAutoFillBatch()
+    }
+
+    Connections {
+        target: channelOS
+        function onStudioAutoFillChanged() {
+            var state = channelOS.studioAutoFill
+            if (!state)
+                return
+            if (state.message)
+                studioRoot.feedbackMessage = String(state.message)
+            studioRoot.feedbackIsError = state.phase === "error"
+            if (!state.active && state.phase === "cancelled"
+                    && studioRoot.pendingExitDestination.length)
+                studioRoot.requestExit(studioRoot.pendingExitDestination)
+        }
+        function onStudioAutoFillCompleted(result) {
+            studioRoot.acceptAutoFillResult(result)
         }
     }
 
@@ -661,12 +789,14 @@ Item {
         Shortcut {
             sequence: "Esc"
             enabled: studioSurface.visible && !discardDraftDialog.visible
+                     && !studioRoot.autoFillBusy
             onActivated: studioRoot.leaveStudio()
         }
 
         Shortcut {
             sequence: "Ctrl+S"
             enabled: studioSurface.visible && !discardDraftDialog.visible
+                     && !studioRoot.autoFillBusy
             onActivated: studioRoot.applyDraft()
         }
 
@@ -744,6 +874,7 @@ Item {
                     Button {
                         text: "Apply to Channel"
                         highlighted: true
+                        enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.applyDraft()
                     }
                 }
@@ -1000,11 +1131,13 @@ Item {
                     }
                     Button {
                         text: "Clear Range"
+                        enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.clearVisibleRange()
                     }
                     Button {
                         text: "Auto Fill Range"
                         highlighted: true
+                        enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.autoFillVisibleRange()
                     }
                 }
@@ -1433,6 +1566,91 @@ Item {
                 text: "CTRL+S  Apply     ESC  Back"
                 color: studioRoot.textSecondary
                 font.pixelSize: 11
+            }
+        }
+
+        Rectangle {
+            id: autoFillOverlay
+            anchors.fill: parent
+            visible: studioRoot.autoFillBusy
+            z: 200
+            color: "#cc02070d"
+
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.AllButtons
+                hoverEnabled: true
+            }
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 80, 540)
+                height: 230
+                radius: 12
+                color: studioRoot.panelRaised
+                border.color: studioRoot.accent
+                border.width: 2
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 28
+                    spacing: 16
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "BUILDING DETACHED SCHEDULE"
+                        color: studioRoot.accentBright
+                        font.pixelSize: 13
+                        font.weight: Font.Bold
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: studioRoot.autoFillApplying
+                              ? "Adding prepared blocks to the detached draft…"
+                              : String(studioRoot.autoFillState.message
+                                       || "Preparing Studio Auto Fill…")
+                        color: studioRoot.textPrimary
+                        font.pixelSize: 16
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    ProgressBar {
+                        Layout.fillWidth: true
+                        from: 0
+                        to: 100
+                        value: studioRoot.autoFillApplying
+                               ? studioRoot.autoFillApplyPercent
+                               : Number(studioRoot.autoFillState.percent || 0)
+                        indeterminate: !studioRoot.autoFillApplying
+                                       && Number(studioRoot.autoFillState.total || 0) <= 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: studioRoot.autoFillApplying
+                              ? studioRoot.autoFillApplyPercent + "%"
+                              : Number(studioRoot.autoFillState.total || 0) > 0
+                              ? Number(studioRoot.autoFillState.percent || 0) + "%"
+                              : "Checking local media…"
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    Button {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: studioRoot.autoFillApplying
+                              ? "Applying schedule…"
+                              : studioRoot.autoFillState.phase === "cancelling"
+                              ? "Cancelling…" : "Cancel Auto Fill"
+                        enabled: !studioRoot.autoFillApplying
+                                 && studioRoot.autoFillState.phase !== "cancelling"
+                        onClicked: channelOS.cancelStudioAutoFill()
+                    }
+                }
             }
         }
     }

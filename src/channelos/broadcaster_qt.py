@@ -24,7 +24,11 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QFileDialog
 
-from .broadcaster import BroadcasterError, BroadcasterService
+from .broadcaster import (
+    BroadcasterError,
+    BroadcasterService,
+    StudioAutoFillCancelled,
+)
 from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
@@ -134,11 +138,59 @@ class _LibraryScanWorker(QObject):
             self.finished.emit()
 
 
+class _StudioAutoFillWorker(QObject):
+    """Build a detached Studio schedule without blocking the QML GUI thread."""
+
+    progress = Signal(int, int, str)
+    completed = Signal(object)
+    cancelled = Signal()
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(
+        self,
+        broadcaster: BroadcasterService,
+        editor: dict[str, Any],
+        start_utc: str,
+        end_utc: str,
+        cancel_event: threading.Event,
+    ) -> None:
+        super().__init__()
+        self._broadcaster = broadcaster
+        self._editor = dict(editor)
+        self._start_utc = str(start_utc)
+        self._end_utc = str(end_utc)
+        self._cancel_event = cancel_event
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = self._broadcaster.auto_fill_studio(
+                self._editor,
+                self._start_utc,
+                self._end_utc,
+                on_progress=self.progress.emit,
+                should_cancel=self._cancel_event.is_set,
+            )
+            if self._cancel_event.is_set():
+                raise StudioAutoFillCancelled("Studio Auto Fill was cancelled")
+        except StudioAutoFillCancelled:
+            self.cancelled.emit()
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        else:
+            self.completed.emit(result)
+        finally:
+            self.finished.emit()
+
+
 class BroadcasterCouchController(CouchController):
     """Couch controller extended with management and Library 2.0 operations."""
 
     broadcasterChanged = Signal()
     libraryScanChanged = Signal()
+    studioAutoFillChanged = Signal()
+    studioAutoFillCompleted = Signal("QVariantMap")
 
     def __init__(
         self,
@@ -164,6 +216,18 @@ class BroadcasterCouchController(CouchController):
             "current": 0,
             "total": 0,
             "fileName": "",
+            "message": "",
+        }
+
+        self._studio_auto_fill_thread: QThread | None = None
+        self._studio_auto_fill_worker: _StudioAutoFillWorker | None = None
+        self._studio_auto_fill_cancel_event: threading.Event | None = None
+        self._studio_auto_fill: dict[str, object] = {
+            "active": False,
+            "phase": "idle",
+            "current": 0,
+            "total": 0,
+            "percent": 0,
             "message": "",
         }
 
@@ -245,9 +309,23 @@ class BroadcasterCouchController(CouchController):
     def libraryScan(self) -> dict[str, object]:
         return self._library_scan
 
+    @Property("QVariantMap", notify=studioAutoFillChanged)
+    def studioAutoFill(self) -> dict[str, object]:
+        return self._studio_auto_fill
+
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         self._video_surface = surface
         super().attach_video_surface(surface)
+
+    @Slot()
+    def stop(self) -> None:
+        if self._studio_auto_fill_cancel_event is not None:
+            self._studio_auto_fill_cancel_event.set()
+        thread = self._studio_auto_fill_thread
+        if thread is not None and thread.isRunning():
+            thread.quit()
+            thread.wait(5000)
+        super().stop()
 
     @Slot()
     def refreshBroadcaster(self) -> None:
@@ -594,27 +672,163 @@ class BroadcasterCouchController(CouchController):
         ) as exc:
             return self._error(exc)
 
+    def _set_studio_auto_fill(self, **changes: object) -> None:
+        updated = dict(self._studio_auto_fill)
+        updated.update(changes)
+        self._studio_auto_fill = updated
+        self.studioAutoFillChanged.emit()
+
     @Slot("QVariantMap", str, str, result="QVariantMap")
-    def autoFillStudio(
+    def startStudioAutoFill(
         self,
         editor: dict[str, object],
         start_utc: str,
         end_utc: str,
     ) -> dict[str, object]:
         try:
-            return self._broadcaster.auto_fill_studio(
-                self._editor_mapping(editor),
-                start_utc,
-                end_utc,
-            )
-        except (
-            BroadcasterError,
-            ChannelRuntimeError,
-            ChannelValidationError,
-            OSError,
-            ValueError,
-        ) as exc:
+            if self._studio_auto_fill_thread is not None:
+                return {
+                    "ok": False,
+                    "message": "Studio Auto Fill is already finishing",
+                }
+            mapped_editor = self._editor_mapping(editor)
+            # Validate timestamps on the GUI thread so malformed requests fail
+            # immediately, while all media resolution and schedule generation
+            # remains in the worker.
+            self._broadcaster._studio_timestamp(start_utc, "calendar start")
+            self._broadcaster._studio_timestamp(end_utc, "calendar end")
+        except (ChannelValidationError, ValueError) as exc:
             return self._error(exc)
+
+        cancel_event = threading.Event()
+        thread = QThread(self)
+        worker = _StudioAutoFillWorker(
+            self._broadcaster,
+            mapped_editor,
+            start_utc,
+            end_utc,
+            cancel_event,
+        )
+        worker.moveToThread(thread)
+
+        worker.progress.connect(self._on_studio_auto_fill_progress)
+        worker.completed.connect(self._on_studio_auto_fill_completed)
+        worker.cancelled.connect(self._on_studio_auto_fill_cancelled)
+        worker.failed.connect(self._on_studio_auto_fill_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_studio_auto_fill_thread_finished)
+        thread.started.connect(worker.run)
+
+        self._studio_auto_fill_thread = thread
+        self._studio_auto_fill_worker = worker
+        self._studio_auto_fill_cancel_event = cancel_event
+        self._set_studio_auto_fill(
+            active=True,
+            phase="preparing",
+            current=0,
+            total=0,
+            percent=0,
+            message="Preparing detached Studio Auto Fill…",
+        )
+        thread.start()
+        return {
+            "ok": True,
+            "message": "Studio Auto Fill started in the background",
+        }
+
+    @Slot(int, int, str)
+    def _on_studio_auto_fill_progress(
+        self,
+        current: int,
+        total: int,
+        message: str,
+    ) -> None:
+        current = max(0, int(current))
+        total = max(0, int(total))
+        percent = (
+            min(100, int(current * 100 / total))
+            if total > 0
+            else 0
+        )
+        self._set_studio_auto_fill(
+            active=True,
+            phase="building" if total > 0 else "preparing",
+            current=current,
+            total=total,
+            percent=percent,
+            message=str(message),
+        )
+
+    @Slot(object)
+    def _on_studio_auto_fill_completed(self, result: object) -> None:
+        if (
+            self._studio_auto_fill_cancel_event is not None
+            and self._studio_auto_fill_cancel_event.is_set()
+        ):
+            self._on_studio_auto_fill_cancelled()
+            return
+        if not isinstance(result, dict):
+            self._on_studio_auto_fill_failed(
+                "Studio Auto Fill returned an invalid result"
+            )
+            return
+        self._set_studio_auto_fill(
+            active=False,
+            phase="ready",
+            current=1,
+            total=1,
+            percent=100,
+            message=str(result.get("message", "Studio Auto Fill is ready")),
+        )
+        self.studioAutoFillCompleted.emit(dict(result))
+
+    @Slot()
+    def _on_studio_auto_fill_cancelled(self) -> None:
+        self._set_studio_auto_fill(
+            active=False,
+            phase="cancelled",
+            current=0,
+            total=0,
+            percent=0,
+            message=(
+                "Studio Auto Fill cancelled. The detached draft was not changed."
+            ),
+        )
+
+    @Slot(str)
+    def _on_studio_auto_fill_failed(self, message: str) -> None:
+        self._set_studio_auto_fill(
+            active=False,
+            phase="error",
+            current=0,
+            total=0,
+            percent=0,
+            message=f"Studio Auto Fill failed — {message}",
+        )
+
+    @Slot()
+    def _on_studio_auto_fill_thread_finished(self) -> None:
+        thread = self._studio_auto_fill_thread
+        self._studio_auto_fill_worker = None
+        self._studio_auto_fill_cancel_event = None
+        self._studio_auto_fill_thread = None
+        if thread is not None:
+            thread.deleteLater()
+
+    @Slot(result="QVariantMap")
+    def cancelStudioAutoFill(self) -> dict[str, object]:
+        if (
+            self._studio_auto_fill_cancel_event is None
+            or not bool(self._studio_auto_fill.get("active"))
+        ):
+            return {"ok": False, "message": "No Studio Auto Fill is active"}
+        self._studio_auto_fill_cancel_event.set()
+        self._set_studio_auto_fill(
+            phase="cancelling",
+            message="Cancelling after the current local operation…",
+        )
+        return {"ok": True, "message": "Cancelling Studio Auto Fill"}
 
     @Slot("QVariantMap", result="QVariantMap")
     def createChannel(self, editor: dict[str, object]) -> dict[str, object]:

@@ -126,7 +126,8 @@ The first Channel Studio slice now supports:
 - week and month calendar views,
 - fixed clock-based blocks stored as stable Library asset IDs,
 - sequential or shuffle filler for all uncovered time,
-- Auto Fill that generates real editable blocks for the visible range,
+- background Auto Fill with visible progress and cooperative cancellation,
+  generating real editable blocks for the visible range,
 - drag exact Library assets into the draft,
 - reorder and remove blocks,
 - validate before saving,
@@ -148,6 +149,9 @@ marathons, nested collections, and multiple editor lanes remain later work.
   dynamic filler pool.
 - The initial canvas is a clock-based week/month horizon with one timeline lane.
 - Opening, browsing, Auto Fill, and drag/drop remain draft-only. Apply is explicit.
+- Auto Fill resolves and builds on a worker thread. The visible draft remains
+  untouched until a successful result is ready; cancellation or failure
+  discards the generated work.
 
 Undo/redo, durable draft recovery across application restarts, and recurring calendar templates are
 still intentionally unresolved.

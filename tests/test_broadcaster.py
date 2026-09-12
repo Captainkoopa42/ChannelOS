@@ -9,6 +9,7 @@ from channelos.broadcaster import (
     BroadcasterError,
     BroadcasterService,
     ChannelConflictError,
+    StudioAutoFillCancelled,
     definition_from_editor,
     serialize_channel,
 )
@@ -272,6 +273,55 @@ def test_studio_auto_fill_returns_editable_gapless_blocks(tmp_path: Path) -> Non
     assert result["blocks"][0]["startUtc"] == start.isoformat()
     for left, right in zip(result["blocks"], result["blocks"][1:]):
         assert left["endUtc"] == right["startUtc"]
+
+
+def test_studio_auto_fill_reports_progress_and_can_cancel_safely(
+    tmp_path: Path,
+) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source, name="Studio TV")
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    updates: list[tuple[int, int, str]] = []
+    cancel_requested = False
+
+    def publish(current: int, total: int, message: str) -> None:
+        nonlocal cancel_requested
+        updates.append((current, total, message))
+        if current > 0:
+            cancel_requested = True
+
+    with pytest.raises(StudioAutoFillCancelled):
+        service.auto_fill_studio(
+            raw,
+            start.isoformat(),
+            (start + timedelta(minutes=3)).isoformat(),
+            on_progress=publish,
+            should_cancel=lambda: cancel_requested,
+        )
+
+    assert any(total == 0 for _, total, _ in updates)
+    assert any(current > 0 and total > 0 for current, total, _ in updates)
+
+
+def test_studio_auto_fill_progress_reaches_complete(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source, name="Studio TV")
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    updates: list[tuple[int, int, str]] = []
+
+    service.auto_fill_studio(
+        raw,
+        start.isoformat(),
+        (start + timedelta(minutes=3)).isoformat(),
+        on_progress=lambda current, total, message: updates.append(
+            (current, total, message)
+        ),
+    )
+
+    assert updates[-1][0] == updates[-1][1]
+    assert updates[-1][2] == "Auto Fill schedule ready"
 
 
 def test_studio_calendar_roundtrip_and_preview_use_stable_asset_ids(tmp_path: Path) -> None:

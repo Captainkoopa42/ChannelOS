@@ -962,7 +962,13 @@ def run_qt(
     window._channelos_settings_item = settings_item
     window._channelos_component_engine = engine
 
-    controller_input = QtControllerInput(window, key_filter.dispatch_command)
+    controller_input = QtControllerInput(
+        window,
+        key_filter.dispatch_command,
+        enabled=lambda: bool(
+            controller.settings.get("controllerEnabled", True)
+        ),
+    )
     window._channelos_controller_input = controller_input
 
     playback_timer = QTimer(window)

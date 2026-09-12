@@ -117,6 +117,7 @@ class FakeSettingsController(QObject):
             "audioOutputDevices": [],
             "skipBackSeconds": 10,
             "skipForwardSeconds": 30,
+            "controllerEnabled": True,
             "performanceProfile": "standard",
             "generateVideoThumbnails": True,
             "artworkCacheLimitMb": 0,
@@ -257,6 +258,9 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
     assert "preferences.artworkCacheLimitMb" in text
     assert "preferences.backgroundArtworkDuringPlayback" in text
     assert "preferences.reducedMotion" in text
+    assert "preferences.controllerEnabled" in text
+    assert '11: "controllerEnabled"' in text
+    assert "Controller Input" in text
     assert "preferences.artworkCacheBytes" in text
     assert "channelOS.displayMode" in text
     assert "channelOS.changeDisplayMode" in text

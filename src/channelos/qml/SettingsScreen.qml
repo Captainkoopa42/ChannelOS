@@ -15,6 +15,7 @@ Item {
             audioOutputDevices: [],
             skipBackSeconds: 10,
             skipForwardSeconds: 30,
+            controllerEnabled: true,
             performanceProfile: "standard",
             generateVideoThumbnails: true,
             artworkCacheLimitMb: 0,
@@ -37,8 +38,9 @@ Item {
         { title: "Generated Artwork Cache", detail: "Limit only ChannelOS-generated thumbnails. Zero means unlimited." },
         { title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
         { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
+        { title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
         { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
-        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
+        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
     ]
 
     anchors.fill: parent
@@ -122,6 +124,8 @@ Item {
         if (index === 10)
             return preferences.reducedMotion ? "On" : "Off"
         if (index === 11)
+            return preferences.controllerEnabled ? "On" : "Off"
+        if (index === 12)
             return cacheUsageLabel()
         return "Standard"
     }
@@ -137,7 +141,8 @@ Item {
             7: "generateVideoThumbnails",
             8: "artworkCacheLimit",
             9: "backgroundArtworkDuringPlayback",
-            10: "reducedMotion"
+            10: "reducedMotion",
+            11: "controllerEnabled"
         })
         return names[index]
     }
@@ -155,7 +160,7 @@ Item {
     }
 
     function adjust(index, direction) {
-        if (index < 0 || index > 10)
+        if (index < 0 || index > 11)
             return
         if (index === 1) {
             changeDisplayMode(direction)
@@ -168,9 +173,9 @@ Item {
     }
 
     function activateAction(index) {
-        if (index === 11) {
+        if (index === 12) {
             showResult(channelOS.clearArtworkCache())
-        } else if (index === 12) {
+        } else if (index === 13) {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
         }
@@ -203,7 +208,7 @@ Item {
             return
         }
         if (intent === "SELECT") {
-            if (hostWindow.settingsSelection < 11)
+            if (hostWindow.settingsSelection < 12)
                 adjust(hostWindow.settingsSelection, 1)
             else
                 activateAction(hostWindow.settingsSelection)
@@ -419,7 +424,7 @@ Item {
                     anchors.rightMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
-                    visible: settingRow.index < 11
+                    visible: settingRow.index < 12
 
                     Rectangle {
                         width: 38
@@ -478,12 +483,12 @@ Item {
                     width: 236
                     height: 42
                     radius: 6
-                    visible: settingRow.index >= 11
+                    visible: settingRow.index >= 12
                     color: actionMouse.containsMouse ? "#1a4d82" : "#10283f"
                     border.color: "#1a91ff"
                     Text {
                         anchors.centerIn: parent
-                        text: settingRow.index === 11
+                        text: settingRow.index === 12
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
                               : "Restore Standard Defaults"
                         color: "#f4f7fb"

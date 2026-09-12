@@ -284,6 +284,7 @@ class CouchController(QObject):
             "audioOutputDevices": self._audio_output_devices,
             "skipBackSeconds": self._settings.skip_back_seconds,
             "skipForwardSeconds": self._settings.skip_forward_seconds,
+            "controllerEnabled": self._settings.controller_enabled,
             "performanceProfile": self._settings.performance_profile,
             "generateVideoThumbnails": (
                 self._settings.generate_video_thumbnails
@@ -1199,6 +1200,17 @@ class CouchController(QObject):
                     reduced_motion=value,
                 )
                 message = "Reduced motion on" if value else "Reduced motion off"
+            elif name == "controllerEnabled":
+                value = not self._settings.controller_enabled
+                settings = replace(
+                    self._settings,
+                    controller_enabled=value,
+                )
+                message = (
+                    "Controller input on"
+                    if value
+                    else "Controller input off - use keyboard or mouse to turn it back on"
+                )
             else:
                 raise ValueError(f"unknown setting: {name}")
 
@@ -1750,6 +1762,7 @@ class CouchKeyFilter(QObject):
                 8: "artworkCacheLimit",
                 9: "backgroundArtworkDuringPlayback",
                 10: "reducedMotion",
+                11: "controllerEnabled",
             }
             name = names.get(selection)
             if name is None:
@@ -1923,7 +1936,7 @@ class CouchKeyFilter(QObject):
                 current = int(self._window.property("settingsSelection"))
                 self._window.setProperty(
                     "settingsSelection",
-                    min(12, current + 1),
+                    min(13, current + 1),
                 )
                 return True
             if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
@@ -1931,11 +1944,11 @@ class CouchKeyFilter(QObject):
                 return self._adjust_selected_setting(direction)
             if intent is ControlIntent.SELECT:
                 selection = int(self._window.property("settingsSelection"))
-                if selection == 11:
+                if selection == 12:
                     result = self._controller.clearArtworkCache()
                     self._notify(result)
                     return True
-                if selection == 12:
+                if selection == 13:
                     result = self._controller.resetSettings()
                     self._notify(result)
                     self._window.setProperty(
@@ -2362,7 +2375,13 @@ def run_qt(
     window._channelos_video_window = video_window
     window._channelos_settings_item = settings_item
 
-    controller_input = QtControllerInput(window, key_filter.dispatch_command)
+    controller_input = QtControllerInput(
+        window,
+        key_filter.dispatch_command,
+        enabled=lambda: bool(
+            controller.settings.get("controllerEnabled", True)
+        ),
+    )
     window._channelos_controller_input = controller_input
 
     # The channel continues broadcasting independently of UI input.

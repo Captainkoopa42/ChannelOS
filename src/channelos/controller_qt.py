@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer, Qt
+from PySide6.QtGui import QGuiApplication
 
 from .control import ControlCommand
 from .controller_input import (
@@ -24,10 +25,19 @@ class QtControllerInput(QObject):
         dispatch: Callable[[ControlCommand], object],
         *,
         backend: ControllerBackend | None = None,
+        enabled: Callable[[], bool] | None = None,
+        application_active: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__(window)
         self._window = window
-        self._backend = backend if backend is not None else create_controller_backend()
+        self._enabled = enabled or (lambda: True)
+        self._application_active = (
+            application_active or self._default_application_active
+        )
+        self._accepting_input = False
+        self._backend = (
+            backend if backend is not None else create_controller_backend()
+        )
         self._hub = (
             None
             if self._backend is None
@@ -44,6 +54,10 @@ class QtControllerInput(QObject):
 
         self._window.setProperty("controllerConnected", False)
         self._window.setProperty("controllerName", "")
+
+        app = QGuiApplication.instance()
+        if application_active is None and app is not None:
+            app.applicationStateChanged.connect(self._application_state_changed)
 
     @property
     def available(self) -> bool:
@@ -62,9 +76,39 @@ class QtControllerInput(QObject):
     def stop(self) -> None:
         self._timer.stop()
 
+    @staticmethod
+    def _default_application_active() -> bool:
+        app = QGuiApplication.instance()
+        return (
+            app is None
+            or app.applicationState() == Qt.ApplicationState.ApplicationActive
+        )
+
+    def _application_state_changed(self, _state: Qt.ApplicationState) -> None:
+        # Resume immediately on focus return instead of waiting for the backed-
+        # off timer. The first active sample is primed and cannot fire a held
+        # button into ChannelOS.
+        if self._timer.isActive():
+            self.poll()
+
+    def _suspend_input(self) -> None:
+        if self._hub is None:
+            return
+        if self._accepting_input or self._hub.connected:
+            self._hub.reset()
+        self._accepting_input = False
+        self._window.setProperty("controllerConnected", False)
+        self._window.setProperty("controllerName", "")
+        if self._timer.interval() != self.DISCONNECTED_POLL_MS:
+            self._timer.setInterval(self.DISCONNECTED_POLL_MS)
+
     def poll(self) -> None:
         if self._hub is None:
             return
+        if not bool(self._enabled()) or not bool(self._application_active()):
+            self._suspend_input()
+            return
+        self._accepting_input = True
         self._hub.poll()
         interval = (
             self.CONNECTED_POLL_MS

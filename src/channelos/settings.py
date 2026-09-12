@@ -12,6 +12,7 @@ DEFAULT_AUDIO_OUTPUT_DEVICE_ID = ""
 DEFAULT_SKIP_BACK_SECONDS = 10
 DEFAULT_SKIP_FORWARD_SECONDS = 30
 DEFAULT_DISPLAY_MODE = "fullscreen"
+DEFAULT_CONTROLLER_ENABLED = True
 DISPLAY_MODES = ("fullscreen", "windowed")
 SKIP_BACK_CHOICES = (5, 10, 15, 30)
 SKIP_FORWARD_CHOICES = (15, 30, 60, 90)
@@ -49,6 +50,7 @@ class CouchSettings:
     skip_back_seconds: int = DEFAULT_SKIP_BACK_SECONDS
     skip_forward_seconds: int = DEFAULT_SKIP_FORWARD_SECONDS
     display_mode: str = DEFAULT_DISPLAY_MODE
+    controller_enabled: bool = DEFAULT_CONTROLLER_ENABLED
     performance_profile: str = "standard"
     generate_video_thumbnails: bool = True
     artwork_cache_limit_mb: int = 0
@@ -111,6 +113,13 @@ class CouchSettings:
         ).strip().lower()
         if display_mode not in DISPLAY_MODES:
             display_mode = DEFAULT_DISPLAY_MODE
+
+        controller_enabled = values.get(
+            "controller_enabled",
+            DEFAULT_CONTROLLER_ENABLED,
+        )
+        if not isinstance(controller_enabled, bool):
+            controller_enabled = DEFAULT_CONTROLLER_ENABLED
 
         performance_profile = str(
             values.get("performance_profile", "standard")
@@ -176,6 +185,7 @@ class CouchSettings:
             skip_back_seconds=int(skip_back),
             skip_forward_seconds=int(skip_forward),
             display_mode=display_mode,
+            controller_enabled=controller_enabled,
             performance_profile=performance_profile,
             generate_video_thumbnails=generate_video_thumbnails,
             artwork_cache_limit_mb=int(cache_limit),

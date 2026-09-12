@@ -39,6 +39,7 @@ thumbnails until the cache fits.
 | Muted | Off | On / Off |
 | Skip Back | 10 seconds | 5, 10, 15, or 30 seconds |
 | Skip Forward | 30 seconds | 15, 30, 60, or 90 seconds |
+| Controller Input | On | On / Off; input is always suspended while another application has focus |
 
 Audio Output, volume, and mute changes apply to both Live TV and On Demand and
 become the next-launch defaults. A choice is remembered even when that decoder
@@ -47,6 +48,13 @@ operating system. Before the first media load, ChannelOS validates a saved
 destination against the outputs currently exposed by libVLC. A disconnected
 device falls back to System Default and that safe choice is persisted.
 Skip choices apply to both television and On Demand control intents.
+
+Controller Input is a persistent master switch for ChannelOS gamepad polling.
+When enabled, controller commands are accepted only while ChannelOS is the
+active application. Losing focus clears held-button state; returning to
+ChannelOS primes the current state so a button held in another application
+cannot trigger a delayed action. Keyboard and mouse input remain available when
+controller input is off, including for turning it back on.
 
 ## Truthful presentation
 

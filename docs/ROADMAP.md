@@ -177,13 +177,13 @@ concept](design/CHANNEL_STUDIO_CONCEPT.md) is implemented. It complements rather
 than replaces the existing Channel Builder.
 
 - [x] Channel Studio detached draft workflow
-- [x] Week/month calendar views
+- [x] Day/week/month calendar views
 - [x] Drag/drop fixed media blocks and horizontal program timeline
 - [x] Editable sequential/shuffle Auto Fill
 - [x] Channel Definition 0.2 calendar blocks plus automatic gap filler
 - [x] Reusable Studio program groups and show-specific gap filler
 - [x] Recurring weekly patterns and copy-week tools
-- [ ] Full-screen Day editor integrated with Week and Month views
+- [x] Full-screen Day editor integrated with Week and Month views
 
 - [ ] Metadata provider abstraction
 - [ ] File/title matching workflow

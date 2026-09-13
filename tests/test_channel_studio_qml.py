@@ -13,11 +13,24 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
     assert 'property string viewMode: "week"' in qml
     assert 'text: "Week"' in qml
     assert 'text: "Month"' in qml
+    assert 'text: "Day"' in qml
+    assert 'text: "FULL DAY EDITOR"' in qml
+    assert '"Show Media Bin"' in qml
+    assert 'text: "Midday"' in qml
+    assert 'text: "Evening"' in qml
+    assert "function openDay(" in qml
+    assert "function addAssetAtMinute(" in qml
+    assert "function moveBlockToMinute(" in qml
+    assert "function placementConflict(" in qml
+    assert "minuteForTrackPosition" in qml
+    assert "studioRoot.openDay(monthDay.cellDate)" in qml
+    assert "studioRoot.openDay(weekDay.columnDate)" in qml
     assert 'text: "Auto Fill Range"' in qml
     assert 'text: "Apply to Channel"' in qml
     assert "DropArea" in qml
     assert 'Drag.keys: ["channelos-media"]' in qml
     assert 'Drag.keys: ["channelos-block"]' in qml
+    assert 'text: "15-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"' in qml
     assert 'text: "−15 min"' in qml
     assert 'text: "+15 min"' in qml
     assert 'placeholderText: "HH:MM"' in qml

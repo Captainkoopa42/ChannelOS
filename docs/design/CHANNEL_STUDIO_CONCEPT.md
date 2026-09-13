@@ -2,7 +2,7 @@
 
 **Status:** First calendar implementation landed; longer-term design continues
 
-**Implementation:** Week/month calendar Studio, media bin, timeline, and Auto Fill
+**Implementation:** Day/week/month calendar Studio, media bin, timeline, and Auto Fill
 
 **Existing Channel Builder:** Must remain available
 
@@ -123,7 +123,9 @@ The first Channel Studio slice now supports:
 
 - create or open a channel,
 - edit channel number and name,
-- week and month calendar views,
+- day, week, and month calendar views,
+- a full-width, scrollable 24-hour Day editor opened directly from Week or
+  Month, with 15-minute drag/drop placement and collision-safe refusal,
 - fixed clock-based blocks stored as stable Library asset IDs,
 - sequential or shuffle filler for all uncovered time,
 - reusable local program groups that can be shared across Studio drafts,
@@ -156,7 +158,8 @@ multiple editor lanes remain later work.
 - Weekly patterns materialize into normal calendar blocks rather than becoming
   a second runtime rule system. Copies preserve local wall-clock times across
   daylight-saving changes and remain independently editable.
-- The initial canvas is a clock-based week/month horizon with one timeline lane.
+- The canvas provides a clock-based day/week/month horizon. Day view expands
+  into a 24-hour NLE-style lane while editing the same calendar block model.
 - Opening, browsing, Auto Fill, and drag/drop remain draft-only. Apply is explicit.
 - Auto Fill resolves and builds on a worker thread. The visible draft remains
   untouched until a successful result is ready; cancellation or failure

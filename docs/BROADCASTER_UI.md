@@ -160,6 +160,14 @@ replacing occupied weeks requires an explicit confirmation. Generated weeks
 are ordinary detached calendar blocks, so each can be edited independently and
 neither the live channel nor media files change until Apply.
 
+The full-screen Day editor opens the selected date from either Week or Month
+without creating another schedule. Its horizontally scrollable 24-hour track
+uses the same detached calendar blocks, with shortcuts to the start, midday,
+evening, and end of day. Media and existing blocks can be dropped at a
+15-minute snapped local time. A placement that overlaps another fixed block or
+runs past midnight is refused without mutating the draft. The Media Bin can be
+shown temporarily and hidden again to restore the full-width editing surface.
+
 ## Immediate Guide integration
 
 After a successful create, edit, or delete, the couch application rebuilds the active `GuideService` and `TelevisionRuntime` from the saved portable definitions while reusing the real persistent `RuntimeStore`.
@@ -247,7 +255,7 @@ Esc                Cancel editor / return
 
 Channel Studio
 Mouse drag         Add/move/swap program blocks
-Week / Month       Detailed schedule / calendar overview
+Day / Week / Month 24-hour editor / detailed week / calendar overview
 Auto Fill Range    Generate editable fixed blocks
 Ctrl+S             Validate and Apply to Channel
 Esc                Return to Broadcaster
@@ -273,9 +281,8 @@ The following Broadcaster work remains real future work rather than placeholder 
 
 - explicit channel renumber workflow,
 - restoring a channel directly from its dated deletion backup,
-- recurring weekly templates and calendar-copy tools,
 - undo/redo and durable unsaved-draft recovery,
-- finer timeline snapping beyond exact HH:MM entry and ±15-minute adjustment,
+- configurable timeline snapping beyond the Day editor's 15-minute grid,
 - weighted rotations,
 - marathons,
 - feature/movie slots,

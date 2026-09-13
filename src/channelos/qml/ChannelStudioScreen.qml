@@ -28,6 +28,7 @@ Item {
     property var groupsLibrary: draftData.groups || []
     property var blocksByDay: ({})
     property string viewMode: "week"
+    property bool dayMediaBinVisible: false
     property date anchorDate: new Date()
     property string selectedDayKey: dayKey(new Date())
     property int editingChannelNumber: 0
@@ -54,10 +55,14 @@ Item {
                                       / pendingAutoFillBlocks.length))
             : 0
 
-    onSelectedBlockIndexChanged:
+    onSelectedBlockIndexChanged: {
         exactTimeField.text = selectedBlockTimeText()
-    onBlocksByDayChanged:
+        dayExactTimeField.text = selectedBlockTimeText()
+    }
+    onBlocksByDayChanged: {
         exactTimeField.text = selectedBlockTimeText()
+        dayExactTimeField.text = selectedBlockTimeText()
+    }
 
     function pad(value) {
         return Number(value) < 10 ? "0" + Number(value) : String(value)
@@ -92,12 +97,17 @@ Item {
     function visibleStart() {
         if (viewMode === "month")
             return new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1)
+        if (viewMode === "day")
+            return dateAtLocalMidnight(
+                        new Date(selectedDayKey + "T00:00:00"))
         return startOfWeek(anchorDate)
     }
 
     function visibleEnd() {
         if (viewMode === "month")
             return new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 1)
+        if (viewMode === "day")
+            return addDays(visibleStart(), 1)
         return addDays(startOfWeek(anchorDate), 7)
     }
 
@@ -109,6 +119,8 @@ Item {
     function rangeLabel() {
         if (viewMode === "month")
             return Qt.formatDate(anchorDate, "MMMM yyyy")
+        if (viewMode === "day")
+            return Qt.formatDate(visibleStart(), "dddd, MMMM d, yyyy")
         var start = startOfWeek(anchorDate)
         var end = addDays(start, 6)
         return Qt.formatDate(start, "MMM d") + " — "
@@ -285,6 +297,7 @@ Item {
                 assetId: block.assetId,
                 title: block.title,
                 startUtc: block.startUtc,
+                endUtc: block.endUtc,
                 durationSeconds: block.durationSeconds
             })
         }
@@ -481,6 +494,147 @@ Item {
 
     function blocksForDay(day) {
         return blocksByDay[dayKey(day)] || []
+    }
+
+    function openDay(value) {
+        var day = dateAtLocalMidnight(value)
+        anchorDate = day
+        selectedDayKey = dayKey(day)
+        dayMediaBinVisible = false
+        viewMode = "day"
+        Qt.callLater(function() { scrollDayToHour(12) })
+    }
+
+    function goToday() {
+        var today = dateAtLocalMidnight(new Date())
+        anchorDate = today
+        selectedDayKey = dayKey(today)
+        if (viewMode === "day")
+            Qt.callLater(function() { scrollDayToHour(new Date().getHours()) })
+    }
+
+    function dayBlocks() {
+        return blocksForDay(new Date(selectedDayKey + "T00:00:00"))
+    }
+
+    function minuteOfDay(value) {
+        var date = new Date(value)
+        return date.getHours() * 60 + date.getMinutes()
+                + date.getSeconds() / 60
+    }
+
+    function minuteForTrackPosition(position, trackWidth) {
+        var raw = Number(position) / Math.max(1, Number(trackWidth)) * 1440
+        return Math.max(0, Math.min(1425, Math.round(raw / 15) * 15))
+    }
+
+    function scrollDayToHour(hour) {
+        if (viewMode !== "day" || dayTimeline.width <= 0)
+            return
+        var target = Math.max(0, Math.min(24, Number(hour))) / 24
+                * dayTimeline.contentWidth - dayTimeline.width * 0.18
+        dayTimeline.contentX = Math.max(
+                    0, Math.min(dayTimeline.contentWidth - dayTimeline.width,
+                                target))
+    }
+
+    function placementConflict(start, end, ignoredBlockIndex) {
+        var startMs = new Date(start).getTime()
+        var endMs = new Date(end).getTime()
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            if (index === Number(ignoredBlockIndex))
+                continue
+            var block = calendarBlocks.get(index)
+            var blockStartMs = new Date(block.startUtc).getTime()
+            var blockEndMs = new Date(block.endUtc).getTime()
+            if (blockStartMs < endMs && blockEndMs > startMs)
+                return true
+        }
+        return false
+    }
+
+    function blockIndexAt(assetId, startUtc) {
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            if (String(block.assetId) === String(assetId)
+                    && String(block.startUtc) === String(startUtc))
+                return index
+        }
+        return -1
+    }
+
+    function startAtMinute(day, minute) {
+        var start = dateAtLocalMidnight(day)
+        start.setMinutes(Math.max(0, Math.min(1425, Number(minute))), 0, 0)
+        return start
+    }
+
+    function addAssetAtMinute(asset, day, minute) {
+        var duration = Number(asset ? asset.durationSeconds : 0)
+        if (!asset || duration <= 0) {
+            feedbackMessage = "This media needs a positive indexed duration before it can be scheduled."
+            feedbackIsError = true
+            return false
+        }
+        var start = startAtMinute(day, minute)
+        var end = new Date(start.getTime() + duration * 1000)
+        if (end.getTime() > addDays(dateAtLocalMidnight(day), 1).getTime()) {
+            feedbackMessage = "That program would run past the end of the selected day."
+            feedbackIsError = true
+            return false
+        }
+        if (placementConflict(start, end, -1)) {
+            feedbackMessage = "That time overlaps another fixed program. Choose an open part of the Day track."
+            feedbackIsError = true
+            return false
+        }
+        appendSource(asset.sourceRoot)
+        appendBlock({
+            assetId: asset.assetId,
+            title: asset.title,
+            path: asset.path,
+            sourceRoot: asset.sourceRoot,
+            durationSeconds: duration,
+            startUtc: start.toISOString()
+        })
+        sortBlocks()
+        selectedDayKey = dayKey(day)
+        selectedBlockIndex = blockIndexAt(asset.assetId, start.toISOString())
+        dirty = true
+        feedbackMessage = "Placed “" + asset.title + "” at "
+                + Qt.formatTime(start, "h:mm AP") + "."
+        feedbackIsError = false
+        return true
+    }
+
+    function moveBlockToMinute(blockIndex, day, minute) {
+        if (blockIndex < 0 || blockIndex >= calendarBlocks.count)
+            return false
+        var block = calendarBlocks.get(blockIndex)
+        var start = startAtMinute(day, minute)
+        var end = new Date(start.getTime()
+                           + Number(block.durationSeconds || 0) * 1000)
+        if (end.getTime() > addDays(dateAtLocalMidnight(day), 1).getTime()) {
+            feedbackMessage = "That program would run past the end of the selected day."
+            feedbackIsError = true
+            return false
+        }
+        if (placementConflict(start, end, blockIndex)) {
+            feedbackMessage = "That time overlaps another fixed program. The draft was not changed."
+            feedbackIsError = true
+            return false
+        }
+        var assetId = String(block.assetId)
+        calendarBlocks.setProperty(blockIndex, "startUtc", start.toISOString())
+        calendarBlocks.setProperty(blockIndex, "endUtc", end.toISOString())
+        sortBlocks()
+        selectedDayKey = dayKey(day)
+        selectedBlockIndex = blockIndexAt(assetId, start.toISOString())
+        dirty = true
+        feedbackMessage = "Program moved to "
+                + Qt.formatDateTime(start, "ddd MMM d, h:mm AP") + "."
+        feedbackIsError = false
+        return true
     }
 
     function visibleBlocks() {
@@ -948,7 +1102,13 @@ Item {
         if (viewMode === "month")
             anchorDate = new Date(anchorDate.getFullYear(),
                                   anchorDate.getMonth() + Number(amount), 1)
-        else
+        else if (viewMode === "day") {
+            var day = addDays(new Date(selectedDayKey + "T00:00:00"),
+                              Number(amount))
+            anchorDate = day
+            selectedDayKey = dayKey(day)
+            Qt.callLater(function() { scrollDayToHour(12) })
+        } else
             anchorDate = addDays(anchorDate, Number(amount) * 7)
     }
 
@@ -1195,8 +1355,11 @@ Item {
             id: mediaPanel
             anchors.left: parent.left
             anchors.top: studioHeader.bottom
-            anchors.bottom: timelinePanel.top
+            anchors.bottom: studioRoot.viewMode === "day"
+                            ? studioFooter.top : timelinePanel.top
             width: Math.max(250, parent.width * 0.20)
+            visible: studioRoot.viewMode !== "day"
+                     || studioRoot.dayMediaBinVisible
             color: studioRoot.panel
             border.color: studioRoot.line
 
@@ -1352,10 +1515,13 @@ Item {
 
         Rectangle {
             id: calendarPanel
-            anchors.left: mediaPanel.right
+            anchors.left: studioRoot.viewMode === "day"
+                          && !studioRoot.dayMediaBinVisible
+                          ? parent.left : mediaPanel.right
             anchors.right: parent.right
             anchors.top: studioHeader.bottom
-            anchors.bottom: timelinePanel.top
+            anchors.bottom: studioRoot.viewMode === "day"
+                            ? studioFooter.top : timelinePanel.top
             color: "#091827"
             border.color: studioRoot.line
 
@@ -1369,7 +1535,7 @@ Item {
                     spacing: 8
 
                     Button { text: "‹"; onClicked: studioRoot.navigateRange(-1) }
-                    Button { text: "Today"; onClicked: studioRoot.anchorDate = new Date() }
+                    Button { text: "Today"; onClicked: studioRoot.goToday() }
                     Button { text: "›"; onClicked: studioRoot.navigateRange(1) }
 
                     Text {
@@ -1381,6 +1547,14 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                     }
 
+                    Button {
+                        text: "Day"
+                        checkable: true
+                        checked: studioRoot.viewMode === "day"
+                        onClicked: studioRoot.openDay(
+                                           new Date(studioRoot.selectedDayKey
+                                                    + "T00:00:00"))
+                    }
                     Button {
                         text: "Week"
                         checkable: true
@@ -1396,6 +1570,7 @@ Item {
                     Button {
                         text: "Copy / Repeat Week"
                         enabled: !studioRoot.autoFillBusy
+                                 && studioRoot.viewMode === "week"
                         onClicked: weeklyPatternDialog.open()
                     }
                     Button {
@@ -1472,6 +1647,12 @@ Item {
                                         font.pixelSize: 20
                                         font.weight: Font.DemiBold
                                         horizontalAlignment: Text.AlignHCenter
+                                    }
+
+                                    Button {
+                                        Layout.fillWidth: true
+                                        text: "Open Day"
+                                        onClicked: studioRoot.openDay(weekDay.columnDate)
                                     }
 
                                     ListView {
@@ -1606,11 +1787,311 @@ Item {
                                 MouseArea {
                                     anchors.fill: parent
                                     onClicked: {
-                                        studioRoot.anchorDate = monthDay.cellDate
-                                        studioRoot.selectedDayKey = studioRoot.dayKey(monthDay.cellDate)
-                                        studioRoot.viewMode = "week"
+                                        studioRoot.openDay(monthDay.cellDate)
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    Item {
+                        id: dayEditor
+                        anchors.fill: parent
+                        visible: studioRoot.viewMode === "day"
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            spacing: 10
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                Text {
+                                    text: "FULL DAY EDITOR"
+                                    color: studioRoot.accentBright
+                                    font.pixelSize: 12
+                                    font.weight: Font.Bold
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: studioRoot.dayBlocks().length
+                                          + " fixed program"
+                                          + (studioRoot.dayBlocks().length === 1 ? "" : "s")
+                                          + " • uncovered time uses filler"
+                                    color: studioRoot.textSecondary
+                                    font.pixelSize: 11
+                                }
+                                Button {
+                                    text: studioRoot.dayMediaBinVisible
+                                          ? "Hide Media Bin" : "Show Media Bin"
+                                    onClicked: studioRoot.dayMediaBinVisible
+                                               = !studioRoot.dayMediaBinVisible
+                                }
+                                Button { text: "Start"; onClicked: studioRoot.scrollDayToHour(0) }
+                                Button { text: "Midday"; onClicked: studioRoot.scrollDayToHour(12) }
+                                Button { text: "Evening"; onClicked: studioRoot.scrollDayToHour(18) }
+                                Button { text: "End"; onClicked: studioRoot.scrollDayToHour(24) }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 54
+                                radius: 7
+                                color: studioRoot.panel
+                                border.color: studioRoot.line
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    spacing: 8
+
+                                    Text {
+                                        text: studioRoot.selectedBlockIndex >= 0
+                                              ? "SELECTED  •  "
+                                                + studioRoot.selectedBlockTimeText()
+                                              : "SELECT A PROGRAM"
+                                        color: studioRoot.textPrimary
+                                        font.pixelSize: 12
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    Button {
+                                        text: "Groups & Show Filler"
+                                        onClicked: programGroupDialog.open()
+                                    }
+                                    Button {
+                                        text: "−15 min"
+                                        enabled: studioRoot.selectedBlockIndex >= 0
+                                        onClicked: studioRoot.nudgeSelected(-900)
+                                    }
+                                    Button {
+                                        text: "+15 min"
+                                        enabled: studioRoot.selectedBlockIndex >= 0
+                                        onClicked: studioRoot.nudgeSelected(900)
+                                    }
+                                    TextField {
+                                        id: dayExactTimeField
+                                        Layout.preferredWidth: 88
+                                        enabled: studioRoot.selectedBlockIndex >= 0
+                                        placeholderText: "HH:MM"
+                                        text: studioRoot.selectedBlockTimeText()
+                                        validator: RegularExpressionValidator {
+                                            regularExpression: /^([01]?\d|2[0-3]):[0-5]\d$/
+                                        }
+                                        onAccepted: studioRoot.setSelectedTime(text)
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "Exact local start time"
+                                    }
+                                }
+                            }
+
+                            Flickable {
+                                id: dayTimeline
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+                                contentWidth: Math.max(width, 2880)
+                                contentHeight: height
+                                boundsBehavior: Flickable.StopAtBounds
+
+                                Rectangle {
+                                    id: dayTrack
+                                    width: dayTimeline.contentWidth
+                                    height: dayTimeline.height
+                                    color: "#06111e"
+                                    border.color: studioRoot.line
+
+                                    DropArea {
+                                        anchors.fill: parent
+                                        keys: ["channelos-media", "channelos-block"]
+                                        z: 3
+                                        onDropped: function(drop) {
+                                            if (!drop.source)
+                                                return
+                                            var minute = studioRoot.minuteForTrackPosition(
+                                                        drop.x, dayTrack.width)
+                                            var day = new Date(studioRoot.selectedDayKey
+                                                               + "T00:00:00")
+                                            if (drop.keys.indexOf("channelos-media") >= 0)
+                                                studioRoot.addAssetAtMinute(
+                                                            drop.source.assetData,
+                                                            day, minute)
+                                            else if (drop.keys.indexOf("channelos-block") >= 0)
+                                                studioRoot.moveBlockToMinute(
+                                                            drop.source.blockIndex,
+                                                            day, minute)
+                                            drop.acceptProposedAction()
+                                        }
+                                    }
+
+                                    Repeater {
+                                        model: 25
+                                        delegate: Item {
+                                            id: hourMark
+                                            required property int index
+                                            x: index / 24 * dayTrack.width
+                                            width: 1
+                                            height: dayTrack.height
+                                            z: 1
+
+                                            Rectangle {
+                                                anchors.top: parent.top
+                                                anchors.bottom: parent.bottom
+                                                width: 1
+                                                color: hourMark.index % 6 === 0
+                                                       ? studioRoot.accent : studioRoot.line
+                                                opacity: hourMark.index === 24 ? 0.0 : 0.8
+                                            }
+                                            Text {
+                                                anchors.top: parent.top
+                                                anchors.topMargin: 9
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: hourMark.index < 24
+                                                      ? studioRoot.pad(hourMark.index) + ":00"
+                                                      : "24:00"
+                                                color: hourMark.index % 6 === 0
+                                                       ? studioRoot.accentBright
+                                                       : studioRoot.textSecondary
+                                                font.pixelSize: 10
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        x: 0
+                                        y: 48
+                                        width: parent.width
+                                        height: Math.max(120, parent.height - 82)
+                                        color: "#091827"
+                                        border.color: studioRoot.line
+                                    }
+
+                                    Repeater {
+                                        model: studioRoot.dayBlocks()
+
+                                        delegate: Rectangle {
+                                            id: dayBlock
+                                            required property var modelData
+                                            property int blockIndex: Number(modelData.modelIndex)
+                                            property var blockData: modelData
+                                            x: studioRoot.minuteOfDay(modelData.startUtc)
+                                               / 1440 * dayTrack.width
+                                            y: 62
+                                            width: Math.max(18,
+                                                      Number(modelData.durationSeconds || 0)
+                                                      / 86400 * dayTrack.width)
+                                            height: Math.max(92, dayTrack.height - 110)
+                                            radius: 7
+                                            color: blockIndex === studioRoot.selectedBlockIndex
+                                                   ? "#14558a" : studioRoot.panelRaised
+                                            border.color: blockIndex === studioRoot.selectedBlockIndex
+                                                          ? studioRoot.accentBright
+                                                          : studioRoot.line
+                                            border.width: blockIndex === studioRoot.selectedBlockIndex
+                                                          ? 2 : 1
+                                            z: 4
+
+                                            Item {
+                                                id: dayBlockDragProxy
+                                                width: 1
+                                                height: 1
+                                                Drag.active: dayBlockMouse.drag.active
+                                                Drag.keys: ["channelos-block"]
+                                                Drag.hotSpot.x: 0
+                                                Drag.hotSpot.y: 0
+                                                Drag.source: dayBlock
+                                            }
+
+                                            Column {
+                                                anchors.left: parent.left
+                                                anchors.right: dayBlockRemove.visible
+                                                               ? dayBlockRemove.left
+                                                               : parent.right
+                                                anchors.top: parent.top
+                                                anchors.bottom: parent.bottom
+                                                anchors.margins: 9
+                                                spacing: 5
+                                                Text {
+                                                    width: parent.width
+                                                    text: studioRoot.formatTime(dayBlock.blockData.startUtc)
+                                                          + " — "
+                                                          + studioRoot.formatTime(dayBlock.blockData.endUtc)
+                                                    color: studioRoot.accentBright
+                                                    font.pixelSize: 10
+                                                    elide: Text.ElideRight
+                                                }
+                                                Text {
+                                                    width: parent.width
+                                                    text: String(dayBlock.blockData.title)
+                                                    color: studioRoot.textPrimary
+                                                    font.pixelSize: 13
+                                                    font.weight: Font.DemiBold
+                                                    elide: Text.ElideRight
+                                                }
+                                                Text {
+                                                    width: parent.width
+                                                    text: studioRoot.durationLabel(
+                                                              dayBlock.blockData.durationSeconds)
+                                                    color: studioRoot.textSecondary
+                                                    font.pixelSize: 10
+                                                    elide: Text.ElideRight
+                                                }
+                                            }
+
+                                            Button {
+                                                id: dayBlockRemove
+                                                anchors.right: parent.right
+                                                anchors.top: parent.top
+                                                anchors.margins: 6
+                                                visible: dayBlock.width >= 72
+                                                width: 28
+                                                height: 28
+                                                text: "×"
+                                                onClicked: studioRoot.removeBlock(dayBlock.blockIndex)
+                                            }
+
+                                            MouseArea {
+                                                id: dayBlockMouse
+                                                anchors.left: parent.left
+                                                anchors.right: dayBlockRemove.visible
+                                                               ? dayBlockRemove.left : parent.right
+                                                anchors.top: parent.top
+                                                anchors.bottom: parent.bottom
+                                                hoverEnabled: true
+                                                cursorShape: Qt.OpenHandCursor
+                                                drag.target: dayBlockDragProxy
+                                                onPressed: studioRoot.selectedBlockIndex
+                                                           = dayBlock.blockIndex
+                                                onReleased: {
+                                                    dayBlockDragProxy.Drag.drop()
+                                                    dayBlockDragProxy.x = 0
+                                                    dayBlockDragProxy.y = 0
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        visible: studioRoot.dayBlocks().length === 0
+                                        text: "No fixed programs — filler remains on air.\nShow the Media Bin, then drag a program to an exact time."
+                                        color: studioRoot.textSecondary
+                                        font.pixelSize: 14
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+                                }
+
+                                ScrollBar.horizontal: ScrollBar { }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "15-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"
+                                color: studioRoot.textSecondary
+                                font.pixelSize: 10
+                                horizontalAlignment: Text.AlignHCenter
                             }
                         }
                     }
@@ -1624,6 +2105,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: studioFooter.top
             height: 210
+            visible: studioRoot.viewMode !== "day"
             color: "#06111e"
             border.color: studioRoot.line
 

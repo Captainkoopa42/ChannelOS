@@ -198,6 +198,68 @@ def test_channel_studio_component_loads_and_guards_an_unapplied_draft() -> None:
     assert item.property("dirty") is True
     assert "Test Bumpers" in str(item.property("feedbackMessage"))
 
+    open_day = QQmlExpression(
+        engine.rootContext(), item,
+        'openDay(new Date("2026-09-07T12:00:00.000Z"))'
+    )
+    open_day.evaluate()
+    assert not open_day.hasError(), open_day.error().toString()
+    app.processEvents()
+    assert item.property("viewMode") == "day"
+    assert item.property("selectedDayKey") == "2026-09-07"
+
+    day_state = QQmlExpression(
+        engine.rootContext(), item,
+        '[dayKey(visibleStart()), dayKey(visibleEnd()), '
+        'dayBlocks().length, minuteForTrackPosition(1440, 2880)]'
+    )
+    state_result, state_is_undefined = day_state.evaluate()
+    assert state_is_undefined is False
+    assert not day_state.hasError(), day_state.error().toString()
+    state = state_result.toVariant()
+    assert state[0] == "2026-09-07"
+    assert state[1] == "2026-09-08"
+    assert state[2:] == [1, 720]
+
+    place_program = QQmlExpression(
+        engine.rootContext(), item,
+        'addAssetAtMinute(mediaLibrary[0], '
+        'new Date("2026-09-07T12:00:00.000Z"), 600)'
+    )
+    place_result, place_is_undefined = place_program.evaluate()
+    assert place_is_undefined is False
+    assert place_result is True
+    assert not place_program.hasError(), place_program.error().toString()
+    assert item.property("calendarBlockCount") == 2
+
+    move_program = QQmlExpression(
+        engine.rootContext(), item,
+        'moveBlockToMinute(selectedBlockIndex, '
+        'new Date("2026-09-07T12:00:00.000Z"), 615)'
+    )
+    move_result, move_is_undefined = move_program.evaluate()
+    assert move_is_undefined is False
+    assert move_result is True
+    assert not move_program.hasError(), move_program.error().toString()
+
+    collide_program = QQmlExpression(
+        engine.rootContext(), item,
+        'addAssetAtMinute(mediaLibrary[0], '
+        'new Date("2026-09-07T12:00:00.000Z"), 615)'
+    )
+    collide_result, collide_is_undefined = collide_program.evaluate()
+    assert collide_is_undefined is False
+    assert collide_result is False
+    assert item.property("calendarBlockCount") == 2
+    assert "overlaps another fixed program" in str(item.property("feedbackMessage"))
+
+    remove_placed = QQmlExpression(
+        engine.rootContext(), item, "removeBlock(selectedBlockIndex); viewMode = 'week'"
+    )
+    remove_placed.evaluate()
+    assert not remove_placed.hasError(), remove_placed.error().toString()
+    assert item.property("calendarBlockCount") == 1
+
     copy_expression = QQmlExpression(
         engine.rootContext(), item, "copyWeekPattern(1, 1, false)"
     )

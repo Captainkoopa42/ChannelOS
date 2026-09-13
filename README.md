@@ -29,7 +29,8 @@ Real-machine validation currently includes:
 - independent On Demand playback over the same indexed media,
 - end-of-file replay/rewind recovery,
 - return from On Demand to television without destroying channel clock state.
-- Channel Studio with week/month calendar views, a draggable program timeline,
+- Channel Studio with day/week/month calendar views, a draggable 24-hour Day
+  track and range timeline,
   exact Library asset blocks, cancellable background Auto Fill with progress,
   reusable program groups, show-specific filler, weekly copy/repeat tools, and
   validated live apply.

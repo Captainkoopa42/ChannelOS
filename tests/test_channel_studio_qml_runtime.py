@@ -11,7 +11,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QMetaObject, QObject, Property, QUrl, Signal, Slot, Qt
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
+from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlExpression
 
 import channelos
 
@@ -197,6 +197,73 @@ def test_channel_studio_component_loads_and_guards_an_unapplied_draft() -> None:
     )
     assert item.property("dirty") is True
     assert "Test Bumpers" in str(item.property("feedbackMessage"))
+
+    copy_expression = QQmlExpression(
+        engine.rootContext(), item, "copyWeekPattern(1, 1, false)"
+    )
+    copy_result, copy_is_undefined = copy_expression.evaluate()
+    assert copy_is_undefined is False
+    assert copy_result is True
+    assert not copy_expression.hasError(), copy_expression.error().toString()
+    for _ in range(10):
+        app.processEvents()
+        if not item.property("autoFillApplying"):
+            break
+        assert QMetaObject.invokeMethod(
+            item,
+            "applyAutoFillBatch",
+            Qt.ConnectionType.DirectConnection,
+        )
+    assert item.property("autoFillApplying") is False
+    assert item.property("calendarBlockCount") == 2
+    editor_expression = QQmlExpression(
+        engine.rootContext(), item, "editorObject()"
+    )
+    copied_editor, editor_is_undefined = editor_expression.evaluate()
+    assert editor_is_undefined is False
+    assert not editor_expression.hasError(), editor_expression.error().toString()
+    copied_editor = copied_editor.toVariant()
+    assert [block["startUtc"] for block in copied_editor["calendarBlocks"]] == [
+        "2026-09-07T19:00:00.000Z",
+        "2026-09-14T19:00:00.000Z",
+    ]
+    assert copied_editor["calendarBlocks"][1]["fillerAssetIds"] == [
+        "sha256:test"
+    ]
+
+    reset_anchor = QQmlExpression(
+        engine.rootContext(), item,
+        'anchorDate = new Date("2026-09-07T12:00:00.000Z")'
+    )
+    reset_anchor.evaluate()
+    assert not reset_anchor.hasError(), reset_anchor.error().toString()
+    collision_expression = QQmlExpression(
+        engine.rootContext(), item, "copyWeekPattern(1, 1, false)"
+    )
+    collision_result, collision_is_undefined = collision_expression.evaluate()
+    assert collision_is_undefined is False
+    assert collision_result is False
+    assert item.property("calendarBlockCount") == 2
+    assert "Target weeks contain 1 fixed block" in str(
+        item.property("feedbackMessage")
+    )
+
+    repeat_expression = QQmlExpression(
+        engine.rootContext(), item, "copyWeekPattern(2, 2, false)"
+    )
+    repeat_result, repeat_is_undefined = repeat_expression.evaluate()
+    assert repeat_is_undefined is False
+    assert repeat_result is True
+    for _ in range(10):
+        app.processEvents()
+        if not item.property("autoFillApplying"):
+            break
+        assert QMetaObject.invokeMethod(
+            item,
+            "applyAutoFillBatch",
+            Qt.ConnectionType.DirectConnection,
+        )
+    assert item.property("calendarBlockCount") == 4
     item.setProperty("dirty", False)
 
     controller.studioAutoFillCompleted.emit(

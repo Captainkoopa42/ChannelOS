@@ -182,7 +182,7 @@ than replaces the existing Channel Builder.
 - [x] Editable sequential/shuffle Auto Fill
 - [x] Channel Definition 0.2 calendar blocks plus automatic gap filler
 - [x] Reusable Studio program groups and show-specific gap filler
-- [ ] Recurring weekly templates and copy-week tools
+- [x] Recurring weekly patterns and copy-week tools
 - [ ] Full-screen Day editor integrated with Week and Month views
 
 - [ ] Metadata provider abstraction

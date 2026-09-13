@@ -128,6 +128,7 @@ The first Channel Studio slice now supports:
 - sequential or shuffle filler for all uncovered time,
 - reusable local program groups that can be shared across Studio drafts,
 - show-specific sequential/shuffle filler after an individual fixed block,
+- collision-safe copy-week and 1–52 week repeating-pattern materialization,
 - background Auto Fill with visible progress and cooperative cancellation,
   generating real editable blocks for the visible range,
 - drag exact Library assets into the draft,
@@ -136,8 +137,8 @@ The first Channel Studio slice now supports:
 - preview durations and exact local calendar times,
 - return to the Classic Builder without losing representable information.
 
-Recurring weekly templates, weighted rotations, virtual in/out points,
-marathons, nested collections, and multiple editor lanes remain later work.
+Weighted rotations, virtual in/out points, marathons, nested collections, and
+multiple editor lanes remain later work.
 
 ## Decisions made for the first implementation
 
@@ -152,14 +153,17 @@ marathons, nested collections, and multiple editor lanes remain later work.
   dynamic filler pool.
 - Reusable groups are authoring templates. Applying one embeds its stable asset
   IDs in schema 0.3, keeping live playback independent of mutable Studio state.
+- Weekly patterns materialize into normal calendar blocks rather than becoming
+  a second runtime rule system. Copies preserve local wall-clock times across
+  daylight-saving changes and remain independently editable.
 - The initial canvas is a clock-based week/month horizon with one timeline lane.
 - Opening, browsing, Auto Fill, and drag/drop remain draft-only. Apply is explicit.
 - Auto Fill resolves and builds on a worker thread. The visible draft remains
   untouched until a successful result is ready; cancellation or failure
   discards the generated work.
 
-Undo/redo, durable draft recovery across application restarts, and recurring calendar templates are
-still intentionally unresolved.
+Undo/redo and durable draft recovery across application restarts are still
+intentionally unresolved.
 
 ## Product intent in one sentence
 

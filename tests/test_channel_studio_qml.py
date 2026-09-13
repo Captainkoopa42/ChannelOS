@@ -32,6 +32,12 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
     assert "channelOS.deleteStudioGroup" in qml
     assert "fillerAssetIdsJson" in qml
     assert 'text: "Use After Selected Show"' in qml
+    assert 'text: "Copy / Repeat Week"' in qml
+    assert 'title: "Copy or Repeat This Week"' in qml
+    assert 'model: ["Require Empty Target Weeks", "Replace Target Weeks"]' in qml
+    assert "function copyWeekPattern(" in qml
+    assert "copyBlockToWeek" in qml
+    assert "calendarBlockCount" in qml
     assert "channelOS.updateChannel" in qml
     assert "channelOS.createChannel" in qml
     assert "Live television is unchanged until Apply" in qml

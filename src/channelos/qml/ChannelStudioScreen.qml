@@ -41,6 +41,8 @@ Item {
     property var pendingAutoFillBlocks: []
     property int pendingAutoFillIndex: 0
     property string pendingAutoFillMessage: ""
+    property string pendingScheduleOperation: ""
+    readonly property int calendarBlockCount: calendarBlocks.count
     readonly property var autoFillState: channelOS
             ? channelOS.studioAutoFill
             : ({ active: false, phase: "idle", current: 0, total: 0,
@@ -504,6 +506,140 @@ Item {
         return result
     }
 
+    function weekBlocks(value) {
+        var startMs = startOfWeek(value).getTime()
+        var endMs = addDays(startOfWeek(value), 7).getTime()
+        var result = []
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            var blockMs = new Date(block.startUtc).getTime()
+            if (blockMs >= startMs && blockMs < endMs)
+                result.push(blockObject(block))
+        }
+        result.sort(function(left, right) {
+            return new Date(left.startUtc).getTime()
+                    - new Date(right.startUtc).getTime()
+        })
+        return result
+    }
+
+    function localDayDistance(fromDate, toDate) {
+        var from = new Date(fromDate)
+        var to = new Date(toDate)
+        var fromOrdinal = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate())
+        var toOrdinal = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate())
+        return Math.round((toOrdinal - fromOrdinal) / 86400000)
+    }
+
+    function copyBlockToWeek(block, sourceWeekStart, targetWeekStart) {
+        var oldStart = new Date(block.startUtc)
+        var dayOffset = localDayDistance(sourceWeekStart, oldStart)
+        var newStart = addDays(targetWeekStart, dayOffset)
+        // setHours uses the machine's local zone. This deliberately preserves
+        // the broadcaster's wall-clock time when a copy crosses a DST boundary.
+        newStart.setHours(oldStart.getHours(), oldStart.getMinutes(),
+                          oldStart.getSeconds(), oldStart.getMilliseconds())
+        var copy = blockObject(block)
+        copy.startUtc = newStart.toISOString()
+        copy.endUtc = new Date(
+                    newStart.getTime()
+                    + Number(copy.durationSeconds || 0) * 1000).toISOString()
+        return copy
+    }
+
+    function blocksOverlapping(start, end) {
+        var startMs = new Date(start).getTime()
+        var endMs = new Date(end).getTime()
+        var count = 0
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            var blockStartMs = new Date(block.startUtc).getTime()
+            var blockEndMs = new Date(block.endUtc).getTime()
+            if (blockStartMs < endMs && blockEndMs > startMs)
+                ++count
+        }
+        return count
+    }
+
+    function copyWeekPattern(firstWeekOffset, copyCount, replaceExisting) {
+        if (autoFillBusy)
+            return false
+        var offset = Math.floor(Number(firstWeekOffset))
+        var count = Math.floor(Number(copyCount))
+        if (offset < 1 || offset > 52 || count < 1 || count > 52) {
+            feedbackMessage = "Weekly copies require a 1–52 week offset and 1–52 copies."
+            feedbackIsError = true
+            return false
+        }
+
+        var sourceWeekStart = startOfWeek(anchorDate)
+        var source = weekBlocks(sourceWeekStart)
+        if (!source.length) {
+            feedbackMessage = "The displayed week has no fixed programs to copy."
+            feedbackIsError = true
+            return false
+        }
+
+        var targetStart = addDays(sourceWeekStart, offset * 7)
+        var targetEnd = addDays(targetStart, count * 7)
+        var collisions = blocksOverlapping(targetStart, targetEnd)
+        if (collisions > 0 && !replaceExisting) {
+            feedbackMessage = "Target weeks contain " + collisions
+                    + " fixed block" + (collisions === 1 ? "" : "s")
+                    + ". Choose Replace Target Weeks or move the destination."
+            feedbackIsError = true
+            return false
+        }
+
+        var retainedCount = calendarBlocks.count - collisions
+        if (retainedCount + source.length * count > 10000) {
+            feedbackMessage = "This pattern would exceed the 10,000-block calendar limit."
+            feedbackIsError = true
+            return false
+        }
+
+        var copies = []
+        for (var copyIndex = 0; copyIndex < count; ++copyIndex) {
+            var targetWeek = addDays(targetStart, copyIndex * 7)
+            for (var sourceIndex = 0; sourceIndex < source.length; ++sourceIndex) {
+                copies.push(copyBlockToWeek(source[sourceIndex],
+                                            sourceWeekStart, targetWeek))
+            }
+        }
+
+        pendingScheduleOperation = count === 1
+                ? "Adding the copied week to the detached draft…"
+                : "Materializing " + count + " weekly pattern copies…"
+        acceptAutoFillResult({
+            ok: true,
+            message: count === 1
+                     ? "Copied " + source.length + " fixed blocks into the target week"
+                     : "Repeated " + source.length + " fixed blocks across "
+                       + count + " target weeks",
+            startUtc: targetStart.toISOString(),
+            endUtc: targetEnd.toISOString(),
+            blocks: copies
+        })
+        anchorDate = targetStart
+        selectedDayKey = dayKey(targetStart)
+        return true
+    }
+
+    function requestWeekCopy() {
+        var offset = weekCopyOffset.value
+        var count = weekCopyCount.value
+        var sourceWeekStart = startOfWeek(anchorDate)
+        var targetStart = addDays(sourceWeekStart, offset * 7)
+        var targetEnd = addDays(targetStart, count * 7)
+        var replaceExisting = weekCollisionPolicy.currentIndex === 1
+        if (replaceExisting && blocksOverlapping(targetStart, targetEnd) > 0) {
+            replaceWeeksDialog.open()
+            return
+        }
+        if (copyWeekPattern(offset, count, replaceExisting))
+            weeklyPatternDialog.close()
+    }
+
     function nextStartForDay(day) {
         var midnight = dateAtLocalMidnight(day)
         var latest = midnight.getTime()
@@ -722,6 +858,8 @@ Item {
         pendingAutoFillIndex = 0
         pendingAutoFillMessage = String(result.message)
         autoFillApplying = true
+        if (!pendingScheduleOperation.length)
+            pendingScheduleOperation = "Adding prepared blocks to the detached draft…"
         calendarBlocks.clear()
         autoFillApplyTimer.start()
     }
@@ -747,6 +885,7 @@ Item {
         feedbackMessage = pendingAutoFillMessage
                 + ". Drag, reorder, or remove anything before Apply."
         pendingAutoFillMessage = ""
+        pendingScheduleOperation = ""
         feedbackIsError = false
         if (pendingExitDestination.length)
             requestExit(pendingExitDestination)
@@ -1255,6 +1394,11 @@ Item {
                         onClicked: studioRoot.viewMode = "month"
                     }
                     Button {
+                        text: "Copy / Repeat Week"
+                        enabled: !studioRoot.autoFillBusy
+                        onClicked: weeklyPatternDialog.open()
+                    }
+                    Button {
                         text: "Clear Range"
                         enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.clearVisibleRange()
@@ -1747,7 +1891,7 @@ Item {
                     Text {
                         Layout.fillWidth: true
                         text: studioRoot.autoFillApplying
-                              ? "Adding prepared blocks to the detached draft…"
+                              ? studioRoot.pendingScheduleOperation
                               : String(studioRoot.autoFillState.message
                                        || "Preparing Studio Auto Fill…")
                         color: studioRoot.textPrimary
@@ -1791,6 +1935,123 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    Dialog {
+        id: weeklyPatternDialog
+        anchors.centerIn: parent
+        width: Math.min(studioRoot.width - 80, 600)
+        modal: true
+        title: "Copy or Repeat This Week"
+        standardButtons: Dialog.Close
+
+        contentItem: ColumnLayout {
+            width: 540
+            spacing: 14
+
+            Text {
+                Layout.fillWidth: true
+                text: "Source: " + studioRoot.rangeLabel() + "  •  "
+                      + studioRoot.weekBlocks(studioRoot.anchorDate).length
+                      + " fixed blocks"
+                color: studioRoot.textPrimary
+                font.weight: Font.DemiBold
+                wrapMode: Text.Wrap
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Copies preserve each program's weekday, local start time, order, "
+                      + "and show-specific filler. Every generated week remains independently editable."
+                color: studioRoot.textSecondary
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "START"; color: studioRoot.textSecondary }
+                SpinBox {
+                    id: weekCopyOffset
+                    from: 1
+                    to: 52
+                    value: 1
+                    editable: true
+                }
+                Label {
+                    text: "week(s) after the displayed week"
+                    color: studioRoot.textPrimary
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "COPIES"; color: studioRoot.textSecondary }
+                SpinBox {
+                    id: weekCopyCount
+                    from: 1
+                    to: 52
+                    value: 1
+                    editable: true
+                }
+                Label {
+                    text: weekCopyCount.value === 1
+                          ? "target week" : "consecutive target weeks"
+                    color: studioRoot.textPrimary
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "IF OCCUPIED"; color: studioRoot.textSecondary }
+                ComboBox {
+                    id: weekCollisionPolicy
+                    Layout.fillWidth: true
+                    model: ["Require Empty Target Weeks", "Replace Target Weeks"]
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: weekCollisionPolicy.currentIndex === 1
+                text: "Replace removes every fixed block overlapping the target range. "
+                      + "Nothing changes until you confirm, and live television remains untouched until Apply."
+                color: studioRoot.warning
+                wrapMode: Text.Wrap
+            }
+
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                text: weekCopyCount.value === 1
+                      ? "Copy Week" : "Create Weekly Pattern"
+                highlighted: true
+                enabled: !studioRoot.autoFillBusy
+                         && studioRoot.weekBlocks(studioRoot.anchorDate).length > 0
+                onClicked: studioRoot.requestWeekCopy()
+            }
+        }
+    }
+
+    Dialog {
+        id: replaceWeeksDialog
+        anchors.centerIn: parent
+        width: Math.min(studioRoot.width - 80, 500)
+        modal: true
+        title: "Replace fixed programs in target weeks?"
+        standardButtons: Dialog.Yes | Dialog.Cancel
+        onAccepted: {
+            if (studioRoot.copyWeekPattern(weekCopyOffset.value,
+                                           weekCopyCount.value, true))
+                weeklyPatternDialog.close()
+        }
+
+        contentItem: Text {
+            width: 440
+            text: "The selected target range already contains fixed programs. "
+                  + "Those overlapping draft blocks will be replaced by this weekly pattern. "
+                  + "Your applied channel and media files are not changed."
+            color: studioRoot.textPrimary
+            wrapMode: Text.Wrap
         }
     }
 

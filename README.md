@@ -31,7 +31,8 @@ Real-machine validation currently includes:
 - return from On Demand to television without destroying channel clock state.
 - Channel Studio with week/month calendar views, a draggable program timeline,
   exact Library asset blocks, cancellable background Auto Fill with progress,
-  reusable program groups, show-specific filler, and validated live apply.
+  reusable program groups, show-specific filler, weekly copy/repeat tools, and
+  validated live apply.
 
 Optional native Xbox-compatible controller input is implemented and validated
 on Windows with an 8BitDo Ultimate controller in Xbox/XInput mode, including

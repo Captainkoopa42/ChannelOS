@@ -59,8 +59,9 @@ Together they provide:
 - a horizontal video-editor-style program timeline,
 - drag-to-swap, drag-to-move-day, remove, and ±15-minute adjustments,
 - sequential or deterministic-shuffle Auto Fill for a visible week/month,
+- collision-safe week copying and 1–52 week pattern materialization,
 - filler programming for every gap left between fixed blocks,
-- portable YAML output using Channel Definition 0.1 or 0.2.
+- portable YAML output using Channel Definition 0.1, 0.2, or 0.3.
 
 The current couch shell still accepts explicit channel YAML files at startup. Broadcaster-managed definitions are additionally discovered from the configured channel-definition directory, which defaults to:
 
@@ -148,6 +149,16 @@ local group, then attach that group's sequential or shuffle snapshot to a fixed
 show. The group fills only the gap after that show. Reusable groups are never a
 runtime dependency: applied channels embed stable asset IDs, so deleting a
 group later does not modify live programming.
+
+The weekly-pattern tool treats the displayed Monday–Sunday week as a source
+template. It can copy that schedule to a later empty week or materialize it
+across as many as 52 consecutive weeks. Weekday, local wall-clock start time,
+program order, and show-specific filler snapshots are preserved. Crossing a
+daylight-saving boundary therefore keeps a 7:00 PM show at 7:00 PM rather than
+adding a fixed number of UTC seconds. Target collisions fail safely by default;
+replacing occupied weeks requires an explicit confirmation. Generated weeks
+are ordinary detached calendar blocks, so each can be edited independently and
+neither the live channel nor media files change until Apply.
 
 ## Immediate Guide integration
 

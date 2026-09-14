@@ -138,6 +138,21 @@ def test_main_qml_instantiates_headlessly() -> None:
     assert roots[0].property("controllerName") == ""
     assert roots[0].property("configuredSkipBackSeconds") == 10
     assert roots[0].property("configuredSkipForwardSeconds") == 30
+
+    home_scroller = roots[0].findChild(QObject, "homeWelcomeScroller")
+    assert home_scroller is not None
+    roots[0].setHeight(650)
+    for _ in range(3):
+        app.processEvents()
+    assert home_scroller.property("clip") is True
+    assert float(home_scroller.property("contentHeight")) > float(
+        home_scroller.property("height")
+    )
+    roots[0].setProperty("homeSelection", 4)
+    for _ in range(4):
+        app.processEvents()
+    assert float(home_scroller.property("contentY")) > 0
+    roots[0].setHeight(900)
     controller._settings.update(
         volumePercent=65,
         muted=True,

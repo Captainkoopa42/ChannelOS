@@ -1205,73 +1205,130 @@ ApplicationWindow {
                 opacity: 0.72
             }
 
-            Column {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 54
-                spacing: 12
+            Flickable {
+                id: homeWelcomeScroller
+                objectName: "homeWelcomeScroller"
+                anchors.fill: parent
+                clip: true
+                contentWidth: width
+                contentHeight: Math.max(
+                    height,
+                    homeWelcomeContent.y
+                    + homeWelcomeContent.implicitHeight
+                    + 54
+                )
+                flickableDirection: Flickable.VerticalFlick
+                boundsBehavior: Flickable.StopAtBounds
 
-                Row {
-                    spacing: 2
-                    Text { text: "Channel"; color: root.textPrimary; font.pixelSize: 38; font.weight: Font.DemiBold }
-                    Text { text: "OS"; color: root.accentBright; font.pixelSize: 38; font.weight: Font.DemiBold }
+                function revealMenuItem(item) {
+                    if (!item || height <= 0)
+                        return
+                    var point = item.mapToItem(contentItem, 0, 0)
+                    var targetTop = Math.max(0, point.y - 12)
+                    var targetBottom = point.y + item.height + 12
+                    var maximum = Math.max(0, contentHeight - height)
+                    if (targetTop < contentY)
+                        contentY = Math.min(maximum, targetTop)
+                    else if (targetBottom > contentY + height)
+                        contentY = Math.min(
+                            maximum,
+                            targetBottom - height
+                        )
                 }
 
-                Item { width: 1; height: 18 }
-                Text { text: root.formatClock(root.generatedAtMs); color: root.textPrimary; font.pixelSize: 31 }
-                Text { text: root.formatDate(root.generatedAtMs); color: root.textSecondary; font.pixelSize: 18 }
-                Rectangle { width: parent.width; height: 1; color: root.line }
-                Text { text: "Welcome back."; color: root.textPrimary; font.pixelSize: 28; font.weight: Font.DemiBold }
-                Text {
-                    text: "Your home for live television and\nyour own media library."
-                    color: root.textSecondary
-                    font.pixelSize: 18
-                    lineHeight: 1.25
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AsNeeded
                 }
-                Item { width: 1; height: 12 }
 
-                Repeater {
-                    model: [
-                        root.homeTelevision.continueLabel || "Continue Watching",
-                        "Open Guide",
-                        "Library / On Demand",
-                        "Channels",
-                        "Settings"
-                    ]
-                    delegate: Rectangle {
-                        readonly property bool selected:
-                            root.homeFocusArea === 0
-                            && index === root.homeSelection
-                        width: parent.width
-                        height: 54
-                        radius: 6
-                        color: selected ? "#12396a" : "transparent"
-                        border.color: selected ? root.accentBright : "transparent"
-                        border.width: selected ? 2 : 0
+                Column {
+                    id: homeWelcomeContent
+                    x: 54
+                    y: 54
+                    width: Math.max(1, homeWelcomeScroller.width - 108)
+                    spacing: 12
 
-                        Text {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 22
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData
-                            color: selected ? root.textPrimary : root.textSecondary
-                            font.pixelSize: 20
-                            font.weight: selected ? Font.DemiBold : Font.Normal
-                        }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 18
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "›"
-                            color: selected ? root.accentBright : root.textSecondary
-                            font.pixelSize: 28
-                        }
+                    Row {
+                        spacing: 2
+                        Text { text: "Channel"; color: root.textPrimary; font.pixelSize: 38; font.weight: Font.DemiBold }
+                        Text { text: "OS"; color: root.accentBright; font.pixelSize: 38; font.weight: Font.DemiBold }
+                    }
 
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.homeMenuActivated(index)
+                    Item { width: 1; height: 18 }
+                    Text { text: root.formatClock(root.generatedAtMs); color: root.textPrimary; font.pixelSize: 31 }
+                    Text { text: root.formatDate(root.generatedAtMs); color: root.textSecondary; font.pixelSize: 18 }
+                    Rectangle { width: parent.width; height: 1; color: root.line }
+                    Text { text: "Welcome back."; color: root.textPrimary; font.pixelSize: 28; font.weight: Font.DemiBold }
+                    Text {
+                        text: "Your home for live television and\nyour own media library."
+                        color: root.textSecondary
+                        font.pixelSize: 18
+                        lineHeight: 1.25
+                    }
+                    Item { width: 1; height: 12 }
+
+                    Repeater {
+                        id: homeMenuRepeater
+                        model: [
+                            root.homeTelevision.continueLabel || "Continue Watching",
+                            "Open Guide",
+                            "Library / On Demand",
+                            "Channels",
+                            "Settings"
+                        ]
+                        delegate: Rectangle {
+                            id: homeMenuItem
+                            readonly property bool selected:
+                                root.homeFocusArea === 0
+                                && index === root.homeSelection
+                            width: parent.width
+                            height: 54
+                            radius: 6
+                            color: selected ? "#12396a" : "transparent"
+                            border.color: selected ? root.accentBright : "transparent"
+                            border.width: selected ? 2 : 0
+
+                            onSelectedChanged: {
+                                if (selected) {
+                                    Qt.callLater(function() {
+                                        homeWelcomeScroller.revealMenuItem(
+                                            homeMenuItem
+                                        )
+                                    })
+                                }
+                            }
+                            Component.onCompleted: {
+                                if (selected) {
+                                    Qt.callLater(function() {
+                                        homeWelcomeScroller.revealMenuItem(
+                                            homeMenuItem
+                                        )
+                                    })
+                                }
+                            }
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 22
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData
+                                color: selected ? root.textPrimary : root.textSecondary
+                                font.pixelSize: 20
+                                font.weight: selected ? Font.DemiBold : Font.Normal
+                            }
+                            Text {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 18
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "›"
+                                color: selected ? root.accentBright : root.textSecondary
+                                font.pixelSize: 28
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.homeMenuActivated(index)
+                            }
                         }
                     }
                 }

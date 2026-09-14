@@ -1469,6 +1469,7 @@ Item {
     Dialog {
         id: deleteChannelDialog
         anchors.centerIn: parent
+        implicitWidth: 540
         modal: true
         dim: true
         padding: 24

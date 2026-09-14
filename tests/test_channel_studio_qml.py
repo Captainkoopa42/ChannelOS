@@ -10,6 +10,15 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
         / "ChannelStudioScreen.qml"
     ).read_text(encoding="utf-8")
 
+    assert "component StudioButton: Button" in qml
+    assert "component StudioDialog: Dialog" in qml
+    assert "Behavior on color" in qml
+    assert "studioButton.highlighted || studioButton.checked" in qml
+    assert "studioButton.activeFocus" in qml
+    assert "property bool destructive: false" in qml
+    assert "StudioButton {" in qml
+    assert "StudioDialog {" in qml
+    assert "standardButtons:" not in qml
     assert 'property string viewMode: "week"' in qml
     assert 'text: "Week"' in qml
     assert 'text: "Month"' in qml

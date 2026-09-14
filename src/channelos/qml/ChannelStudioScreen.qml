@@ -22,6 +22,95 @@ Item {
     readonly property color warning: "#ffb84a"
     readonly property color danger: "#ff6666"
 
+    component StudioButton: Button {
+        id: studioButton
+
+        property bool destructive: false
+
+        implicitWidth: Math.max(72, buttonLabel.implicitWidth + 28)
+        implicitHeight: 38
+        leftPadding: 14
+        rightPadding: 14
+        topPadding: 8
+        bottomPadding: 8
+        focusPolicy: Qt.StrongFocus
+        hoverEnabled: true
+
+        contentItem: Text {
+            id: buttonLabel
+            text: studioButton.text
+            color: !studioButton.enabled
+                   ? "#607489"
+                   : studioButton.destructive
+                   ? studioRoot.danger
+                   : studioButton.highlighted || studioButton.checked
+                   ? "#ffffff" : studioRoot.textPrimary
+            font.pixelSize: 12
+            font.weight: studioButton.highlighted || studioButton.checked
+                         ? Font.DemiBold : Font.Medium
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        background: Rectangle {
+            id: buttonBackground
+            radius: 7
+            color: !studioButton.enabled
+                   ? "#091522"
+                   : studioButton.down
+                   ? (studioButton.destructive ? "#54212a" : "#0a66ad")
+                   : studioButton.destructive
+                   ? (studioButton.hovered ? "#351b24" : "#21151c")
+                   : studioButton.highlighted
+                   ? (studioButton.hovered ? studioRoot.accentBright
+                                           : studioRoot.accent)
+                   : studioButton.checked
+                   ? (studioButton.hovered ? "#176aa6" : "#12527f")
+                   : studioButton.hovered
+                   ? "#143a5c" : studioRoot.panelRaised
+            border.color: !studioButton.enabled
+                          ? "#14283b"
+                          : studioButton.destructive
+                          ? studioRoot.danger
+                          : studioButton.activeFocus
+                            || studioButton.highlighted
+                            || studioButton.checked
+                          ? studioRoot.accentBright : studioRoot.line
+            border.width: studioButton.activeFocus
+                          || studioButton.highlighted
+                          || studioButton.checked ? 2 : 1
+
+            Behavior on color {
+                ColorAnimation { duration: 90 }
+            }
+            Behavior on border.color {
+                ColorAnimation { duration: 90 }
+            }
+        }
+    }
+
+    component StudioDialog: Dialog {
+        modal: true
+        dim: true
+        padding: 24
+        palette.window: studioRoot.panelRaised
+        palette.windowText: studioRoot.textPrimary
+        palette.button: studioRoot.panelRaised
+        palette.buttonText: studioRoot.textPrimary
+
+        background: Rectangle {
+            radius: 10
+            color: studioRoot.panelRaised
+            border.color: studioRoot.line
+            border.width: 1
+        }
+
+        Overlay.modal: Rectangle {
+            color: "#aa02070d"
+        }
+    }
+
     property var hostWindow: null
     property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
     property var mediaLibrary: draftData.media || []
@@ -1250,12 +1339,12 @@ Item {
                     Layout.fillWidth: true
                     spacing: 12
 
-                    Button {
+                    StudioButton {
                         text: "‹ Home"
                         onClicked: studioRoot.leaveStudio()
                     }
 
-                    Button {
+                    StudioButton {
                         text: "Channels"
                         onClicked: studioRoot.openBroadcaster()
                     }
@@ -1295,7 +1384,7 @@ Item {
                         }
                     }
 
-                    Button {
+                    StudioButton {
                         text: "Apply to Channel"
                         highlighted: true
                         enabled: !studioRoot.autoFillBusy
@@ -1399,7 +1488,7 @@ Item {
                         Layout.fillWidth: true
                         model: studioRoot.sourceChoices()
                     }
-                    Button {
+                    StudioButton {
                         text: "Add"
                         enabled: fillerSourceBox.count > 0
                         onClicked: {
@@ -1407,7 +1496,7 @@ Item {
                             studioRoot.dirty = true
                         }
                     }
-                    Button {
+                    StudioButton {
                         text: "Clear"
                         enabled: draftSources.count > 0
                         onClicked: {
@@ -1475,7 +1564,7 @@ Item {
                             }
                         }
 
-                        Button {
+                        StudioButton {
                             id: addMediaButton
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
@@ -1534,9 +1623,9 @@ Item {
                     Layout.fillWidth: true
                     spacing: 8
 
-                    Button { text: "‹"; onClicked: studioRoot.navigateRange(-1) }
-                    Button { text: "Today"; onClicked: studioRoot.goToday() }
-                    Button { text: "›"; onClicked: studioRoot.navigateRange(1) }
+                    StudioButton { text: "‹"; onClicked: studioRoot.navigateRange(-1) }
+                    StudioButton { text: "Today"; onClicked: studioRoot.goToday() }
+                    StudioButton { text: "›"; onClicked: studioRoot.navigateRange(1) }
 
                     Text {
                         Layout.fillWidth: true
@@ -1547,7 +1636,7 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                     }
 
-                    Button {
+                    StudioButton {
                         text: "Day"
                         checkable: true
                         checked: studioRoot.viewMode === "day"
@@ -1555,30 +1644,31 @@ Item {
                                            new Date(studioRoot.selectedDayKey
                                                     + "T00:00:00"))
                     }
-                    Button {
+                    StudioButton {
                         text: "Week"
                         checkable: true
                         checked: studioRoot.viewMode === "week"
                         onClicked: studioRoot.viewMode = "week"
                     }
-                    Button {
+                    StudioButton {
                         text: "Month"
                         checkable: true
                         checked: studioRoot.viewMode === "month"
                         onClicked: studioRoot.viewMode = "month"
                     }
-                    Button {
+                    StudioButton {
                         text: "Copy / Repeat Week"
                         enabled: !studioRoot.autoFillBusy
                                  && studioRoot.viewMode === "week"
                         onClicked: weeklyPatternDialog.open()
                     }
-                    Button {
+                    StudioButton {
                         text: "Clear Range"
+                        destructive: true
                         enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.clearVisibleRange()
                     }
-                    Button {
+                    StudioButton {
                         text: "Auto Fill Range"
                         highlighted: true
                         enabled: !studioRoot.autoFillBusy
@@ -1649,7 +1739,7 @@ Item {
                                         horizontalAlignment: Text.AlignHCenter
                                     }
 
-                                    Button {
+                                    StudioButton {
                                         Layout.fillWidth: true
                                         text: "Open Day"
                                         onClicked: studioRoot.openDay(weekDay.columnDate)
@@ -1822,16 +1912,16 @@ Item {
                                     color: studioRoot.textSecondary
                                     font.pixelSize: 11
                                 }
-                                Button {
+                                StudioButton {
                                     text: studioRoot.dayMediaBinVisible
                                           ? "Hide Media Bin" : "Show Media Bin"
                                     onClicked: studioRoot.dayMediaBinVisible
                                                = !studioRoot.dayMediaBinVisible
                                 }
-                                Button { text: "Start"; onClicked: studioRoot.scrollDayToHour(0) }
-                                Button { text: "Midday"; onClicked: studioRoot.scrollDayToHour(12) }
-                                Button { text: "Evening"; onClicked: studioRoot.scrollDayToHour(18) }
-                                Button { text: "End"; onClicked: studioRoot.scrollDayToHour(24) }
+                                StudioButton { text: "Start"; onClicked: studioRoot.scrollDayToHour(0) }
+                                StudioButton { text: "Midday"; onClicked: studioRoot.scrollDayToHour(12) }
+                                StudioButton { text: "Evening"; onClicked: studioRoot.scrollDayToHour(18) }
+                                StudioButton { text: "End"; onClicked: studioRoot.scrollDayToHour(24) }
                             }
 
                             Rectangle {
@@ -1857,16 +1947,16 @@ Item {
                                         font.weight: Font.DemiBold
                                     }
                                     Item { Layout.fillWidth: true }
-                                    Button {
+                                    StudioButton {
                                         text: "Groups & Show Filler"
                                         onClicked: programGroupDialog.open()
                                     }
-                                    Button {
+                                    StudioButton {
                                         text: "−15 min"
                                         enabled: studioRoot.selectedBlockIndex >= 0
                                         onClicked: studioRoot.nudgeSelected(-900)
                                     }
-                                    Button {
+                                    StudioButton {
                                         text: "+15 min"
                                         enabled: studioRoot.selectedBlockIndex >= 0
                                         onClicked: studioRoot.nudgeSelected(900)
@@ -2040,7 +2130,7 @@ Item {
                                                 }
                                             }
 
-                                            Button {
+                                            StudioButton {
                                                 id: dayBlockRemove
                                                 anchors.right: parent.right
                                                 anchors.top: parent.top
@@ -2049,6 +2139,7 @@ Item {
                                                 width: 28
                                                 height: 28
                                                 text: "×"
+                                                destructive: true
                                                 onClicked: studioRoot.removeBlock(dayBlock.blockIndex)
                                             }
 
@@ -2133,16 +2224,16 @@ Item {
                         color: studioRoot.accentBright
                         font.pixelSize: 11
                     }
-                    Button {
+                    StudioButton {
                         text: "Groups & Show Filler"
                         onClicked: programGroupDialog.open()
                     }
-                    Button {
+                    StudioButton {
                         text: "−15 min"
                         enabled: studioRoot.selectedBlockIndex >= 0
                         onClicked: studioRoot.nudgeSelected(-900)
                     }
-                    Button {
+                    StudioButton {
                         text: "+15 min"
                         enabled: studioRoot.selectedBlockIndex >= 0
                         onClicked: studioRoot.nudgeSelected(900)
@@ -2258,7 +2349,7 @@ Item {
                             }
                         }
 
-                        Button {
+                        StudioButton {
                             id: removeProgram
                             anchors.right: parent.right
                             anchors.top: parent.top
@@ -2266,6 +2357,7 @@ Item {
                             width: 30
                             height: 30
                             text: "×"
+                            destructive: true
                             onClicked: studioRoot.removeBlock(timelineCard.blockIndex)
                         }
 
@@ -2405,12 +2497,13 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                     }
 
-                    Button {
+                    StudioButton {
                         Layout.alignment: Qt.AlignHCenter
                         text: studioRoot.autoFillApplying
                               ? "Applying schedule…"
                               : studioRoot.autoFillState.phase === "cancelling"
                               ? "Cancelling…" : "Cancel Auto Fill"
+                        destructive: true
                         enabled: !studioRoot.autoFillApplying
                                  && studioRoot.autoFillState.phase !== "cancelling"
                         onClicked: channelOS.cancelStudioAutoFill()
@@ -2420,13 +2513,24 @@ Item {
         }
     }
 
-    Dialog {
+    StudioDialog {
         id: weeklyPatternDialog
         anchors.centerIn: parent
         width: Math.min(studioRoot.width - 80, 600)
-        modal: true
         title: "Copy or Repeat This Week"
-        standardButtons: Dialog.Close
+
+        footer: Rectangle {
+            implicitHeight: 58
+            color: studioRoot.panel
+            border.color: studioRoot.line
+            StudioButton {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                text: "Close"
+                onClicked: weeklyPatternDialog.close()
+            }
+        }
 
         contentItem: ColumnLayout {
             width: 540
@@ -2502,7 +2606,7 @@ Item {
                 wrapMode: Text.Wrap
             }
 
-            Button {
+            StudioButton {
                 Layout.alignment: Qt.AlignHCenter
                 text: weekCopyCount.value === 1
                       ? "Copy Week" : "Create Weekly Pattern"
@@ -2514,17 +2618,37 @@ Item {
         }
     }
 
-    Dialog {
+    StudioDialog {
         id: replaceWeeksDialog
         anchors.centerIn: parent
         width: Math.min(studioRoot.width - 80, 500)
-        modal: true
+        implicitHeight: 250
         title: "Replace fixed programs in target weeks?"
-        standardButtons: Dialog.Yes | Dialog.Cancel
         onAccepted: {
             if (studioRoot.copyWeekPattern(weekCopyOffset.value,
                                            weekCopyCount.value, true))
                 weeklyPatternDialog.close()
+        }
+
+        footer: Rectangle {
+            implicitHeight: 58
+            color: studioRoot.panel
+            border.color: studioRoot.line
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                spacing: 10
+                StudioButton {
+                    text: "Cancel"
+                    onClicked: replaceWeeksDialog.reject()
+                }
+                StudioButton {
+                    text: "Replace Weeks"
+                    destructive: true
+                    onClicked: replaceWeeksDialog.accept()
+                }
+            }
         }
 
         contentItem: Text {
@@ -2537,14 +2661,34 @@ Item {
         }
     }
 
-    Dialog {
+    StudioDialog {
         id: discardDraftDialog
         anchors.centerIn: parent
-        modal: true
+        width: 460
         title: "Discard unapplied Channel Studio changes?"
-        standardButtons: Dialog.Yes | Dialog.Cancel
         onAccepted: studioRoot.finishExit()
         onRejected: studioRoot.pendingExitDestination = ""
+
+        footer: Rectangle {
+            implicitHeight: 58
+            color: studioRoot.panel
+            border.color: studioRoot.line
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                spacing: 10
+                StudioButton {
+                    text: "Keep Editing"
+                    onClicked: discardDraftDialog.reject()
+                }
+                StudioButton {
+                    text: "Discard Draft"
+                    destructive: true
+                    onClicked: discardDraftDialog.accept()
+                }
+            }
+        }
 
         contentItem: Text {
             width: 390
@@ -2554,13 +2698,24 @@ Item {
         }
     }
 
-    Dialog {
+    StudioDialog {
         id: programGroupDialog
         anchors.centerIn: parent
         width: Math.min(studioRoot.width - 80, 620)
-        modal: true
         title: "Reusable Groups & Show-Specific Filler"
-        standardButtons: Dialog.Close
+
+        footer: Rectangle {
+            implicitHeight: 58
+            color: studioRoot.panel
+            border.color: studioRoot.line
+            StudioButton {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                text: "Close"
+                onClicked: programGroupDialog.close()
+            }
+        }
 
         contentItem: ColumnLayout {
             width: 560
@@ -2588,7 +2743,7 @@ Item {
                     model: ["Sequential", "Shuffle"]
                     Layout.preferredWidth: 130
                 }
-                Button {
+                StudioButton {
                     text: "Save Day as Group"
                     enabled: groupNameField.text.trim().length > 0
                              && studioRoot.selectedDayAssetIds().length > 0
@@ -2598,7 +2753,7 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                height: 1
+                Layout.preferredHeight: 1
                 color: studioRoot.line
             }
 
@@ -2618,7 +2773,7 @@ Item {
                     model: studioRoot.groupsLibrary
                     textRole: "name"
                 }
-                Button {
+                StudioButton {
                     text: "Use After Selected Show"
                     enabled: groupChoiceBox.count > 0
                              && groupChoiceBox.currentIndex >= 0
@@ -2646,14 +2801,15 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                Button {
+                StudioButton {
                     text: "Use Normal Filler After Show"
                     enabled: studioRoot.selectedBlockIndex >= 0
                     onClicked: studioRoot.clearSelectedShowFiller()
                 }
                 Item { Layout.fillWidth: true }
-                Button {
+                StudioButton {
                     text: "Delete Reusable Group"
+                    destructive: true
                     enabled: groupChoiceBox.count > 0
                     onClicked: studioRoot.deleteSelectedGroup()
                 }

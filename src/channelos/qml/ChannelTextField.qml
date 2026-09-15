@@ -19,7 +19,7 @@ TextField {
         color: !channelField.enabled
                ? "#091522"
                : channelField.activeFocus
-               ? "#13283a"
+               ? "#12396a"
                : channelField.hovered
                ? "#142634" : "#111f2c"
         border.color: !channelField.enabled

@@ -1397,27 +1397,27 @@ Item {
                     spacing: 10
 
                     Label { text: "CH"; color: studioRoot.textSecondary }
-                    TextField {
+                    ChannelTextField {
                         id: channelNumberField
                         Layout.preferredWidth: 72
                         placeholderText: "001"
                         inputMethodHints: Qt.ImhDigitsOnly
                         onTextEdited: studioRoot.dirty = true
                     }
-                    TextField {
+                    ChannelTextField {
                         id: channelNameField
                         Layout.preferredWidth: 230
                         placeholderText: "Channel name"
                         onTextEdited: studioRoot.dirty = true
                     }
-                    TextField {
+                    ChannelTextField {
                         id: descriptionField
                         Layout.fillWidth: true
                         placeholderText: "Optional description"
                         onTextEdited: studioRoot.dirty = true
                     }
                     Label { text: "GAPS"; color: studioRoot.textSecondary }
-                    ComboBox {
+                    ChannelComboBox {
                         id: fillerModeBox
                         model: ["Sequential", "Shuffle"]
                         Layout.preferredWidth: 130
@@ -1428,7 +1428,7 @@ Item {
                         text: "NO REPEAT (DAYS)"
                         color: studioRoot.textSecondary
                     }
-                    SpinBox {
+                    ChannelSpinBox {
                         id: repeatDays
                         visible: fillerModeBox.currentIndex === 1
                         from: 0
@@ -1468,7 +1468,7 @@ Item {
                     color: studioRoot.textSecondary
                     font.pixelSize: 11
                 }
-                TextField {
+                ChannelTextField {
                     id: mediaSearch
                     Layout.fillWidth: true
                     placeholderText: "Search indexed media…"
@@ -1483,7 +1483,7 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 5
-                    ComboBox {
+                    ChannelComboBox {
                         id: fillerSourceBox
                         Layout.fillWidth: true
                         model: studioRoot.sourceChoices()
@@ -1961,7 +1961,7 @@ Item {
                                         enabled: studioRoot.selectedBlockIndex >= 0
                                         onClicked: studioRoot.nudgeSelected(900)
                                     }
-                                    TextField {
+                                    ChannelTextField {
                                         id: dayExactTimeField
                                         Layout.preferredWidth: 88
                                         enabled: studioRoot.selectedBlockIndex >= 0
@@ -2238,7 +2238,7 @@ Item {
                         enabled: studioRoot.selectedBlockIndex >= 0
                         onClicked: studioRoot.nudgeSelected(900)
                     }
-                    TextField {
+                    ChannelTextField {
                         id: exactTimeField
                         Layout.preferredWidth: 88
                         enabled: studioRoot.selectedBlockIndex >= 0
@@ -2474,7 +2474,7 @@ Item {
                         horizontalAlignment: Text.AlignHCenter
                     }
 
-                    ProgressBar {
+                    ChannelProgressBar {
                         Layout.fillWidth: true
                         from: 0
                         to: 100
@@ -2557,7 +2557,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Label { text: "START"; color: studioRoot.textSecondary }
-                SpinBox {
+                ChannelSpinBox {
                     id: weekCopyOffset
                     from: 1
                     to: 52
@@ -2573,7 +2573,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Label { text: "COPIES"; color: studioRoot.textSecondary }
-                SpinBox {
+                ChannelSpinBox {
                     id: weekCopyCount
                     from: 1
                     to: 52
@@ -2590,7 +2590,7 @@ Item {
             RowLayout {
                 Layout.fillWidth: true
                 Label { text: "IF OCCUPIED"; color: studioRoot.textSecondary }
-                ComboBox {
+                ChannelComboBox {
                     id: weekCollisionPolicy
                     Layout.fillWidth: true
                     model: ["Require Empty Target Weeks", "Replace Target Weeks"]
@@ -2733,12 +2733,12 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                TextField {
+                ChannelTextField {
                     id: groupNameField
                     Layout.fillWidth: true
                     placeholderText: "Group name — e.g. Saturday Cartoons"
                 }
-                ComboBox {
+                ChannelComboBox {
                     id: groupModeBox
                     model: ["Sequential", "Shuffle"]
                     Layout.preferredWidth: 130
@@ -2767,7 +2767,7 @@ Item {
 
             RowLayout {
                 Layout.fillWidth: true
-                ComboBox {
+                ChannelComboBox {
                     id: groupChoiceBox
                     Layout.fillWidth: true
                     model: studioRoot.groupsLibrary

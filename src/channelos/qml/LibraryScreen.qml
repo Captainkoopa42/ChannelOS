@@ -886,7 +886,7 @@ Item {
                 }
             }
 
-            TextField {
+            ChannelTextField {
                 id: searchField
                 anchors.right: manageButton.left
                 anchors.rightMargin: 12

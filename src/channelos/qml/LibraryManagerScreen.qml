@@ -337,7 +337,7 @@ Item {
             }
         }
 
-        TextField {
+        ChannelTextField {
             id: searchField
             anchors.right: sortBox.left
             anchors.rightMargin: 12
@@ -359,7 +359,7 @@ Item {
             }
         }
 
-        ComboBox {
+        ChannelComboBox {
             id: sortBox
             anchors.right: addButton.left
             anchors.rightMargin: 12

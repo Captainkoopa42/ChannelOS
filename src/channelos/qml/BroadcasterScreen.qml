@@ -1019,7 +1019,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                TextField {
+                                ChannelTextField {
                                     id: channelNumberField
                                     Layout.fillWidth: true
                                     placeholderText: "025"
@@ -1051,7 +1051,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                TextField {
+                                ChannelTextField {
                                     id: channelNameField
                                     Layout.fillWidth: true
                                     placeholderText: "Sci-Fi Classics"
@@ -1081,7 +1081,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                ComboBox {
+                                ChannelComboBox {
                                     id: modeBox
                                     Layout.fillWidth: true
                                     model: ["Sequential", "Shuffle"]
@@ -1098,7 +1098,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                SpinBox {
+                                ChannelSpinBox {
                                     id: numberWidth
                                     Layout.fillWidth: true
                                     from: 1
@@ -1118,7 +1118,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                SpinBox {
+                                ChannelSpinBox {
                                     id: repeatDays
                                     Layout.fillWidth: true
                                     from: 0
@@ -1129,7 +1129,7 @@ Item {
                                 }
                             }
 
-                            CheckBox {
+                            ChannelCheckBox {
                                 id: preserveOrder
                                 text: "Preserve episode/source order"
                                 Layout.alignment: Qt.AlignBottom
@@ -1155,7 +1155,7 @@ Item {
                                 color: broadcasterRoot.textSecondary
                             }
 
-                            TextArea {
+                            ChannelTextArea {
                                 id: descriptionField
                                 width: parent.width
                                 height: 82
@@ -1205,7 +1205,7 @@ Item {
                                     width: parent.width
                                     spacing: 10
 
-                                    ComboBox {
+                                    ChannelComboBox {
                                         id: sourcePicker
                                         width: parent.width - addSourceButton.width - 10
                                         model: broadcasterRoot.sourceOptions

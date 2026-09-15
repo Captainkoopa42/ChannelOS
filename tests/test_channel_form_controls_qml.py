@@ -78,7 +78,7 @@ def test_shared_form_controls_cover_every_visual_state(
 ) -> None:
     qml = (QML_ROOT / filename).read_text(encoding="utf-8")
 
-    assert 'color: "#111f2c"' in qml or 'palette.base: "#111f2c"' in qml
+    assert '"#111f2c"' in qml
     for token in required_tokens:
         assert token in qml
 

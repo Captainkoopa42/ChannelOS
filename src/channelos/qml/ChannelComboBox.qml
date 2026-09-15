@@ -50,7 +50,7 @@ ComboBox {
                : channelCombo.down
                ? "#172e40"
                : channelCombo.activeFocus
-               ? "#13283a"
+               ? "#12396a"
                : channelCombo.hovered
                ? "#142634" : "#111f2c"
         border.color: !channelCombo.enabled

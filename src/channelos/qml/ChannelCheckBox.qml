@@ -17,6 +17,8 @@ CheckBox {
         radius: 4
         color: !channelCheck.enabled
                ? "#091522"
+               : channelCheck.activeFocus
+               ? "#12396a"
                : channelCheck.checked
                ? "#12527f"
                : channelCheck.hovered

@@ -315,6 +315,12 @@ def install_interaction_support(broadcaster_qt_module: Any) -> None:
                 )
             return False
 
+        def _defer_ui_sync(self) -> None:
+            """Apply focus and overlay visibility after QML handles this input."""
+
+            QTimer.singleShot(0, self._sync_management_visibility)
+            QTimer.singleShot(0, self._sync_focus_highlight)
+
         def eventFilter(self, watched: object, event: Any) -> bool:
             event_type = event.type()
 
@@ -323,12 +329,12 @@ def install_interaction_support(broadcaster_qt_module: Any) -> None:
                 QEvent.Type.MouseButtonDblClick,
             }:
                 if self._guide_click_selection(watched, event):
-                    QTimer.singleShot(0, self._sync_focus_highlight)
+                    self._defer_ui_sync()
                     return True
 
             if event_type == QEvent.Type.MouseButtonRelease:
                 if self._video_surface_click(watched, event):
-                    QTimer.singleShot(0, self._sync_focus_highlight)
+                    self._defer_ui_sync()
                     return True
 
             handled = super().eventFilter(watched, event)
@@ -340,7 +346,7 @@ def install_interaction_support(broadcaster_qt_module: Any) -> None:
                 QEvent.Type.MouseButtonPress,
                 QEvent.Type.MouseButtonRelease,
             }:
-                QTimer.singleShot(0, self._sync_focus_highlight)
+                self._defer_ui_sync()
 
             return handled
 

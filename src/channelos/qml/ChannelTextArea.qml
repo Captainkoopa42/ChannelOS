@@ -20,7 +20,7 @@ TextArea {
         color: !channelArea.enabled
                ? "#091522"
                : channelArea.activeFocus
-               ? "#13283a"
+               ? "#12396a"
                : channelArea.hovered
                ? "#142634" : "#111f2c"
         border.color: !channelArea.enabled

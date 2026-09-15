@@ -79,7 +79,7 @@ SpinBox {
         color: !channelSpin.enabled
                ? "#091522"
                : channelSpin.activeFocus
-               ? "#13283a"
+               ? "#12396a"
                : channelSpin.hovered
                ? "#142634" : "#111f2c"
         border.color: !channelSpin.enabled

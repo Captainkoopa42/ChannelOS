@@ -22,10 +22,14 @@ Button {
                ? "#607489"
                : channelButton.destructive
                ? "#ff6666"
-               : channelButton.highlighted || channelButton.checked
+               : channelButton.activeFocus
+                 || channelButton.highlighted
+                 || channelButton.checked
                ? "#ffffff" : "#f4f7fb"
         font.pixelSize: 12
-        font.weight: channelButton.highlighted || channelButton.checked
+        font.weight: channelButton.activeFocus
+                     || channelButton.highlighted
+                     || channelButton.checked
                      ? Font.DemiBold : Font.Medium
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
@@ -44,6 +48,8 @@ Button {
                ? (channelButton.hovered ? "#42adff" : "#1a91ff")
                : channelButton.checked
                ? (channelButton.hovered ? "#176aa6" : "#12527f")
+               : channelButton.activeFocus
+               ? (channelButton.hovered ? "#1a4d82" : "#12396a")
                : channelButton.hovered
                ? "#143a5c" : "#0d2035"
         border.color: !channelButton.enabled

@@ -84,6 +84,23 @@ def test_shared_form_controls_cover_every_visual_state(
 
 
 @pytest.mark.parametrize(
+    "filename",
+    [
+        "ChannelTextField.qml",
+        "ChannelTextArea.qml",
+        "ChannelComboBox.qml",
+        "ChannelSpinBox.qml",
+        "ChannelCheckBox.qml",
+    ],
+)
+def test_focusable_form_controls_use_alpha_style_filled_focus(filename: str) -> None:
+    qml = (QML_ROOT / filename).read_text(encoding="utf-8")
+
+    assert '"#12396a"' in qml
+    assert '"#42adff"' in qml
+
+
+@pytest.mark.parametrize(
     ("filename", "expected_counts"),
     [
         (

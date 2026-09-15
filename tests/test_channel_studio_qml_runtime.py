@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,19 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlExpression
 
 import channelos
+
+
+def _process_events_until(
+    app: QGuiApplication,
+    predicate,
+    timeout: float = 2.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate() and time.monotonic() < deadline:
+        app.processEvents()
+        time.sleep(0.001)
+    app.processEvents()
+    assert predicate()
 
 
 class FakeStudioHost(QObject):
@@ -266,15 +281,9 @@ def test_channel_studio_component_loads_and_guards_an_unapplied_draft() -> None:
     assert copy_is_undefined is False
     assert copy_result is True
     assert not copy_expression.hasError(), copy_expression.error().toString()
-    for _ in range(10):
-        app.processEvents()
-        if not item.property("autoFillApplying"):
-            break
-        assert QMetaObject.invokeMethod(
-            item,
-            "applyAutoFillBatch",
-            Qt.ConnectionType.DirectConnection,
-        )
+    _process_events_until(
+        app, lambda: not item.property("autoFillApplying")
+    )
     assert item.property("autoFillApplying") is False
     assert item.property("calendarBlockCount") == 2
     editor_expression = QQmlExpression(
@@ -315,17 +324,28 @@ def test_channel_studio_component_loads_and_guards_an_unapplied_draft() -> None:
     repeat_result, repeat_is_undefined = repeat_expression.evaluate()
     assert repeat_is_undefined is False
     assert repeat_result is True
-    for _ in range(10):
-        app.processEvents()
-        if not item.property("autoFillApplying"):
-            break
-        assert QMetaObject.invokeMethod(
-            item,
-            "applyAutoFillBatch",
-            Qt.ConnectionType.DirectConnection,
-        )
+    _process_events_until(
+        app, lambda: not item.property("autoFillApplying")
+    )
     assert item.property("calendarBlockCount") == 4
     item.setProperty("dirty", False)
+
+    auto_fill_start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    auto_fill_blocks = []
+    for block_index in range(560):
+        block_start = auto_fill_start + timedelta(seconds=60 * block_index)
+        block_end = block_start + timedelta(seconds=60)
+        auto_fill_blocks.append(
+            {
+                "assetId": f"sha256:test-{block_index}",
+                "title": f"Program {block_index}",
+                "path": f"C:/Owned Media/program-{block_index}.mp4",
+                "sourceRoot": "C:/Owned Media",
+                "durationSeconds": 60.0,
+                "startUtc": block_start.isoformat(),
+                "endUtc": block_end.isoformat(),
+            }
+        )
 
     controller.studioAutoFillCompleted.emit(
         {
@@ -333,30 +353,15 @@ def test_channel_studio_component_loads_and_guards_an_unapplied_draft() -> None:
             "message": "filled",
             "startUtc": "2026-09-07T00:00:00+00:00",
             "endUtc": "2026-09-08T00:00:00+00:00",
-            "blocks": [
-                {
-                    "assetId": "sha256:test",
-                    "title": "Program",
-                    "path": "C:/Owned Media/program.mp4",
-                    "sourceRoot": "C:/Owned Media",
-                    "durationSeconds": 1800.0,
-                    "startUtc": "2026-09-07T20:00:00+00:00",
-                    "endUtc": "2026-09-07T20:30:00+00:00",
-                }
-            ],
+            "blocks": auto_fill_blocks,
         }
     )
-    for _ in range(10):
-        app.processEvents()
-        if not item.property("autoFillApplying"):
-            break
-        assert QMetaObject.invokeMethod(
-            item,
-            "applyAutoFillBatch",
-            Qt.ConnectionType.DirectConnection,
-        )
+    _process_events_until(
+        app, lambda: not item.property("autoFillApplying")
+    )
     assert item.property("autoFillApplying") is False
     assert item.property("dirty") is True
+    assert item.property("calendarBlockCount") == 563
     item.setProperty("dirty", False)
 
     item.setProperty("dirty", True)

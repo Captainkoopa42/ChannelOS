@@ -1104,10 +1104,17 @@ Item {
         if (!pendingScheduleOperation.length)
             pendingScheduleOperation = "Adding prepared blocks to the detached draft…"
         calendarBlocks.clear()
-        autoFillApplyTimer.start()
+        // Queue each batch explicitly instead of relying on a zero-interval
+        // repeating Timer. The Windows packaged runtime can leave that timer
+        // armed without ever delivering its first trigger, trapping Studio at
+        // "Adding prepared blocks" and 0%. Qt.callLater always crosses an
+        // event-loop boundary, so insertion remains responsive and portable.
+        Qt.callLater(studioRoot.applyAutoFillBatch)
     }
 
     function applyAutoFillBatch() {
+        if (!autoFillApplying)
+            return
         var endIndex = Math.min(pendingAutoFillIndex + 128,
                                 pendingAutoFillBlocks.length)
         while (pendingAutoFillIndex < endIndex) {
@@ -1115,10 +1122,11 @@ Item {
                         pendingAutoFillBlocks[pendingAutoFillIndex])
             ++pendingAutoFillIndex
         }
-        if (pendingAutoFillIndex < pendingAutoFillBlocks.length)
+        if (pendingAutoFillIndex < pendingAutoFillBlocks.length) {
+            Qt.callLater(studioRoot.applyAutoFillBatch)
             return
+        }
 
-        autoFillApplyTimer.stop()
         pendingAutoFillBlocks = []
         pendingAutoFillIndex = 0
         autoFillApplying = false
@@ -1266,13 +1274,6 @@ Item {
             else if (studioRoot.autoFillBusy)
                 channelOS.cancelStudioAutoFill()
         }
-    }
-
-    Timer {
-        id: autoFillApplyTimer
-        interval: 0
-        repeat: true
-        onTriggered: studioRoot.applyAutoFillBatch()
     }
 
     Connections {

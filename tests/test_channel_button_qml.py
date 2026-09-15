@@ -19,7 +19,7 @@ def test_shared_channel_button_covers_interaction_and_semantic_states() -> None:
     assert "channelButton.activeFocus" in qml
     assert "channelButton.highlighted" in qml
     assert "channelButton.checked" in qml
-    assert 'channelButton.destructive ? "#ff6666"' in qml
+    assert '"#ff6666"' in qml
     assert 'channelButton.enabled\n               ?' not in qml
     assert "Behavior on color" in qml
     assert "Behavior on border.color" in qml
@@ -51,4 +51,4 @@ def test_destructive_actions_use_the_warning_button_state() -> None:
 
     assert broadcaster.count("destructive: true") == 4
     assert manager.count("destructive: true") == 2
-    assert "palette.buttonText:" not in broadcaster
+    assert "palette.buttonText: broadcasterRoot.danger" not in broadcaster

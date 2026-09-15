@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import threading
@@ -290,7 +290,9 @@ def test_settings_can_open_the_diagnostic_log_folder(
     result = controller.openDiagnosticLogs()
 
     assert result["ok"] is True
-    assert opened == [str(tmp_path / "logs")]
+    assert len(opened) == 1
+    assert Path(opened[0]) == tmp_path / "logs"
     assert (tmp_path / "logs").is_dir()
     controller.stop()
     assert app is not None
+

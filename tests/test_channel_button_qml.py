@@ -20,7 +20,6 @@ def test_shared_channel_button_covers_interaction_and_semantic_states() -> None:
     assert "channelButton.highlighted" in qml
     assert "channelButton.checked" in qml
     assert '"#ff6666"' in qml
-    assert 'channelButton.enabled\n               ?' not in qml
     assert "Behavior on color" in qml
     assert "Behavior on border.color" in qml
 

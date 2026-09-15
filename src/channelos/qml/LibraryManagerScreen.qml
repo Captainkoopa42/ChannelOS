@@ -371,7 +371,7 @@ Item {
             onCurrentIndexChanged: libraryRoot.sortMode = currentIndex
         }
 
-        Button {
+        ChannelButton {
             id: addButton
             anchors.right: parent.right
             anchors.rightMargin: 28
@@ -503,7 +503,7 @@ Item {
                     anchors.bottomMargin: 9
                     spacing: 8
 
-                    Button {
+                    ChannelButton {
                         width: 76
                         height: 28
                         text: "Rescan"
@@ -513,10 +513,11 @@ Item {
                             libraryRoot.preflightSource(modelData.path)
                         }
                     }
-                    Button {
+                    ChannelButton {
                         width: 76
                         height: 28
                         text: "Remove"
+                        destructive: true
                         enabled: !libraryRoot.scan.active
                         onClicked: {
                             libraryRoot.selectedSource = index
@@ -755,7 +756,7 @@ Item {
             }
         }
 
-        Button {
+        ChannelButton {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
@@ -869,7 +870,7 @@ Item {
                     color: textPrimary
                     font.pixelSize: 13
                 }
-                Button {
+                ChannelButton {
                     anchors.right: parent.right
                     width: 150
                     height: 42
@@ -939,13 +940,13 @@ Item {
                 Row {
                     anchors.right: parent.right
                     spacing: 12
-                    Button {
+                    ChannelButton {
                         width: 120
                         height: 42
                         text: "Cancel"
                         onClicked: libraryRoot.scanConfirmVisible = false
                     }
-                    Button {
+                    ChannelButton {
                         width: 170
                         height: 42
                         text: pendingScanExisting ? "Start Rescan" : "Index Source"
@@ -1008,16 +1009,17 @@ Item {
                 Row {
                     anchors.right: parent.right
                     spacing: 12
-                    Button {
+                    ChannelButton {
                         width: 120
                         height: 42
                         text: "Keep Source"
                         onClicked: libraryRoot.removeConfirmVisible = false
                     }
-                    Button {
+                    ChannelButton {
                         width: 190
                         height: 42
                         text: "Remove From Library"
+                        destructive: true
                         onClicked: libraryRoot.removePendingSource()
                     }
                 }

@@ -906,7 +906,7 @@ Item {
                 }
             }
 
-            Button {
+            ChannelButton {
                 id: manageButton
                 anchors.right: parent.right
                 anchors.rightMargin: 28
@@ -971,7 +971,7 @@ Item {
                 }
             }
 
-            Button {
+            ChannelButton {
                 id: addChannelButton
                 anchors.right: playButton.left
                 anchors.verticalCenter: parent.verticalCenter
@@ -982,7 +982,7 @@ Item {
                 onClicked: libraryRoot.openAddToChannel()
             }
 
-            Button {
+            ChannelButton {
                 id: playButton
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
@@ -1306,7 +1306,7 @@ Item {
                 color: textSecondary
                 font.pixelSize: 14
             }
-            Button {
+            ChannelButton {
                 anchors.horizontalCenter: parent.horizontalCenter
                 visible: allItems.length === 0
                 text: "Manage Media Sources"

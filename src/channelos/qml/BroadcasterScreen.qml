@@ -659,13 +659,13 @@ Item {
                     anchors.margins: 18
                     spacing: 12
 
-                    Button {
+                    ChannelButton {
                         text: "New in Studio"
                         width: (parent.width - 48) / 5
                         onClicked: broadcasterRoot.openStudio(0)
                     }
 
-                    Button {
+                    ChannelButton {
                         text: "Open Studio"
                         width: (parent.width - 48) / 5
                         enabled: broadcasterRoot.channels.length > 0
@@ -673,13 +673,13 @@ Item {
                                        broadcasterRoot.selectedChannel().channelNumber)
                     }
 
-                    Button {
+                    ChannelButton {
                         text: "Classic New"
                         width: (parent.width - 48) / 5
                         onClicked: broadcasterRoot.beginCreate()
                     }
 
-                    Button {
+                    ChannelButton {
                         text: broadcasterRoot.channels.length
                               && broadcasterRoot.selectedChannel().mode === "calendar"
                               ? "Studio Channel"
@@ -690,12 +690,12 @@ Item {
                         onClicked: broadcasterRoot.beginEdit()
                     }
 
-                    Button {
+                    ChannelButton {
                         text: "Delete Channel"
                         width: (parent.width - 48) / 5
                         enabled: broadcasterRoot.editorMode === "list"
                                  && broadcasterRoot.canDeleteSelectedChannel()
-                        palette.buttonText: broadcasterRoot.danger
+                        destructive: true
                         onClicked: broadcasterRoot.requestDeleteChannel()
                         ToolTip.visible: hovered && !enabled
                                          && broadcasterRoot.editorMode === "list"
@@ -1213,7 +1213,7 @@ Item {
                                         activeFocusOnTab: true
                                     }
 
-                                    Button {
+                                    ChannelButton {
                                         id: addSourceButton
                                         text: "Add Source"
                                         enabled: broadcasterRoot.sourceOptions.length > 0
@@ -1256,7 +1256,7 @@ Item {
                                             elide: Text.ElideMiddle
                                         }
 
-                                        Button {
+                                        ChannelButton {
                                             id: removeSource
                                             anchors.right: parent.right
                                             anchors.verticalCenter: parent.verticalCenter
@@ -1264,6 +1264,7 @@ Item {
                                             width: 76
                                             height: 30
                                             text: "Remove"
+                                            destructive: true
                                             onClicked: draftSources.remove(index)
                                         }
                                     }
@@ -1303,7 +1304,7 @@ Item {
                                         height: 1
                                     }
 
-                                    Button {
+                                    ChannelButton {
                                         id: previewButton
                                         text: "Preview"
                                         onClicked: broadcasterRoot.previewDraft()
@@ -1378,19 +1379,19 @@ Item {
                             width: parent.width
                             spacing: 12
 
-                            Button {
+                            ChannelButton {
                                 text: "Cancel"
                                 width: 130
                                 onClicked: broadcasterRoot.cancelEditor()
                             }
 
-                            Button {
+                            ChannelButton {
                                 id: deleteChannelButton
                                 text: "Delete Channel"
                                 width: 150
                                 visible: broadcasterRoot.editorMode === "edit"
                                 enabled: broadcasterRoot.canDeleteSelectedChannel()
-                                palette.buttonText: broadcasterRoot.danger
+                                destructive: true
                                 onClicked: broadcasterRoot.requestDeleteChannel()
                                 ToolTip.visible: hovered && !enabled
                                 ToolTip.text: broadcasterRoot.deleteUnavailableReason()
@@ -1404,13 +1405,13 @@ Item {
                                 height: 1
                             }
 
-                            Button {
+                            ChannelButton {
                                 text: "Preview"
                                 width: 160
                                 onClicked: broadcasterRoot.previewDraft()
                             }
 
-                            Button {
+                            ChannelButton {
                                 text: broadcasterRoot.editorMode === "create"
                                       ? "Save Channel" : "Save Changes"
                                 width: 160
@@ -1500,13 +1501,13 @@ Item {
                 border.color: broadcasterRoot.line
                 border.width: 1
             }
-            Button {
+            ChannelButton {
                 text: "Cancel"
                 DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
             }
-            Button {
+            ChannelButton {
                 text: "Delete Channel"
-                palette.buttonText: broadcasterRoot.danger
+                destructive: true
                 DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
             }
         }

@@ -1,40 +1,19 @@
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
-import traceback
+from collections.abc import Mapping
 from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime
 from pathlib import Path
-from typing import Mapping, TextIO
 
 from . import couch
+from .diagnostics import DiagnosticSession
 from .first_run import FIRST_RUN_CANCELLED, first_run_required, run_first_run_setup
 
 DATA_DIRECTORY_ENV = "CHANNELOS_DATA_DIR"
 FIRST_RUN_FLAG = "--channelos-first-run-setup"
-
-
-class _Tee:
-    """Write diagnostics to a durable log and an optional attached console."""
-
-    def __init__(self, log: TextIO, console: TextIO | None) -> None:
-        self._log = log
-        self._console = console
-
-    def write(self, value: str) -> int:
-        self._log.write(value)
-        self._log.flush()
-        if self._console is not None:
-            self._console.write(value)
-            self._console.flush()
-        return len(value)
-
-    def flush(self) -> None:
-        self._log.flush()
-        if self._console is not None:
-            self._console.flush()
 
 
 def default_data_directory(environment: Mapping[str, str] | None = None) -> Path:
@@ -120,7 +99,13 @@ def main(argv: list[str] | None = None) -> int:
     logs_directory.mkdir(parents=True, exist_ok=True)
 
     if FIRST_RUN_FLAG in supplied:
-        return run_first_run_setup(data_directory)
+        with DiagnosticSession(logs_directory) as diagnostics:
+            diagnostics.install_qt_message_handler()
+            try:
+                return run_first_run_setup(data_directory)
+            except Exception:
+                logging.getLogger(__name__).exception("First-run setup crashed")
+                return 1
 
     if (
         getattr(sys, "frozen", False)
@@ -138,24 +123,29 @@ def main(argv: list[str] | None = None) -> int:
             )
             return setup_result
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_path = logs_directory / f"channelos-{timestamp}.log"
-
-    with log_path.open("w", encoding="utf-8", buffering=1) as log:
-        stdout = _Tee(log, getattr(sys, "__stdout__", None))
-        stderr = _Tee(log, getattr(sys, "__stderr__", None))
+    with DiagnosticSession(logs_directory) as diagnostics:
+        diagnostics.install_qt_message_handler()
+        stdout = diagnostics.stdout_stream(getattr(sys, "__stdout__", None))
+        stderr = diagnostics.stderr_stream(getattr(sys, "__stderr__", None))
         try:
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = couch.main(couch_arguments(supplied, data_directory))
         except Exception:
-            traceback.print_exc(file=log)
+            logging.getLogger(__name__).exception("ChannelOS application crashed")
             exit_code = 1
+        finally:
+            stdout.flush()
+            stderr.flush()
+        logging.getLogger(__name__).info(
+            "ChannelOS exited with code %d",
+            exit_code,
+        )
 
     if exit_code:
         _show_error(
             "ChannelOS could not start.\n\n"
-            "Your diagnostic log is here:\n\n"
-            f"{log_path}"
+            "Your diagnostic logs are here:\n\n"
+            f"{logs_directory}"
         )
     return exit_code
 

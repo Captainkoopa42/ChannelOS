@@ -61,3 +61,27 @@ def test_cancelled_rescan_preserves_the_last_successful_source_membership(
     ] == ["alpha.mp4", "beta.mkv"]
     source = library.list_sources()[0]
     assert source.status == "cancelled"
+
+
+def test_scan_can_be_cancelled_while_discovering_files(tmp_path) -> None:
+    media_root = tmp_path / "captures"
+    media_root.mkdir()
+    for index in range(10):
+        (media_root / f"program-{index}.mp4").write_bytes(b"media")
+
+    library = MediaLibrary(tmp_path / "library.db")
+    scanner = MediaScanner(library, NullMediaProbe())
+    checks = 0
+
+    def cancel_during_discovery() -> bool:
+        nonlocal checks
+        checks += 1
+        return checks >= 3
+
+    with pytest.raises(ScanCancelled):
+        scanner.scan(media_root, should_cancel=cancel_during_discovery)
+
+    assert checks == 3
+    source = library.list_sources()[0]
+    assert source.status == "cancelled"
+    assert source.discovered_count == 0

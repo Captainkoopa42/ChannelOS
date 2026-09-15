@@ -183,6 +183,10 @@ class FakeSettingsController(QObject):
             "settings": self._settings,
         }
 
+    @Slot(result="QVariantMap")
+    def openDiagnosticLogs(self):
+        return {"ok": True, "message": "opened diagnostic logs"}
+
 
 def test_settings_qml_instantiates_headlessly() -> None:
     app = QGuiApplication.instance() or QGuiApplication([])
@@ -258,6 +262,8 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
     assert "preferences.artworkCacheLimitMb" in text
     assert "preferences.backgroundArtworkDuringPlayback" in text
     assert "preferences.reducedMotion" in text
+    assert "Diagnostic Logs" in text
+    assert "channelOS.openDiagnosticLogs()" in text
     assert "preferences.controllerEnabled" in text
     assert '11: "controllerEnabled"' in text
     assert "Controller Input" in text

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from channelos import windows_app
+from channelos.diagnostics import CRASH_LOG_FILENAME, LOG_FILENAME
 from channelos.first_run import FIRST_RUN_CANCELLED
 
 
@@ -60,7 +61,8 @@ def test_packaged_launcher_creates_log_and_surfaces_failure(
     assert windows_app.main([]) == 6
 
     assert (tmp_path / "channels").is_dir()
-    assert list((tmp_path / "logs").glob("channelos-*.log"))
+    assert (tmp_path / "logs" / LOG_FILENAME).is_file()
+    assert (tmp_path / "logs" / CRASH_LOG_FILENAME).is_file()
     assert messages and str(tmp_path / "logs") in messages[0]
     assert received[:2] == ["--db", str(tmp_path / "library.db")]
 

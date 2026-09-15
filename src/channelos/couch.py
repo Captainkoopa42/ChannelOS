@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -20,6 +21,8 @@ from .runtime import (
 DEFAULT_DATABASE = Path(".channelos") / "library.db"
 DEFAULT_RUNTIME_DATABASE = Path(".channelos") / "runtime.db"
 DEFAULT_CHANNEL_DIRECTORY = Path("channels")
+
+logger = logging.getLogger(__name__)
 
 
 class CouchUIError(RuntimeError):
@@ -63,6 +66,7 @@ def run_couch(
     channels_dir: Path = DEFAULT_CHANNEL_DIRECTORY,
     windowed: bool = False,
 ) -> int:
+    logger.info("Opening ChannelOS couch runtime")
     library = MediaLibrary(db)
     store = RuntimeStore(state_db)
 
@@ -76,6 +80,7 @@ def run_couch(
         raise CouchUIError(str(exc)) from exc
 
     runtimes = _open_runtimes(broadcaster.paths, library, store)
+    logger.info("Couch runtime ready channels=%d", len(runtimes))
     service = GuideService(runtimes)
     television = TelevisionRuntime(runtimes, store)
 

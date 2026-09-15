@@ -72,11 +72,20 @@ class MediaScanner:
         self.probe = probe if probe is not None else FFprobeMediaProbe()
         self.fail_on_probe_error = fail_on_probe_error
 
-    def _probe(self, path: Path) -> tuple[MediaProbeResult, bool]:
+    def _probe(
+        self,
+        path: Path,
+        should_cancel: ScanCancellationCheck | None = None,
+    ) -> tuple[MediaProbeResult, bool]:
         """Probe one file and report whether a non-fatal probe error occurred."""
 
         try:
+            cancellable = getattr(self.probe, "probe_cancellable", None)
+            if callable(cancellable):
+                return cancellable(path, should_cancel), False
             return self.probe.probe(path), False
+        except InterruptedError as exc:
+            raise ScanCancelled("media scan cancelled") from exc
         except MediaProbeError:
             if self.fail_on_probe_error:
                 raise
@@ -109,13 +118,18 @@ class MediaScanner:
         if cls._cancel_requested(check):
             raise ScanCancelled("media scan cancelled")
 
-    def discover(self, source: str | Path) -> tuple[Path, ...]:
+    def discover(
+        self,
+        source: str | Path,
+        *,
+        should_cancel: ScanCancellationCheck | None = None,
+    ) -> tuple[Path, ...]:
         """Return supported media paths without mutating the library index."""
 
         source_path = Path(source).expanduser().resolve(strict=False)
         if not source_path.exists():
             raise FileNotFoundError(f"media source does not exist: {source_path}")
-        return tuple(self._iter_media_files(source_path))
+        return tuple(self._iter_media_files(source_path, should_cancel))
 
     def scan(
         self,
@@ -125,7 +139,17 @@ class MediaScanner:
         should_cancel: ScanCancellationCheck | None = None,
     ) -> ScanSummary:
         source_path = Path(source).expanduser().resolve(strict=False)
-        media_files = self.discover(source_path)
+        try:
+            media_files = self.discover(
+                source_path,
+                should_cancel=should_cancel,
+            )
+        except ScanCancelled:
+            self.library.cancel_source_scan(
+                source_path,
+                discovered_count=0,
+            )
+            raise
         total = len(media_files)
 
         self.library.begin_source_scan(
@@ -154,7 +178,10 @@ class MediaScanner:
                     # unavailable), a later technical scan can enrich it using
                     # the already-trusted content hash instead of re-reading it.
                     if cached.duration_seconds is None or cached.container_format is None:
-                        probe_result, probe_failed = self._probe(path)
+                        probe_result, probe_failed = self._probe(
+                            path,
+                            should_cancel,
+                        )
                         if probe_failed:
                             probe_errors += 1
                         if self._adds_technical_data(cached, probe_result):
@@ -187,7 +214,10 @@ class MediaScanner:
 
                 hashed += 1
                 self._raise_if_cancelled(should_cancel)
-                probe_result, probe_failed = self._probe(path)
+                probe_result, probe_failed = self._probe(
+                    path,
+                    should_cancel,
+                )
                 if probe_failed:
                     probe_errors += 1
 
@@ -239,13 +269,23 @@ class MediaScanner:
             probe_errors=probe_errors,
         )
 
-    @staticmethod
-    def _iter_media_files(source: Path):
+    @classmethod
+    def _iter_media_files(
+        cls,
+        source: Path,
+        should_cancel: ScanCancellationCheck | None = None,
+    ):
+        cls._raise_if_cancelled(should_cancel)
         if source.is_file():
             if source.suffix.lower() in SUPPORTED_MEDIA_EXTENSIONS:
                 yield source
             return
 
-        for path in sorted(source.rglob("*")):
+        paths: list[Path] = []
+        for path in source.rglob("*"):
+            cls._raise_if_cancelled(should_cancel)
             if path.is_file() and path.suffix.lower() in SUPPORTED_MEDIA_EXTENSIONS:
-                yield path
+                paths.append(path)
+        for path in sorted(paths):
+            cls._raise_if_cancelled(should_cancel)
+            yield path

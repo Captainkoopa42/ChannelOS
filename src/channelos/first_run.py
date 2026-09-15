@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Callable
 
@@ -10,6 +11,8 @@ from .vlc_probe import LibVLCMediaProbe
 
 
 FIRST_RUN_CANCELLED = 10
+
+logger = logging.getLogger(__name__)
 
 
 class FirstRunError(RuntimeError):
@@ -162,12 +165,14 @@ def run_first_run_setup(data_directory: str | Path) -> int:
         QApplication.processEvents()
 
     try:
+        logger.info("First-run media scan started")
         summary, channel_number = bootstrap_first_channel(
             folder,
             data_directory,
             on_progress=publish,
         )
     except Exception as exc:
+        logger.exception("First-run setup failed")
         progress.close()
         QMessageBox.critical(
             None,
@@ -176,6 +181,11 @@ def run_first_run_setup(data_directory: str | Path) -> int:
         )
         return 6
 
+    logger.info(
+        "First-run setup completed discovered=%d channel_created=%s",
+        summary.discovered,
+        channel_number is not None,
+    )
     progress.close()
     if channel_number is None:
         detail = (

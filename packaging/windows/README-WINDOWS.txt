@@ -34,6 +34,19 @@ This includes library.db, runtime.db, settings.json, managed channel definitions
 artwork cache data, and logs. Set CHANNELOS_DATA_DIR before launch only when you
 deliberately want another data directory, such as a clean test environment.
 
+For troubleshooting, send these files from the logs folder:
+
+    channelos.log
+    channelos-crash.log
+
+channelos.log rotates automatically and keeps the three previous files as
+channelos.log.1 through channelos.log.3. It records startup details, Qt/QML
+warnings, Library and Studio background work, playback failures, and Python
+exceptions. channelos-crash.log is a smaller last-resort trace for fatal native
+or Python crashes and keeps two previous files. Routine entries do not list the
+contents of your media library, although an error emitted by a decoder or the
+operating system can include the path of the file involved.
+
 REPLACEABLE THIRD-PARTY LIBRARIES
 ---------------------------------
 The Qt/PySide6 runtime is visible beneath _internal\PySide6. The LGPL-only

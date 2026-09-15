@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import sys
+import threading
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 from .playback import PlaybackUnavailableError, _prepare_windows_vlc_runtime
@@ -16,7 +19,8 @@ class LibVLCMediaProbe:
     ships for playback to obtain the duration required by scheduling.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, parse_timeout_seconds: float = 15.0) -> None:
+        self._parse_timeout_seconds = max(0.1, float(parse_timeout_seconds))
         self._dll_directory_handle, self._runtime_dir = _prepare_windows_vlc_runtime()
         try:
             import vlc  # type: ignore
@@ -34,18 +38,71 @@ class LibVLCMediaProbe:
             ) from exc
 
     def probe(self, path: Path) -> MediaProbeResult:
+        return self.probe_cancellable(path)
+
+    def probe_cancellable(
+        self,
+        path: Path,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> MediaProbeResult:
         media_path = Path(path).expanduser().resolve(strict=False)
+        parsed = threading.Event()
+        manager = None
+
+        def mark_parsed(_event) -> None:
+            parsed.set()
+
         try:
             media = self._instance.media_new_path(str(media_path))
-            # libvlc_media_parse() is synchronous in VLC 3.x. It is deprecated
-            # upstream in favor of the async parser, but remains the smallest
-            # deterministic choice for this local packaged-media inspection.
-            media.parse()
+            manager = media.event_manager()
+            manager.event_attach(
+                self._vlc.EventType.MediaParsedChanged,
+                mark_parsed,
+            )
+            timeout_ms = int(self._parse_timeout_seconds * 1000)
+            result = media.parse_with_options(
+                self._vlc.MediaParseFlag.local,
+                timeout_ms,
+            )
+            if result != 0:
+                raise MediaProbeError(
+                    f"libVLC could not start inspection of {media_path.name}"
+                )
+
+            deadline = time.monotonic() + self._parse_timeout_seconds + 1.0
+            while not parsed.is_set():
+                if should_cancel is not None and should_cancel():
+                    media.parse_stop()
+                    raise InterruptedError("media inspection cancelled")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    media.parse_stop()
+                    raise MediaProbeError(
+                        f"libVLC timed out while inspecting {media_path.name}"
+                    )
+                parsed.wait(min(0.1, remaining))
+
+            status = media.get_parsed_status()
+            if status != self._vlc.MediaParsedStatus.done:
+                raise MediaProbeError(
+                    f"libVLC could not inspect {media_path.name} "
+                    f"(parse status: {status})"
+                )
             duration_ms = int(media.get_duration() or 0)
+        except InterruptedError:
+            raise
+        except MediaProbeError:
+            raise
         except Exception as exc:
             raise MediaProbeError(
                 f"libVLC could not inspect {media_path.name}: {exc}"
             ) from exc
+        finally:
+            if manager is not None:
+                try:
+                    manager.event_detach(self._vlc.EventType.MediaParsedChanged)
+                except Exception:
+                    pass
 
         if duration_ms <= 0:
             raise MediaProbeError(

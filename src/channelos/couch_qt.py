@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import os
 import queue
 import sys
 import threading
@@ -8,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
-from PySide6.QtGui import QGuiApplication, QWindow
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
@@ -18,6 +20,7 @@ from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
+from .diagnostics import LOG_DIRECTORY_ENV
 from .guide import GuideError, GuideService
 from .library import IndexedMedia, MediaLibrary
 from .on_demand import OnDemandSession, OnDemandState
@@ -44,6 +47,8 @@ from .settings import (
 )
 from .television import TelevisionSession
 from .window_startup import NativeWindowSnapshot, NativeWindowStartupGate
+
+logger = logging.getLogger(__name__)
 
 
 def _resolved_audio_output_rows(
@@ -306,6 +311,31 @@ class CouchController(QObject):
             if str(device["deviceId"]) == selected:
                 return str(device["name"])
         return "System Default" if not selected else "Unavailable device"
+
+    @Slot(result="QVariantMap")
+    def openDiagnosticLogs(self) -> dict[str, object]:
+        configured = os.environ.get(LOG_DIRECTORY_ENV)
+        logs_directory = (
+            Path(configured)
+            if configured
+            else self._runtime_store.database_path.parent / "logs"
+        )
+        try:
+            logs_directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.exception("Diagnostic log directory could not be created")
+            return self._error(exc)
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(logs_directory))):
+            logger.error("The operating system did not open the diagnostic log folder")
+            return {
+                "ok": False,
+                "message": f"Diagnostic logs are stored in {logs_directory}",
+            }
+        logger.info("Diagnostic log folder opened")
+        return {
+            "ok": True,
+            "message": "Opened the ChannelOS diagnostic log folder",
+        }
 
     @Slot(result="QVariantMap")
     def refreshAudioOutputDevices(self) -> dict[str, object]:
@@ -759,6 +789,11 @@ class CouchController(QObject):
                 "message": message,
                 "playback": self._playback,
             }
+        logger.error(
+            "Playback unavailable: %s",
+            message,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
         failed = dict(self._playback)
         failed["active"] = False
         failed["error"] = message
@@ -1936,7 +1971,7 @@ class CouchKeyFilter(QObject):
                 current = int(self._window.property("settingsSelection"))
                 self._window.setProperty(
                     "settingsSelection",
-                    min(13, current + 1),
+                    min(14, current + 1),
                 )
                 return True
             if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
@@ -1949,6 +1984,10 @@ class CouchKeyFilter(QObject):
                     self._notify(result)
                     return True
                 if selection == 13:
+                    result = self._controller.openDiagnosticLogs()
+                    self._notify(result)
+                    return True
+                if selection == 14:
                     result = self._controller.resetSettings()
                     self._notify(result)
                     self._window.setProperty(

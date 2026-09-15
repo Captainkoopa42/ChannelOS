@@ -106,12 +106,6 @@ class FakeStudioController(QObject):
                         "assetIds": ["sha256:test"],
                         "memberCount": 1,
                         "availableCount": 1,
-                        "media": [
-                            {
-                                "assetId": "sha256:test",
-                                "sourceRoot": "C:/Owned Media",
-                            }
-                        ],
                     }
                 ],
                 "media": [
@@ -204,6 +198,19 @@ def test_channel_studio_component_loads_and_guards_an_unapplied_draft() -> None:
     assert item.property("editingChannelNumber") == 7
     assert item.property("selectedBlockIndex") == 0
     assert item.property("dirty") is False
+
+    oversized_result = QQmlExpression(
+        engine.rootContext(), item,
+        'acceptAutoFillResult({ok: true, '
+        'startUtc: "2027-01-01T00:00:00.000Z", '
+        'endUtc: "2027-01-02T00:00:00.000Z", '
+        'blocks: new Array(maximumCalendarBlocks)})'
+    )
+    oversized_result.evaluate()
+    assert not oversized_result.hasError(), oversized_result.error().toString()
+    assert item.property("calendarBlockCount") == 1
+    assert item.property("feedbackIsError") is True
+    assert "10,000-block" in str(item.property("feedbackMessage"))
 
     assert QMetaObject.invokeMethod(
         item,

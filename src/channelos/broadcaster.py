@@ -503,18 +503,22 @@ class BroadcasterService:
         )
         self._atomic_write(self._studio_groups_path, content)
 
-    def studio_groups(self) -> list[dict[str, Any]]:
-        media_by_id = {
-            item["assetId"]: item
-            for item in self.studio_media()
-        }
+    def studio_groups(
+        self,
+        *,
+        available_asset_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        if available_asset_ids is None:
+            available_asset_ids = {
+                media.asset.asset_id
+                for media in self.library.list_online_media()
+            }
         result: list[dict[str, Any]] = []
         for group in self._load_studio_groups():
-            available = [
-                media_by_id[asset_id]
+            available_count = sum(
+                asset_id in available_asset_ids
                 for asset_id in group.asset_ids
-                if asset_id in media_by_id
-            ]
+            )
             result.append(
                 {
                     "groupId": group.group_id,
@@ -522,8 +526,7 @@ class BroadcasterService:
                     "mode": group.mode,
                     "assetIds": list(group.asset_ids),
                     "memberCount": len(group.asset_ids),
-                    "availableCount": len(available),
-                    "media": available,
+                    "availableCount": available_count,
                 }
             )
         return result
@@ -601,6 +604,7 @@ class BroadcasterService:
         number = int(channel_number)
         if number <= 0:
             sources = list(self.source_options())
+            media = self.studio_media()
             return {
                 "editingChannelNumber": 0,
                 "channel": self.suggested_channel_number(),
@@ -611,8 +615,10 @@ class BroadcasterService:
                 "avoidRepeatDays": 0,
                 "sources": sources,
                 "calendarBlocks": [],
-                "media": self.studio_media(),
-                "groups": self.studio_groups(),
+                "media": media,
+                "groups": self.studio_groups(
+                    available_asset_ids={item["assetId"] for item in media}
+                ),
             }
 
         try:
@@ -626,7 +632,9 @@ class BroadcasterService:
             item["assetId"]: item
             for item in self.studio_media()
         }
-        groups = self.studio_groups()
+        groups = self.studio_groups(
+            available_asset_ids=set(media_by_id)
+        )
         group_names_by_snapshot = {
             (
                 str(group["mode"]),

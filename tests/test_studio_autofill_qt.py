@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -13,6 +14,7 @@ pytest.importorskip("PySide6.QtGui", exc_type=ImportError)
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QGuiApplication
 
+from channelos import couch_qt
 from channelos.broadcaster import (
     BroadcasterService,
     StudioAutoFillCancelled,
@@ -23,7 +25,7 @@ from channelos.library import MediaLibrary
 from channelos.probe import MediaProbeResult
 from channelos.resolve import resolve_channel
 from channelos.runtime import ChannelRuntime, RuntimeStore, TelevisionRuntime
-from channelos.scanner import MediaScanner
+from channelos.scanner import MediaScanner, ScanCancelled
 
 
 class FixedProbe:
@@ -181,5 +183,114 @@ def test_studio_auto_fill_publishes_only_completed_background_result(
     assert completed[0]["message"] == "ready"
     assert controller.studioAutoFill["phase"] == "ready"
     assert controller.studioAutoFill["percent"] == 100
+    controller.stop()
+    assert app is not None
+
+
+def test_stop_cancels_and_joins_active_library_scan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller, media_root = _controller(tmp_path)
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    def wait_for_cancel(
+        _scanner,
+        _source,
+        *,
+        on_progress=None,
+        should_cancel=None,
+    ):
+        started.set()
+        while should_cancel is not None and not should_cancel():
+            time.sleep(0.005)
+        cancelled.set()
+        raise ScanCancelled()
+
+    monkeypatch.setattr(MediaScanner, "scan", wait_for_cancel)
+    assert controller.startMediaScan(str(media_root))["ok"] is True
+    _process_until(started.is_set)
+    thread = controller._scan_thread
+    assert thread is not None and thread.isRunning()
+
+    controller.stop()
+
+    assert cancelled.is_set()
+    assert not thread.isRunning()
+    assert app is not None
+
+
+def test_stop_cancels_and_joins_active_studio_auto_fill(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller, media_root = _controller(tmp_path)
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    def wait_for_cancel(
+        _editor,
+        _start,
+        _end,
+        *,
+        on_progress,
+        should_cancel,
+    ):
+        started.set()
+        while not should_cancel():
+            time.sleep(0.005)
+        cancelled.set()
+        raise StudioAutoFillCancelled()
+
+    monkeypatch.setattr(
+        controller._broadcaster,
+        "auto_fill_studio",
+        wait_for_cancel,
+    )
+    editor = {
+        "channel": 7,
+        "name": "Studio Test",
+        "sources": [str(media_root)],
+        "mode": "calendar",
+        "fillerMode": "sequential",
+        "calendarBlocks": [],
+    }
+    assert controller.startStudioAutoFill(
+        editor,
+        "2026-09-07T00:00:00+00:00",
+        "2026-09-08T00:00:00+00:00",
+    )["ok"] is True
+    _process_until(started.is_set)
+    thread = controller._studio_auto_fill_thread
+    assert thread is not None and thread.isRunning()
+
+    controller.stop()
+
+    assert cancelled.is_set()
+    assert not thread.isRunning()
+    assert app is not None
+
+
+def test_settings_can_open_the_diagnostic_log_folder(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller, _media_root = _controller(tmp_path)
+    opened: list[str] = []
+    monkeypatch.setattr(
+        couch_qt.QDesktopServices,
+        "openUrl",
+        lambda url: opened.append(url.toLocalFile()) or True,
+    )
+
+    result = controller.openDiagnosticLogs()
+
+    assert result["ok"] is True
+    assert opened == [str(tmp_path / "logs")]
+    assert (tmp_path / "logs").is_dir()
     controller.stop()
     assert app is not None

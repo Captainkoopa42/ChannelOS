@@ -40,6 +40,7 @@ Item {
         { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
         { title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
         { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
+        { title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
         { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
     ]
 
@@ -176,6 +177,8 @@ Item {
         if (index === 12) {
             showResult(channelOS.clearArtworkCache())
         } else if (index === 13) {
+            showResult(channelOS.openDiagnosticLogs())
+        } else if (index === 14) {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
         }
@@ -490,6 +493,8 @@ Item {
                         anchors.centerIn: parent
                         text: settingRow.index === 12
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
+                              : settingRow.index === 13
+                              ? "Open Log Folder"
                               : "Restore Standard Defaults"
                         color: "#f4f7fb"
                         font.pixelSize: 14

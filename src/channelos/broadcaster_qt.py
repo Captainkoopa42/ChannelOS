@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -45,6 +46,8 @@ from .playback import NativeVideoSurface, PlaybackError
 from .resolve import resolve_channel
 from .runtime import ChannelRuntime, ChannelRuntimeError, RuntimeStore, TelevisionRuntime
 from .scanner import MediaScanner, ScanCancelled, ScanProgress, ScanSummary
+
+logger = logging.getLogger(__name__)
 
 
 def _apply_channelos_control_theme(app: QApplication) -> None:
@@ -114,6 +117,7 @@ class _LibraryScanWorker(QObject):
     @Slot()
     def run(self) -> None:
         scanner = MediaScanner(self._library)
+        logger.info("Library scan worker started source=%s", self._source.name)
 
         def publish(progress: ScanProgress) -> None:
             self.progress.emit(
@@ -129,10 +133,19 @@ class _LibraryScanWorker(QObject):
                 should_cancel=self._cancel_event.is_set,
             )
         except ScanCancelled:
+            logger.info("Library scan worker cancelled")
             self.cancelled.emit()
         except Exception as exc:
+            logger.exception("Library scan worker failed")
             self.failed.emit(str(exc))
         else:
+            logger.info(
+                "Library scan worker completed discovered=%d new=%d cached=%d probe_errors=%d",
+                summary.discovered,
+                summary.new_assets,
+                summary.cache_hits,
+                summary.probe_errors,
+            )
             self.completed.emit(summary)
         finally:
             self.finished.emit()
@@ -164,6 +177,7 @@ class _StudioAutoFillWorker(QObject):
 
     @Slot()
     def run(self) -> None:
+        logger.info("Studio Auto Fill worker started")
         try:
             result = self._broadcaster.auto_fill_studio(
                 self._editor,
@@ -175,10 +189,16 @@ class _StudioAutoFillWorker(QObject):
             if self._cancel_event.is_set():
                 raise StudioAutoFillCancelled("Studio Auto Fill was cancelled")
         except StudioAutoFillCancelled:
+            logger.info("Studio Auto Fill worker cancelled")
             self.cancelled.emit()
         except Exception as exc:
+            logger.exception("Studio Auto Fill worker failed")
             self.failed.emit(str(exc))
         else:
+            logger.info(
+                "Studio Auto Fill worker completed blocks=%d",
+                len(result.get("blocks", ())) if isinstance(result, dict) else 0,
+            )
             self.completed.emit(result)
         finally:
             self.finished.emit()
@@ -319,12 +339,27 @@ class BroadcasterCouchController(CouchController):
 
     @Slot()
     def stop(self) -> None:
+        # Set every cancellation flag before joining either worker. Otherwise a
+        # slow Library scan can delay cancellation of Studio Auto Fill (or vice
+        # versa) while the GUI is closing.
+        if self._scan_cancel_event is not None:
+            self._scan_cancel_event.set()
         if self._studio_auto_fill_cancel_event is not None:
             self._studio_auto_fill_cancel_event.set()
-        thread = self._studio_auto_fill_thread
-        if thread is not None and thread.isRunning():
+
+        # A live QThread being destroyed is a process-fatal Qt error. Request
+        # both event loops to stop, then wait until their current cooperative
+        # operation returns before allowing controller destruction.
+        for thread in (
+            self._scan_thread,
+            self._studio_auto_fill_thread,
+        ):
+            if thread is None or not thread.isRunning():
+                continue
+            logger.info("Waiting for worker shutdown name=%s", thread.objectName())
             thread.quit()
-            thread.wait(5000)
+            thread.wait()
+            logger.info("Worker shutdown complete name=%s", thread.objectName())
         super().stop()
 
     @Slot()
@@ -403,6 +438,7 @@ class BroadcasterCouchController(CouchController):
 
         cancel_event = threading.Event()
         thread = QThread(self)
+        thread.setObjectName("library-scan")
         worker = _LibraryScanWorker(self._library, source, cancel_event)
         worker.moveToThread(thread)
 
@@ -747,6 +783,7 @@ class BroadcasterCouchController(CouchController):
 
         cancel_event = threading.Event()
         thread = QThread(self)
+        thread.setObjectName("studio-auto-fill")
         worker = _StudioAutoFillWorker(
             self._broadcaster,
             mapped_editor,
@@ -1171,6 +1208,7 @@ def run_qt(
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     roots = engine.rootObjects()
     if not roots:
+        logger.error("Main QML failed to create a root window")
         return 7
 
     window = roots[0]

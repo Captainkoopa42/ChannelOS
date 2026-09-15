@@ -376,6 +376,7 @@ def test_reusable_group_embeds_safe_show_filler_snapshot(tmp_path: Path) -> None
         [media[1]["assetId"], media[2]["assetId"]],
         "shuffle",
     )
+    assert "media" not in group
     start = datetime(2026, 9, 7, tzinfo=timezone.utc)
     raw = editor(45, source, name="Grouped Prime Time")
     raw.update(

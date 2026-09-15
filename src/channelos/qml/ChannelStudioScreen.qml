@@ -114,6 +114,7 @@ Item {
     property var hostWindow: null
     property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
     property var mediaLibrary: draftData.media || []
+    property var mediaByAssetId: ({})
     property var groupsLibrary: draftData.groups || []
     property var blocksByDay: ({})
     property string viewMode: "week"
@@ -132,6 +133,8 @@ Item {
     property int pendingAutoFillIndex: 0
     property string pendingAutoFillMessage: ""
     property string pendingScheduleOperation: ""
+    readonly property int maximumCalendarBlocks: 10000
+    readonly property int autoFillApplyBatchSize: 512
     readonly property int calendarBlockCount: calendarBlocks.count
     readonly property var autoFillState: channelOS
             ? channelOS.studioAutoFill
@@ -273,10 +276,8 @@ Item {
 
     function mediaForAsset(assetId) {
         var target = String(assetId || "")
-        for (var index = 0; index < mediaLibrary.length; ++index) {
-            if (String(mediaLibrary[index].assetId) === target)
-                return mediaLibrary[index]
-        }
+        if (mediaByAssetId[target])
+            return mediaByAssetId[target]
         return ({
             assetId: target,
             title: "Unavailable media",
@@ -285,6 +286,15 @@ Item {
             durationSeconds: 0,
             containerFormat: "MEDIA"
         })
+    }
+
+    function rebuildMediaIndex() {
+        var byAssetId = ({})
+        for (var index = 0; index < mediaLibrary.length; ++index) {
+            var item = mediaLibrary[index]
+            byAssetId[String(item.assetId || "")] = item
+        }
+        mediaByAssetId = byAssetId
     }
 
     function appendSource(sourceRoot) {
@@ -369,8 +379,8 @@ Item {
                     - new Date(right.startUtc).getTime()
         })
         calendarBlocks.clear()
-        for (var index = 0; index < blocks.length; ++index)
-            calendarBlocks.append(blocks[index])
+        if (blocks.length)
+            calendarBlocks.append(blocks)
         rebuildBlockIndex()
     }
 
@@ -416,6 +426,7 @@ Item {
 
         draftData = result.draft || ({})
         mediaLibrary = draftData.media || []
+        rebuildMediaIndex()
         groupsLibrary = draftData.groups || []
         editingChannelNumber = Number(draftData.editingChannelNumber || 0)
         channelNumberField.text = String(draftData.channel || 1)
@@ -432,9 +443,16 @@ Item {
 
         calendarBlocks.clear()
         var blocks = draftData.calendarBlocks || []
+        var normalizedBlocks = []
         for (var blockIndex = 0; blockIndex < blocks.length; ++blockIndex)
-            appendBlock(blocks[blockIndex])
-        sortBlocks()
+            normalizedBlocks.push(blockObject(blocks[blockIndex]))
+        normalizedBlocks.sort(function(left, right) {
+            return new Date(left.startUtc).getTime()
+                    - new Date(right.startUtc).getTime()
+        })
+        if (normalizedBlocks.length)
+            calendarBlocks.append(normalizedBlocks)
+        rebuildBlockIndex()
 
         selectedBlockIndex = calendarBlocks.count ? 0 : -1
         anchorDate = calendarBlocks.count
@@ -466,10 +484,13 @@ Item {
 
     function sourceChoices() {
         var result = []
+        var seen = ({})
         for (var index = 0; index < mediaLibrary.length; ++index) {
             var source = String(mediaLibrary[index].sourceRoot || "")
-            if (source.length && result.indexOf(source) < 0)
+            if (source.length && !seen[source]) {
+                seen[source] = true
                 result.push(source)
+            }
         }
         result.sort()
         return result
@@ -539,9 +560,9 @@ Item {
             feedbackIsError = true
             return
         }
-        var groupMedia = group.media || []
-        for (var mediaIndex = 0; mediaIndex < groupMedia.length; ++mediaIndex)
-            appendSource(groupMedia[mediaIndex].sourceRoot)
+        var assetIds = group.assetIds || []
+        for (var assetIndex = 0; assetIndex < assetIds.length; ++assetIndex)
+            appendSource(mediaForAsset(assetIds[assetIndex]).sourceRoot)
         calendarBlocks.setProperty(selectedBlockIndex, "fillerMode",
                                    String(group.mode || "sequential"))
         calendarBlocks.setProperty(selectedBlockIndex, "fillerAssetIdsJson",
@@ -835,7 +856,7 @@ Item {
         }
 
         var retainedCount = calendarBlocks.count - collisions
-        if (retainedCount + source.length * count > 10000) {
+        if (retainedCount + source.length * count > maximumCalendarBlocks) {
             feedbackMessage = "This pattern would exceed the 10,000-block calendar limit."
             feedbackIsError = true
             return false
@@ -1078,6 +1099,12 @@ Item {
             return
         var startMs = new Date(result.startUtc).getTime()
         var endMs = new Date(result.endUtc).getTime()
+        if (!isFinite(startMs) || !isFinite(endMs) || endMs <= startMs) {
+            feedbackMessage = "Auto Fill returned an invalid calendar range. The draft was not changed."
+            feedbackIsError = true
+            pendingScheduleOperation = ""
+            return
+        }
         var replacement = []
         for (var index = 0; index < calendarBlocks.count; ++index) {
             var existing = calendarBlocks.get(index)
@@ -1087,6 +1114,13 @@ Item {
                 replacement.push(blockObject(existing))
         }
         var blocks = result.blocks || []
+        if (typeof blocks.length !== "number"
+                || replacement.length + blocks.length > maximumCalendarBlocks) {
+            feedbackMessage = "This result would exceed the 10,000-block calendar limit. The draft was not changed."
+            feedbackIsError = true
+            pendingScheduleOperation = ""
+            return
+        }
         for (var blockIndex = 0; blockIndex < blocks.length; ++blockIndex)
             replacement.push(blockObject(blocks[blockIndex]))
         replacement.sort(function(left, right) {
@@ -1115,13 +1149,13 @@ Item {
     function applyAutoFillBatch() {
         if (!autoFillApplying)
             return
-        var endIndex = Math.min(pendingAutoFillIndex + 128,
+        var endIndex = Math.min(pendingAutoFillIndex + autoFillApplyBatchSize,
                                 pendingAutoFillBlocks.length)
-        while (pendingAutoFillIndex < endIndex) {
+        if (endIndex > pendingAutoFillIndex) {
             calendarBlocks.append(
-                        pendingAutoFillBlocks[pendingAutoFillIndex])
-            ++pendingAutoFillIndex
+                        pendingAutoFillBlocks.slice(pendingAutoFillIndex, endIndex))
         }
+        pendingAutoFillIndex = endIndex
         if (pendingAutoFillIndex < pendingAutoFillBlocks.length) {
             Qt.callLater(studioRoot.applyAutoFillBatch)
             return

@@ -186,6 +186,14 @@ See **[Distribution policy](docs/DISTRIBUTION.md)** for the exact boundary. The
 Windows package is still a preview until it passes the real-machine package
 gate; first-run setup and an installer follow afterward.
 
+Packaged Windows builds keep rotating diagnostic logs in
+`%LOCALAPPDATA%\ChannelOS\logs`. `channelos.log` includes startup, Qt/QML,
+Library/Studio worker, playback, and exception diagnostics;
+`channelos-crash.log` captures fatal crash traces. These files are intended to
+be shareable when a problem cannot be reproduced locally. Routine messages do
+not inventory media-library contents, though third-party decoder or operating
+system errors may name the file involved.
+
 ## Visual direction
 
 The default couch UI should use a dark, cool living-room palette: deep navy/charcoal surfaces, cool blue focus and selection states, bright readable text, and a restrained LIVE indicator. This intentionally feels at home when launched from SteamOS while remaining visually distinct ChannelOS branding rather than a copy of Steam's interface.

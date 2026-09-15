@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("PySide6")
@@ -85,6 +87,16 @@ def test_interaction_patch_hides_duplicate_broadcaster_home_layer() -> None:
     patched._window.screen = "broadcaster"
     patched._sync_management_visibility()
     assert broadcaster.visible is True
+
+
+def test_screen_transition_sync_is_deferred_until_after_qml_input() -> None:
+    source = Path(__file__).resolve().parents[1] / "src" / "channelos" / "interaction.py"
+    text = source.read_text(encoding="utf-8")
+
+    assert "def _defer_ui_sync(self) -> None:" in text
+    assert "QTimer.singleShot(0, self._sync_management_visibility)" in text
+    assert "QTimer.singleShot(0, self._sync_focus_highlight)" in text
+    assert text.count("self._defer_ui_sync()") >= 3
 
 
 def test_interaction_patch_is_idempotent() -> None:

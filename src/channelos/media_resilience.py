@@ -208,6 +208,7 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
             super().__init__(*args, **kwargs)
             self._media_recovery_active = False
             self._pending_on_demand_media: IndexedMedia | None = None
+            self._temporarily_unavailable_roots: set[Path] = set()
 
         def _missing_media_target(self) -> tuple[IndexedMedia, str] | None:
             pending = self._pending_on_demand_media
@@ -236,6 +237,8 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
             if not root.exists():
                 # A disconnected removable/network source is temporary. Do not
                 # persist every row as offline merely because the mount is gone.
+                root = root.expanduser().resolve(strict=False)
+                self._temporarily_unavailable_roots.add(root)
                 logger.warning(
                     "Media source temporarily unavailable; excluding it from this runtime root=%s",
                     root,
@@ -480,6 +483,38 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
                 finally:
                     self._pending_on_demand_media = None
             return super().playLibraryIndex(selected)
+
+        @Slot()
+        def refresh(self) -> None:
+            super().refresh()
+            if self._media_recovery_active or not self._temporarily_unavailable_roots:
+                return
+
+            returned = {
+                root
+                for root in self._temporarily_unavailable_roots
+                if root.exists()
+            }
+            if not returned:
+                return
+
+            self._temporarily_unavailable_roots.difference_update(returned)
+            try:
+                self._reload_resilient_lineup(
+                    restore_if_active=bool(
+                        self._playback.get("active")
+                        or self._playback.get("temporaryUnavailable")
+                    ),
+                )
+                logger.info(
+                    "Restored media source(s) after they became available again: %s",
+                    ", ".join(str(root) for root in sorted(returned, key=str)),
+                )
+            except (ChannelRuntimeError, PlaybackError, ValueError):
+                self._temporarily_unavailable_roots.update(returned)
+                logger.exception(
+                    "Returned media source was detected but lineup restore could not complete"
+                )
 
         @Slot(object)
         def _on_library_scan_completed(self, summary) -> None:

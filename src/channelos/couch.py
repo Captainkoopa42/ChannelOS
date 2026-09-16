@@ -89,6 +89,7 @@ def run_couch(
         from .broadcaster_qt import run_qt
         from .display_mode import install_display_mode_support
         from .interaction import install_interaction_support
+        from .media_resilience import install_media_resilience_support
         from .vlc_probe import install_packaged_media_scan_support
     except (ImportError, OSError) as exc:
         raise CouchUIError(
@@ -98,6 +99,7 @@ def run_couch(
 
     install_display_mode_support(broadcaster_qt)
     install_packaged_media_scan_support(broadcaster_qt)
+    install_media_resilience_support(broadcaster_qt)
     install_interaction_support(broadcaster_qt)
     return run_qt(
         service,

@@ -718,6 +718,47 @@ class MediaLibrary:
             for row in rows
         ]
 
+    def online_locations_for_assets(
+        self,
+        asset_ids: Iterable[str],
+    ) -> dict[str, list[MediaLocation]]:
+        """Load candidate locations for many assets without per-asset queries."""
+
+        requested = tuple(
+            dict.fromkeys(str(asset_id) for asset_id in asset_ids if asset_id)
+        )
+        if not requested:
+            return {}
+
+        grouped: dict[str, list[MediaLocation]] = {}
+        with self.connect() as connection:
+            # Stay below SQLite builds that retain the traditional 999-variable
+            # limit while avoiding thousands of queries for a disconnected disk.
+            for offset in range(0, len(requested), 500):
+                batch = requested[offset : offset + 500]
+                placeholders = ", ".join("?" for _ in batch)
+                rows = connection.execute(
+                    f"""
+                    SELECT path, path_key, asset_id, source_root, online
+                    FROM media_locations
+                    WHERE online = 1 AND asset_id IN ({placeholders})
+                    ORDER BY asset_id, path_key
+                    """,
+                    batch,
+                ).fetchall()
+                for row in rows:
+                    asset_id = str(row["asset_id"])
+                    grouped.setdefault(asset_id, []).append(
+                        MediaLocation(
+                            path=Path(row["path"]),
+                            path_key=row["path_key"],
+                            asset_id=asset_id,
+                            source_root=Path(row["source_root"]),
+                            online=bool(row["online"]),
+                        )
+                    )
+        return grouped
+
     def count_assets(self) -> int:
         with self.connect() as connection:
             row = connection.execute("SELECT COUNT(*) AS n FROM media_assets").fetchone()

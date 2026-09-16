@@ -10,7 +10,12 @@ from PySide6.QtCore import Slot
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
 from .guide import GuideService
-from .library import IndexedMedia, MediaLibrary, normalize_path
+from .library import (
+    IndexedMedia,
+    MediaLibrary,
+    normalize_path,
+    path_key_is_within,
+)
 from .playback import PlaybackError
 from .resolve import ResolvedChannel, resolve_channel
 from .runtime import ChannelRuntime, ChannelRuntimeError, TelevisionRuntime
@@ -50,6 +55,7 @@ def _mark_location_offline(library: MediaLibrary, path: str | Path) -> bool:
 
 def _transient_available_media(
     resolved: ResolvedChannel,
+    library: MediaLibrary | None = None,
 ) -> tuple[IndexedMedia, ...]:
     """Exclude disconnected source roots without persisting them as deleted/offline.
 
@@ -59,7 +65,8 @@ def _transient_available_media(
     """
 
     root_available: dict[str, bool] = {}
-    selected: list[IndexedMedia] = []
+    selected: list[IndexedMedia | None] = []
+    unavailable: list[tuple[int, IndexedMedia]] = []
     for media in resolved.media:
         root = media.location.source_root
         _, root_key = normalize_path(root)
@@ -69,7 +76,36 @@ def _transient_available_media(
             root_available[root_key] = available
         if available:
             selected.append(media)
-    return tuple(selected)
+            continue
+        selected.append(None)
+        unavailable.append((len(selected) - 1, media))
+
+    if library is not None and unavailable:
+        source_keys = tuple(
+            normalize_path(source.path)[1]
+            for source in resolved.definition.sources
+        )
+        alternatives = library.online_locations_for_assets(
+            media.asset.asset_id for _, media in unavailable
+        )
+        for index, media in unavailable:
+            for location in alternatives.get(media.asset.asset_id, ()):
+                if not any(
+                    path_key_is_within(location.path_key, source_key)
+                    for source_key in source_keys
+                ):
+                    continue
+                alternate_root = location.source_root
+                _, alternate_root_key = normalize_path(alternate_root)
+                alternate_available = root_available.get(alternate_root_key)
+                if alternate_available is None:
+                    alternate_available = alternate_root.exists()
+                    root_available[alternate_root_key] = alternate_available
+                if alternate_available:
+                    selected[index] = replace(media, location=location)
+                    break
+
+    return tuple(media for media in selected if media is not None)
 
 
 def _degrade_calendar_for_available_media(
@@ -135,7 +171,7 @@ def _resolved_runtime(
     """Resolve one channel against media that is usable for this launch."""
 
     resolved = resolve_channel(definition, library)
-    available = _transient_available_media(resolved)
+    available = _transient_available_media(resolved, library)
     if not available:
         return None
 
@@ -143,7 +179,7 @@ def _resolved_runtime(
     resolved = _degrade_calendar_for_available_media(resolved)
 
     try:
-        return ChannelRuntime.open(resolved, store)
+        return ChannelRuntime.open(resolved, store, transient=True)
     except ChannelRuntimeError:
         # A temporarily smaller shuffle pool can invalidate a repeat-avoidance
         # promise even though the remaining media is perfectly playable. Relax
@@ -162,6 +198,7 @@ def _resolved_runtime(
         return ChannelRuntime.open(
             replace(resolved, definition=relaxed_definition),
             store,
+            transient=True,
         )
 
 
@@ -179,7 +216,7 @@ def _desired_asset_sets(controller: Any) -> dict[int, set[str]]:
     desired: dict[int, set[str]] = {}
     for record in controller._broadcaster.records:
         resolved = resolve_channel(record.definition, controller._library)
-        available = _transient_available_media(resolved)
+        available = _transient_available_media(resolved, controller._library)
         if available:
             desired[int(record.definition.channel)] = {
                 media.asset.asset_id for media in available
@@ -330,6 +367,21 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
 
             service = GuideService(tuple(runtimes))
             television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
+
+            # A legacy or partially-written runtime may still name a current
+            # channel without retaining its Viewer Clock. Normalize that state
+            # before the working decoder is retired so restoration cannot fail
+            # with "no channel is currently tuned".
+            if television.current_channel is not None:
+                try:
+                    television.status()
+                except ChannelRuntimeError:
+                    television.tune(
+                        television.current_channel,
+                        return_behavior="live",
+                    )
+                    prior_paused = False
+
             actions = CouchActions(service, television)
             actions.set_audio_output_device(
                 self._settings.audio_output_device_id or None
@@ -378,6 +430,7 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
                 if propagate_playback_error and isinstance(exc, PlaybackError):
                     raise
                 base_controller._publish_playback_failure(self, exc)
+                return False
             return True
 
         def _recover_on_demand_media(
@@ -498,20 +551,24 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
             if not returned:
                 return
 
-            self._temporarily_unavailable_roots.difference_update(returned)
             try:
-                self._reload_resilient_lineup(
+                restored = self._reload_resilient_lineup(
                     restore_if_active=bool(
                         self._playback.get("active")
                         or self._playback.get("temporaryUnavailable")
                     ),
                 )
+                if not restored:
+                    logger.warning(
+                        "Returned media source is visible but lineup restoration is still pending"
+                    )
+                    return
+                self._temporarily_unavailable_roots.difference_update(returned)
                 logger.info(
                     "Restored media source(s) after they became available again: %s",
                     ", ".join(str(root) for root in sorted(returned, key=str)),
                 )
             except (ChannelRuntimeError, PlaybackError, ValueError):
-                self._temporarily_unavailable_roots.update(returned)
                 logger.exception(
                     "Returned media source was detected but lineup restore could not complete"
                 )
@@ -522,15 +579,20 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
             if not _lineup_needs_refresh(self):
                 return
             try:
-                self._reload_resilient_lineup(
+                rebuilt = self._reload_resilient_lineup(
                     restore_if_active=bool(
                         self._playback.get("active")
                         or self._playback.get("temporaryUnavailable")
                     ),
                 )
-                logger.info(
-                    "Rebuilt television lineup after Library availability changed"
-                )
+                if rebuilt:
+                    logger.info(
+                        "Rebuilt television lineup after Library availability changed"
+                    )
+                else:
+                    logger.warning(
+                        "Library availability changed but no usable replacement lineup was ready"
+                    )
             except (ChannelRuntimeError, PlaybackError, ValueError):
                 # The successful Library scan remains authoritative even if an
                 # unrelated decoder/runtime problem prevents immediate reload.

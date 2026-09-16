@@ -7,9 +7,16 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from channelos.library import IndexedMedia, MediaAsset, MediaLocation, normalize_path
+from channelos.library import (
+    IndexedMedia,
+    MediaAsset,
+    MediaLibrary,
+    MediaLocation,
+    normalize_path,
+)
 from channelos.media_resilience import (
     _degrade_calendar_for_available_media,
+    _resolved_runtime,
     _transient_available_media,
     install_media_resilience_support,
 )
@@ -20,7 +27,18 @@ from channelos.models import (
     ProgrammingDefinition,
     SourceDefinition,
 )
-from channelos.resolve import ResolvedChannel
+from channelos.probe import MediaProbeResult
+from channelos.resolve import ResolvedChannel, resolve_channel
+from channelos.runtime import ChannelRuntime, RuntimeStore, TelevisionRuntime
+from channelos.scanner import MediaScanner
+
+
+class FixedProbe:
+    def probe(self, path: Path) -> MediaProbeResult:
+        return MediaProbeResult(
+            duration_seconds=30.0,
+            container_format=path.suffix.lstrip(".") or "mp4",
+        )
 
 
 def _media(root: Path, name: str, asset_id: str) -> IndexedMedia:
@@ -146,3 +164,149 @@ def test_media_resilience_installer_is_idempotent() -> None:
     install_media_resilience_support(FakeModule)
 
     assert FakeModule.BroadcasterCouchController is first
+
+
+@pytest.mark.parametrize("mode", ["sequential", "shuffle"])
+def test_transient_runtime_preserves_viewer_clock_and_saved_signature(
+    tmp_path: Path,
+    mode: str,
+) -> None:
+    connected = tmp_path / "connected"
+    removable = tmp_path / "removable"
+    connected.mkdir()
+    removable.mkdir()
+    (connected / "a.mp4").write_bytes(b"available")
+    (removable / "b.mp4").write_bytes(b"temporarily-disconnected")
+
+    library = MediaLibrary(tmp_path / "library.db")
+    scanner = MediaScanner(library, FixedProbe())
+    scanner.scan(connected)
+    scanner.scan(removable)
+    definition = ChannelDefinition(
+        schema_version="0.1",
+        channel=7,
+        name="Continuity",
+        sources=(SourceDefinition(path=connected), SourceDefinition(path=removable)),
+        programming=ProgrammingDefinition(mode=mode),
+    )
+    store = RuntimeStore(tmp_path / "runtime.db")
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+    original = ChannelRuntime.open(
+        resolve_channel(definition, library),
+        store,
+        now=epoch,
+    )
+    television = TelevisionRuntime((original,), store)
+    television.tune(7, now=epoch + timedelta(seconds=5))
+    television.pause(now=epoch + timedelta(seconds=10))
+    persisted_before = store.load_channel(7)
+    assert persisted_before is not None
+
+    parked = tmp_path / "removable-unplugged"
+    removable.rename(parked)
+    degraded = _resolved_runtime(definition, library, store)
+
+    assert degraded is not None
+    assert len(degraded.channel.media) == 1
+    assert degraded.channel.media[0].location.source_root == connected
+    restored = TelevisionRuntime((degraded,), store)
+    decision = restored.status(now=epoch + timedelta(seconds=30))
+    assert decision.channel_number == 7
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=10)
+    resumed = restored.play(now=epoch + timedelta(seconds=31))
+    assert resumed.channel_number == 7
+    assert resumed.viewer_time_utc == epoch + timedelta(seconds=10)
+    assert degraded.epoch_utc == original.epoch_utc
+    assert store.load_channel(7) == persisted_before
+
+    parked.rename(removable)
+    reconnected = _resolved_runtime(definition, library, store)
+    assert reconnected is not None
+    assert len(reconnected.channel.media) == 2
+    assert store.load_channel(7) == persisted_before
+
+
+def test_transient_runtime_uses_connected_duplicate_location(tmp_path: Path) -> None:
+    preferred = tmp_path / "a-preferred"
+    alternate = tmp_path / "b-alternate"
+    preferred.mkdir()
+    alternate.mkdir()
+    payload = b"same-owned-media"
+    (preferred / "episode.mp4").write_bytes(payload)
+    alternate_path = alternate / "episode-copy.mp4"
+    alternate_path.write_bytes(payload)
+
+    library = MediaLibrary(tmp_path / "library.db")
+    scanner = MediaScanner(library, FixedProbe())
+    scanner.scan(preferred)
+    scanner.scan(alternate)
+    definition = ChannelDefinition(
+        schema_version="0.1",
+        channel=8,
+        name="Duplicate fallback",
+        sources=(SourceDefinition(path=preferred), SourceDefinition(path=alternate)),
+        programming=ProgrammingDefinition(mode="sequential"),
+    )
+    preferred.rename(tmp_path / "a-preferred-unplugged")
+
+    runtime = _resolved_runtime(
+        definition,
+        library,
+        RuntimeStore(tmp_path / "runtime.db"),
+    )
+
+    assert runtime is not None
+    assert len(runtime.channel.media) == 1
+    assert runtime.channel.media[0].location.path == alternate_path
+
+
+def test_returned_source_stays_pending_when_lineup_restore_fails(
+    tmp_path: Path,
+) -> None:
+    class FakeController:
+        def __init__(self) -> None:
+            self._playback = {"temporaryUnavailable": True}
+            self.base_refresh_called = False
+
+        def refresh(self) -> None:
+            self.base_refresh_called = True
+
+    class FakeModule:
+        BroadcasterCouchController = FakeController
+
+    install_media_resilience_support(FakeModule)
+    controller = FakeModule.BroadcasterCouchController()
+    returned = tmp_path / "returned"
+    returned.mkdir()
+    controller._temporarily_unavailable_roots.add(returned)
+    controller._reload_resilient_lineup = lambda **_kwargs: False
+
+    controller.refresh()
+
+    assert controller.base_refresh_called
+    assert returned in controller._temporarily_unavailable_roots
+
+
+def test_returned_source_clears_after_successful_lineup_restore(
+    tmp_path: Path,
+) -> None:
+    class FakeController:
+        def __init__(self) -> None:
+            self._playback = {"temporaryUnavailable": True}
+
+        def refresh(self) -> None:
+            return None
+
+    class FakeModule:
+        BroadcasterCouchController = FakeController
+
+    install_media_resilience_support(FakeModule)
+    controller = FakeModule.BroadcasterCouchController()
+    returned = tmp_path / "returned"
+    returned.mkdir()
+    controller._temporarily_unavailable_roots.add(returned)
+    controller._reload_resilient_lineup = lambda **_kwargs: True
+
+    controller.refresh()
+
+    assert returned not in controller._temporarily_unavailable_roots

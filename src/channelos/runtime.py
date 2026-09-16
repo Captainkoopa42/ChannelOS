@@ -677,6 +677,28 @@ class RuntimeStore:
             epoch_utc=datetime_from_text(str(row["epoch_utc"])),
         )
 
+    def load_channel(self, channel_number: int) -> PersistedChannelRuntime | None:
+        """Load saved Broadcast Clock state without changing its signature.
+
+        Recovery runtimes use this to project a temporarily smaller media pool
+        against the existing clock. A disconnected drive must not look like a
+        permanent schedule edit, re-anchor the channel, or delete its viewer
+        continuity merely because the app rebuilt the in-memory lineup.
+        """
+
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM channel_runtime WHERE channel_number = ?",
+                (int(channel_number),),
+            ).fetchone()
+        if row is None:
+            return None
+        return PersistedChannelRuntime(
+            channel_number=int(row["channel_number"]),
+            schedule_signature=str(row["schedule_signature"]),
+            epoch_utc=datetime_from_text(str(row["epoch_utc"])),
+        )
+
     def save_viewer(self, channel_number: int, clock: ViewerClock, *, now: datetime | None = None) -> None:
         updated = require_aware_utc(now or utc_now())
         with self.connect() as connection:
@@ -905,6 +927,7 @@ class ChannelRuntime:
         store: RuntimeStore,
         *,
         now: datetime | None = None,
+        transient: bool = False,
     ) -> "ChannelRuntime":
         programming = channel.definition.programming
         if programming.mode == "sequential":
@@ -942,15 +965,21 @@ class ChannelRuntime:
                 )
 
         signature = schedule_signature(channel)
-        persisted = store.ensure_channel(
-            channel.definition.channel,
-            signature,
-            now=now,
-            # Calendar blocks already carry absolute UTC intent. Editing a
-            # future block must not restart today's filler cycle or erase the
-            # viewer's paused/behind-live position.
-            preserve_clock_on_change=(programming.mode == "calendar"),
+        persisted = (
+            store.load_channel(channel.definition.channel)
+            if transient
+            else None
         )
+        if persisted is None:
+            persisted = store.ensure_channel(
+                channel.definition.channel,
+                signature,
+                now=now,
+                # Calendar blocks already carry absolute UTC intent. Editing a
+                # future block must not restart today's filler cycle or erase the
+                # viewer's paused/behind-live position.
+                preserve_clock_on_change=(programming.mode == "calendar"),
+            )
         return cls(
             channel=channel,
             timeline=timeline,

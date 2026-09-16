@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -73,9 +74,7 @@ def test_calendar_degrades_missing_fixed_blocks_and_filler(tmp_path: Path) -> No
     available = _media(root, "available.mp4", "sha256:available")
 
     first = CalendarBlockDefinition(
-        start_utc=pytest.importorskip("datetime").datetime.now(
-            pytest.importorskip("datetime").timezone.utc
-        ),
+        start_utc=datetime.now(timezone.utc),
         asset_id="sha256:available",
         filler=CalendarFillerDefinition(
             mode="sequential",
@@ -83,7 +82,7 @@ def test_calendar_degrades_missing_fixed_blocks_and_filler(tmp_path: Path) -> No
         ),
     )
     second = CalendarBlockDefinition(
-        start_utc=first.start_utc.replace(year=first.start_utc.year + 1),
+        start_utc=first.start_utc + timedelta(days=1),
         asset_id="sha256:missing",
     )
     definition = ChannelDefinition(

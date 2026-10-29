@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from channelos.library import MediaLibrary
+from channelos.library import IndexedMedia, MediaAsset, MediaLocation, MediaLibrary
 from channelos.models import ChannelDefinition
 from channelos.probe import MediaProbeResult
 from channelos.resolve import ResolvedChannel, resolve_channel
@@ -600,3 +600,71 @@ def test_seek_cannot_fast_forward_past_live(tmp_path: Path) -> None:
 
     assert decision.is_live
     assert decision.viewer_time_utc == epoch + timedelta(seconds=20)
+
+
+
+@pytest.mark.parametrize("mode", ["sequential", "shuffle"])
+def test_ad_break_pauses_program_clock_and_recovers_committed_plan(
+    tmp_path: Path, mode: str
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    base = build_resolved_channel(tmp_path, [30.0, 30.0], channel_number=71)
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.4",
+            "channel": 71,
+            "name": "Ad-supported",
+            "sources": [{"path": str(source.path)} for source in base.definition.sources],
+            "advertising": {
+                "enabled": True,
+                "sources": [{"path": str(tmp_path / "ads")}],
+                "breakpoints_seconds": [10.0],
+                "break_duration_seconds": 5.0,
+            },
+            "programming": {"mode": mode},
+        }
+    )
+    ad_path = tmp_path / "ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:ad-spot", content_sha256="ad-spot", size_bytes=1,
+        duration_seconds=5.0, container_format="mp4",
+    )
+    ad_media = IndexedMedia(
+        ad_asset,
+        MediaLocation(
+            path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+            source_root=ad_path.parent, online=True,
+        ),
+    )
+    resolved = ResolvedChannel(definition, base.media, (ad_media,))
+    database = tmp_path / "ad-runtime.db"
+    store = RuntimeStore(database)
+    runtime = ChannelRuntime.open(resolved, store, now=epoch)
+
+    ad = runtime.broadcast_at(epoch + timedelta(seconds=12))
+    assert ad.origin == "advertisement"
+    assert ad.offset_seconds == pytest.approx(2.0)
+
+    resumed = runtime.broadcast_at(epoch + timedelta(seconds=15))
+    assert resumed.origin != "advertisement"
+    assert resumed.offset_seconds == pytest.approx(10.0)
+    assert resumed.program_started_at == epoch
+
+    plans = runtime.break_store.plans_for_channel(
+        71, start=epoch, end=epoch + timedelta(seconds=20)
+    )
+    assert len(plans) == 1
+    plan_id = plans[0].plan_id
+    runtime.break_store.close()
+
+    # A newly opened runtime reads the committed plan instead of reshuffling it.
+    recovered = ChannelRuntime.open(
+        resolved, RuntimeStore(database), now=epoch + timedelta(seconds=12)
+    )
+    recovered_ad = recovered.broadcast_at(epoch + timedelta(seconds=12))
+    assert recovered_ad.origin == "advertisement"
+    assert recovered.break_store.load_opportunity(plans[0].opportunity_id).plan_id == plan_id
+    assert recovered.break_store.record_aired(
+        plan_id, 0, ad_asset.asset_id, aired_at=epoch + timedelta(seconds=12)
+    ) is False
+    recovered.break_store.close()

@@ -33,6 +33,7 @@ class GuideProgram:
     is_current: bool
     is_past: bool
     is_future: bool
+    is_advertisement: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,13 @@ def _explanation(runtime: ChannelRuntime, selection: BroadcastSelection) -> tupl
     programming = runtime.channel.definition.programming
     position = selection.program.index + 1
     count = len(runtime.timeline.programs)
+    if selection.origin == "advertisement":
+        return (
+            f"Channel {runtime.channel_number}",
+            "advertisement break",
+            "committed ad event from the ChannelRuntime broadcast timeline",
+            f"asset {selection.media.asset.asset_id}",
+        )
     if programming.mode == "calendar":
         if selection.origin == "calendar":
             return (
@@ -135,6 +143,7 @@ def _program_from_selection(
         is_current=start <= reference < end,
         is_past=end <= reference,
         is_future=start > reference,
+        is_advertisement=selection.origin == "advertisement",
     )
 
 

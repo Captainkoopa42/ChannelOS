@@ -791,54 +791,126 @@ class BroadcasterService:
         else:
             ordered = resolved.media
 
+        # Existing fixed programs are occupied time, not disposable filler.
+        # Auto Fill only creates complete media blocks inside genuinely empty
+        # portions of the requested range. This prevents generated blocks from
+        # overlapping hand-authored programs and leaves ad/filler gaps intact.
+        occupied: list[tuple[datetime, datetime]] = []
+        raw_existing = raw.get("calendarBlocks", [])
+        if not isinstance(raw_existing, (list, tuple)):
+            raise ChannelValidationError("calendarBlocks must be a list")
+        duration_by_asset = {
+            item.asset.asset_id: float(item.asset.duration_seconds or 0.0)
+            for item in resolved.media
+        }
+        for block_index, existing in enumerate(raw_existing):
+            check_cancelled()
+            if not isinstance(existing, dict):
+                raise ChannelValidationError(
+                    f"calendarBlocks[{block_index}] must be a mapping"
+                )
+            existing_start = self._studio_timestamp(
+                existing.get("startUtc", ""), f"calendarBlocks[{block_index}].startUtc"
+            )
+            end_value = existing.get("endUtc")
+            if end_value:
+                existing_end = self._studio_timestamp(
+                    end_value, f"calendarBlocks[{block_index}].endUtc"
+                )
+            else:
+                asset_id = str(existing.get("assetId", "")).strip()
+                duration = duration_by_asset.get(asset_id, 0.0)
+                if duration <= 0:
+                    raise ChannelValidationError(
+                        f"calendarBlocks[{block_index}] has no valid end time or indexed duration"
+                    )
+                existing_end = existing_start + timedelta(seconds=duration)
+            if existing_end <= existing_start:
+                raise ChannelValidationError(
+                    f"calendarBlocks[{block_index}] ends before it starts"
+                )
+            if existing_start < end and existing_end > start:
+                occupied.append((max(start, existing_start), min(end, existing_end)))
+        occupied.sort(key=lambda interval: interval[0])
+        merged_occupied: list[tuple[datetime, datetime]] = []
+        for occupied_start, occupied_end in occupied:
+            if merged_occupied and occupied_start <= merged_occupied[-1][1]:
+                previous_start, previous_end = merged_occupied[-1]
+                merged_occupied[-1] = (
+                    previous_start, max(previous_end, occupied_end)
+                )
+            else:
+                merged_occupied.append((occupied_start, occupied_end))
+
         blocks: list[dict[str, Any]] = []
         cursor = start
         index = 0
         range_seconds = max(1, int((end - start).total_seconds()))
         last_percent = -1
         publish(0, range_seconds, "Building the editable schedule…")
-        while cursor < end and len(blocks) < 10000:
-            check_cancelled()
-            media = ordered[index % len(ordered)]
-            duration = float(media.asset.duration_seconds or 0.0)
-            if duration <= 0:
-                raise BroadcasterError(
-                    f"Auto Fill requires a positive duration for {media.location.path}"
+
+        def fill_gap(gap_end: datetime) -> None:
+            nonlocal cursor, index, last_percent
+            while cursor < gap_end and len(blocks) < 10000:
+                check_cancelled()
+                media = ordered[index % len(ordered)]
+                duration = float(media.asset.duration_seconds or 0.0)
+                if duration <= 0:
+                    raise BroadcasterError(
+                        f"Auto Fill requires a positive duration for {media.location.path}"
+                    )
+                block_end = cursor + timedelta(seconds=duration)
+                if block_end > gap_end:
+                    break
+                blocks.append(
+                    {
+                        "assetId": media.asset.asset_id,
+                        "title": media.location.path.stem,
+                        "path": str(media.location.path),
+                        "sourceRoot": str(media.location.source_root),
+                        "durationSeconds": duration,
+                        "startUtc": cursor.isoformat(),
+                        "endUtc": block_end.isoformat(),
+                    }
                 )
-            block_end = cursor + timedelta(seconds=duration)
-            if block_end > end:
+                cursor = block_end
+                index += 1
+                completed_seconds = min(
+                    range_seconds, int((cursor - start).total_seconds())
+                )
+                percent = int(completed_seconds * 100 / range_seconds)
+                if percent != last_percent:
+                    publish(
+                        completed_seconds, range_seconds,
+                        f"Scheduled {len(blocks)} program block(s)…",
+                    )
+                    last_percent = percent
+
+        for occupied_start, occupied_end in merged_occupied:
+            if cursor >= end or len(blocks) >= 10000:
                 break
-            blocks.append(
-                {
-                    "assetId": media.asset.asset_id,
-                    "title": media.location.path.stem,
-                    "path": str(media.location.path),
-                    "sourceRoot": str(media.location.source_root),
-                    "durationSeconds": duration,
-                    "startUtc": cursor.isoformat(),
-                    "endUtc": block_end.isoformat(),
-                }
-            )
-            cursor = block_end
-            index += 1
+            if occupied_start > cursor:
+                fill_gap(occupied_start)
+            cursor = max(cursor, occupied_end)
             completed_seconds = min(
-                range_seconds,
-                int((cursor - start).total_seconds()),
+                range_seconds, int((cursor - start).total_seconds())
             )
             percent = int(completed_seconds * 100 / range_seconds)
             if percent != last_percent:
                 publish(
-                    completed_seconds,
-                    range_seconds,
-                    f"Scheduled {len(blocks)} program block(s)…",
+                    completed_seconds, range_seconds,
+                    "Preserving existing scheduled programs…",
                 )
                 last_percent = percent
+        if cursor < end and len(blocks) < 10000:
+            fill_gap(end)
 
         check_cancelled()
         hit_limit = cursor < end and len(blocks) >= 10000
         message = (
-            f"Auto-filled {len(blocks)} editable program blocks from "
-            f"{start.date().isoformat()} through {end.date().isoformat()}; "
+            f"Auto-filled {len(blocks)} empty-gap program blocks from "
+            f"{start.date().isoformat()} through {end.date().isoformat()}, "
+            "preserving existing fixed programs; "
         )
         if hit_limit:
             message += (

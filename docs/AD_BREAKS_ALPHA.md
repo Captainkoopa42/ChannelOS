@@ -26,7 +26,7 @@ Ads are never trimmed in this alpha. If the remaining gap is too short for any u
 ## What is and is not implemented yet
 
 - Implemented: portable schema 0.4 settings, separate ad-folder resolution from normal program media, deterministic ad planning in bounded Calendar gaps, restart-stable selection for an unchanged lineup/library, and a Studio settings dialog.
-- Not yet implemented: mid-program/interval breakpoints, fades/crossfades, persisted historical rotation (such as least played), Smoosh/Expand policies, and Guide/HUD ad-break labels.
+- Not yet implemented: reusable ad profiles (these alpha settings are per-channel), mid-program/interval breakpoints, fades/crossfades, persisted historical rotation (such as least played), Smoosh/Expand policies, and Guide/HUD ad-break labels.
 - This version calculates a gap's plan from the currently indexed ad pool. Keep the same ad files and channel schedule when checking restart determinism.
 - Older channel schemas 0.1–0.3 remain supported and do not enable ads unless explicitly configured.
 

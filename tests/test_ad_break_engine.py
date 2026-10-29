@@ -66,3 +66,13 @@ def test_plan_commit_is_immutable_and_history_is_idempotent(tmp_path):
     assert not store.record_aired("plan-a", 0, "ad-a", aired_at=at + timedelta(seconds=1))
     assert store.play_counts() == {"ad-a": 1}
     store.close()
+
+def test_expand_uses_only_its_configured_borrow_limit():
+    engine = AdSelectionEngine()
+    candidates = (AdCandidate("ad-1", 110), AdCandidate("ad-2", 125))
+    within_limit = engine.select(candidates, 100, timing_policy="expand",
+                                 expand_max_seconds=15)
+    beyond_limit = engine.select(candidates, 100, timing_policy="expand",
+                                 expand_max_seconds=5)
+    assert sum(x.duration_seconds for x in within_limit) == 110
+    assert sum(x.duration_seconds for x in beyond_limit) == 0

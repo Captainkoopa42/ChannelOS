@@ -8,8 +8,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from .ad_breaks import plan_ad_break
 from .library import IndexedMedia
-from .models import CalendarBlockDefinition
+from .models import AdvertisingDefinition, CalendarBlockDefinition
 from .resolve import ResolvedChannel
 from .storage import (
     SQLITE_BUSY_TIMEOUT_MS,
@@ -163,9 +164,19 @@ class CalendarTimeline:
         calendar: tuple[CalendarBlockDefinition, ...],
         *,
         channel_number: int,
+        ad_media: tuple[IndexedMedia, ...] = (),
+        advertising: AdvertisingDefinition | None = None,
     ) -> None:
         self.filler = SequentialTimeline(filler_media)
         self.cycle_duration_seconds = self.filler.cycle_duration_seconds
+        self.ad_media = tuple(
+            item for item in ad_media
+            if item.asset.duration_seconds is not None
+            and float(item.asset.duration_seconds) > 0.0
+        )
+        self.advertising = advertising or AdvertisingDefinition()
+        self.channel_number = int(channel_number)
+        self._ad_plan_cache: dict[tuple[datetime, datetime], tuple] = {}
         by_asset = {item.asset.asset_id: item for item in media}
 
         programs: list[ScheduledProgram] = []
@@ -261,18 +272,69 @@ class CalendarTimeline:
             if previous_index >= 0
             else epoch_utc
         )
+        next_start = (
+            self._starts[insertion]
+            if insertion < len(self._starts)
+            else None
+        )
+
+        # Advertising is a separate media scope. It only fills a bounded
+        # calendar gap in this first integration slice; ordinary channel media
+        # remains the fallback for any time the ad pool cannot cover.
+        filler_anchor = gap_anchor
+        if (
+            self.advertising.enabled
+            and self.ad_media
+            and next_start is not None
+            and next_start > gap_anchor
+        ):
+            cache_key = (gap_anchor, next_start)
+            if cache_key not in self._ad_plan_cache:
+                self._ad_plan_cache[cache_key] = plan_ad_break(
+                    self.ad_media,
+                    (next_start - gap_anchor).total_seconds(),
+                    strategy=self.advertising.selection_strategy,
+                    seed=(
+                        f"channel:{self.channel_number}:"
+                        f"{gap_anchor.isoformat(timespec='microseconds')}:"
+                        f"{next_start.isoformat(timespec='microseconds')}"
+                    ),
+                )
+            ad_plan = self._ad_plan_cache[cache_key]
+            for ad_index, segment in enumerate(ad_plan):
+                segment_start = gap_anchor + timedelta(
+                    seconds=segment.start_offset_seconds
+                )
+                segment_end = segment_start + timedelta(
+                    seconds=segment.duration_seconds
+                )
+                if segment_start <= at_utc < segment_end:
+                    ad_program = ScheduledProgram(
+                        media=segment.media,
+                        index=len(self.programs) + ad_index,
+                        duration_seconds=segment.duration_seconds,
+                    )
+                    return BroadcastSelection(
+                        program=ad_program,
+                        offset_seconds=(at_utc - segment_start).total_seconds(),
+                        program_started_at=segment_start,
+                        program_ends_at=segment_end,
+                        cycle_index=previous_index,
+                        origin="advertisement",
+                    )
+            if ad_plan:
+                final_segment = ad_plan[-1]
+                filler_anchor = gap_anchor + timedelta(
+                    seconds=final_segment.end_offset_seconds
+                )
+
         filler_timeline = (
             self._gap_fillers[previous_index]
             if previous_index >= 0
             and self._gap_fillers[previous_index] is not None
             else self.filler
         )
-        filler = filler_timeline.selection_at(gap_anchor, at_utc)
-        next_start = (
-            self._starts[insertion]
-            if insertion < len(self._starts)
-            else None
-        )
+        filler = filler_timeline.selection_at(filler_anchor, at_utc)
         filler_end = filler.program_ends_at
         if next_start is not None and filler_end > next_start:
             filler_end = next_start
@@ -950,6 +1012,8 @@ class ChannelRuntime:
                 ordered_media,
                 programming.calendar,
                 channel_number=channel.definition.channel,
+                ad_media=channel.ad_media,
+                advertising=channel.definition.advertising,
             )
             if programming.filler_mode == "shuffle":
                 _validate_shuffle_repeat_window(

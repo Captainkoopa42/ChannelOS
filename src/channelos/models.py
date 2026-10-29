@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3"}
+SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3", "0.4"}
 SUPPORTED_PROGRAMMING_MODES = {"sequential", "shuffle", "calendar"}
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -15,6 +15,7 @@ TOP_LEVEL_KEYS = {
     "sources",
     "programming",
     "presentation",
+    "advertising",
 }
 
 
@@ -59,6 +60,15 @@ class PresentationDefinition:
 
 
 @dataclass(frozen=True, slots=True)
+class AdvertisingDefinition:
+    """Portable ad-break settings; ad roots remain separate from program roots."""
+
+    enabled: bool = False
+    sources: tuple[SourceDefinition, ...] = ()
+    selection_strategy: str = "best_fit"
+
+
+@dataclass(frozen=True, slots=True)
 class ChannelDefinition:
     schema_version: str
     channel: int
@@ -67,6 +77,7 @@ class ChannelDefinition:
     programming: ProgrammingDefinition
     description: str | None = None
     presentation: PresentationDefinition = PresentationDefinition()
+    advertising: AdvertisingDefinition = AdvertisingDefinition()
 
     @property
     def display_number(self) -> str:
@@ -113,6 +124,51 @@ class ChannelDefinition:
                 raise ChannelValidationError(f"sources[{index}].path must be a non-empty string")
             sources.append(SourceDefinition(path=Path(path_value)))
 
+        raw_advertising = raw.get("advertising", {})
+        if version != "0.4" and "advertising" in raw:
+            raise ChannelValidationError(
+                "advertising settings require schema_version '0.4'"
+            )
+        if not isinstance(raw_advertising, dict):
+            raise ChannelValidationError("advertising must be a mapping")
+        if set(raw_advertising) - {"enabled", "sources", "selection_strategy"}:
+            names = ", ".join(sorted(set(raw_advertising) - {"enabled", "sources", "selection_strategy"}))
+            raise ChannelValidationError(f"unknown advertising field(s): {names}")
+        ad_enabled = raw_advertising.get("enabled", False)
+        if not isinstance(ad_enabled, bool):
+            raise ChannelValidationError("advertising.enabled must be boolean")
+        ad_strategy = raw_advertising.get("selection_strategy", "best_fit")
+        if not isinstance(ad_strategy, str) or ad_strategy not in {"best_fit", "largest", "smallest", "sequential"}:
+            raise ChannelValidationError(
+                "advertising.selection_strategy must be best_fit, largest, smallest, or sequential"
+            )
+        raw_ad_sources = raw_advertising.get("sources", [])
+        if not isinstance(raw_ad_sources, list):
+            raise ChannelValidationError("advertising.sources must be a list")
+        ad_sources: list[SourceDefinition] = []
+        seen_ad_paths: set[str] = set()
+        for index, item in enumerate(raw_ad_sources):
+            if not isinstance(item, dict) or set(item) != {"path"}:
+                raise ChannelValidationError(
+                    f"advertising.sources[{index}] must contain exactly one 'path' field"
+                )
+            path_value = item["path"]
+            if not isinstance(path_value, str) or not path_value.strip():
+                raise ChannelValidationError(
+                    f"advertising.sources[{index}].path must be a non-empty string"
+                )
+            normalized_path = path_value.strip()
+            if normalized_path.casefold() in seen_ad_paths:
+                raise ChannelValidationError(
+                    f"advertising.sources contains duplicate path {normalized_path!r}"
+                )
+            seen_ad_paths.add(normalized_path.casefold())
+            ad_sources.append(SourceDefinition(path=Path(normalized_path)))
+        if ad_enabled and not ad_sources:
+            raise ChannelValidationError(
+                "advertising.sources must contain at least one indexed media folder when advertising is enabled"
+            )
+
         raw_programming = raw.get("programming")
         if not isinstance(raw_programming, dict):
             raise ChannelValidationError("programming must be a mapping")
@@ -122,7 +178,7 @@ class ChannelDefinition:
             "preserve_episode_order",
             "avoid_repeat_days",
         }
-        if version in {"0.2", "0.3"}:
+        if version in {"0.2", "0.3", "0.4"}:
             allowed_programming.update({"filler_mode", "calendar"})
         unknown_programming = set(raw_programming) - allowed_programming
         if unknown_programming:
@@ -133,6 +189,10 @@ class ChannelDefinition:
         if mode not in SUPPORTED_PROGRAMMING_MODES:
             raise ChannelValidationError(
                 f"programming.mode must be one of {sorted(SUPPORTED_PROGRAMMING_MODES)}"
+            )
+        if ad_enabled and mode != "calendar":
+            raise ChannelValidationError(
+                "advertising is currently supported only for calendar programming"
             )
         if version == "0.1" and mode == "calendar":
             raise ChannelValidationError(
@@ -177,7 +237,7 @@ class ChannelDefinition:
         seen_starts: set[datetime] = set()
         for index, item in enumerate(raw_calendar):
             allowed_block = {"start_utc", "asset_id"}
-            if version == "0.3":
+            if version in {"0.3", "0.4"}:
                 allowed_block.add("filler")
             if (
                 not isinstance(item, dict)
@@ -217,9 +277,9 @@ class ChannelDefinition:
             filler: CalendarFillerDefinition | None = None
             raw_filler = item.get("filler")
             if raw_filler is not None:
-                if version != "0.3":
+                if version not in {"0.3", "0.4"}:
                     raise ChannelValidationError(
-                        "show-specific filler requires schema_version '0.3'"
+                        "show-specific filler requires schema_version '0.3' or '0.4'"
                     )
                 if not isinstance(raw_filler, dict) or set(raw_filler) != {
                     "mode",
@@ -303,4 +363,9 @@ class ChannelDefinition:
                 calendar=tuple(calendar),
             ),
             presentation=PresentationDefinition(number_width=number_width),
+            advertising=AdvertisingDefinition(
+                enabled=ad_enabled,
+                sources=tuple(ad_sources),
+                selection_strategy=ad_strategy,
+            ),
         )

@@ -103,6 +103,15 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
             _calendar_block_mapping(block)
             for block in definition.programming.calendar
         ]
+    if definition.advertising.enabled or definition.advertising.sources:
+        mapping["advertising"] = {
+            "enabled": definition.advertising.enabled,
+            "sources": [
+                {"path": str(source.path)}
+                for source in definition.advertising.sources
+            ],
+            "selection_strategy": definition.advertising.selection_strategy,
+        }
     mapping["presentation"] = {
         "number_width": definition.presentation.number_width,
     }
@@ -189,9 +198,23 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
             }
         calendar.append(item)
 
+    raw_ad_sources = raw.get("adSources", [])
+    if not isinstance(raw_ad_sources, (list, tuple)):
+        raise ChannelValidationError("adSources must be a list")
+    ad_sources = [
+        {"path": str(path).strip()}
+        for path in raw_ad_sources
+        if str(path).strip()
+    ]
+    ad_enabled = bool(raw.get("adBreaksEnabled", False))
+    ad_strategy = str(raw.get("adSelectionStrategy", "best_fit")).strip().lower()
+    has_advertising = ad_enabled or bool(ad_sources)
+
     mapping = {
         "schema_version": (
-            "0.3"
+            "0.4"
+            if has_advertising
+            else "0.3"
             if mode == "calendar" and has_show_filler
             else "0.2"
             if mode == "calendar"
@@ -223,6 +246,12 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
             raw.get("fillerMode", "sequential")
         ).strip().lower()
         mapping["programming"]["calendar"] = calendar
+    if has_advertising:
+        mapping["advertising"] = {
+            "enabled": ad_enabled,
+            "sources": ad_sources,
+            "selection_strategy": ad_strategy,
+        }
     return ChannelDefinition.from_mapping(mapping)
 
 
@@ -613,6 +642,9 @@ class BroadcasterService:
                 "numberWidth": 3,
                 "fillerMode": "sequential",
                 "avoidRepeatDays": 0,
+                "adBreaksEnabled": False,
+                "adSources": [],
+                "adSelectionStrategy": "best_fit",
                 "sources": sources,
                 "calendarBlocks": [],
                 "media": media,
@@ -690,6 +722,9 @@ class BroadcasterService:
                 else definition.programming.mode
             ),
             "avoidRepeatDays": definition.programming.avoid_repeat_days,
+            "adBreaksEnabled": definition.advertising.enabled,
+            "adSources": [str(source.path) for source in definition.advertising.sources],
+            "adSelectionStrategy": definition.advertising.selection_strategy,
             "sources": [str(source.path) for source in definition.sources],
             "calendarBlocks": blocks,
             "media": list(media_by_id.values()),

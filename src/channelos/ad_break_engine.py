@@ -132,6 +132,16 @@ class PlannedSegment:
     duration_seconds: float
     trimmed_seconds: float = 0.0
 
+    def __post_init__(self) -> None:
+        values = (self.start_offset_seconds, self.source_offset_seconds,
+                  self.duration_seconds, self.trimmed_seconds)
+        if not self.asset_id or any(not math.isfinite(float(x)) for x in values):
+            raise ValueError("planned segment requires an ID and finite timing values")
+        if self.start_offset_seconds < 0 or self.source_offset_seconds < 0:
+            raise ValueError("planned segment offsets cannot be negative")
+        if self.duration_seconds <= 0 or self.trimmed_seconds < 0:
+            raise ValueError("planned segment duration must be positive and trim non-negative")
+
 
 @dataclass(frozen=True, slots=True)
 class BreakPlan:
@@ -144,6 +154,27 @@ class BreakPlan:
     segments: tuple[PlannedSegment, ...]
     strategy: str
     timing_policy: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "scheduled_at", _utc(self.scheduled_at))
+        if not self.plan_id or not self.opportunity_id or not self.occurrence_id:
+            raise ValueError("break plan, opportunity, and occurrence IDs are required")
+        if self.channel_number < 1:
+            raise ValueError("break plan channel number must be positive")
+        if not math.isfinite(float(self.reserved_seconds)) or self.reserved_seconds <= 0:
+            raise ValueError("reserved break duration must be finite and positive")
+        if self.strategy not in {"best_fit", "largest", "smallest", "sequential",
+                                 "least_played", "complete_rotation"}:
+            raise ValueError(f"unsupported plan strategy: {self.strategy}")
+        if self.timing_policy not in {"strict_fit", "smoosh", "expand"}:
+            raise ValueError(f"unsupported plan timing policy: {self.timing_policy}")
+        cursor = 0.0
+        for segment in self.segments:
+            if segment.start_offset_seconds < cursor - 0.001:
+                raise ValueError("planned ad segments cannot overlap or move backwards")
+            cursor = segment.start_offset_seconds + segment.duration_seconds
+        if cursor > self.reserved_seconds + 0.001:
+            raise ValueError("planned segments exceed the reserved break duration")
 
 
 class BreakOpportunityScheduler:

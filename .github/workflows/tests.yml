@@ -27,6 +27,11 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1
+
       - name: Install reference core and tests
         run: python -m pip install -e ".[dev,ui]"
 

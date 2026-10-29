@@ -66,6 +66,10 @@ class AdvertisingDefinition:
     enabled: bool = False
     sources: tuple[SourceDefinition, ...] = ()
     selection_strategy: str = "best_fit"
+    breakpoints_seconds: tuple[float, ...] = ()
+    interval_seconds: float | None = None
+    break_duration_seconds: float = 120.0
+    priority: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,17 +135,46 @@ class ChannelDefinition:
             )
         if not isinstance(raw_advertising, dict):
             raise ChannelValidationError("advertising must be a mapping")
-        if set(raw_advertising) - {"enabled", "sources", "selection_strategy"}:
-            names = ", ".join(sorted(set(raw_advertising) - {"enabled", "sources", "selection_strategy"}))
+        allowed_advertising = {
+            "enabled", "sources", "selection_strategy", "breakpoints_seconds",
+            "interval_seconds", "break_duration_seconds", "priority",
+        }
+        if set(raw_advertising) - allowed_advertising:
+            names = ", ".join(sorted(set(raw_advertising) - allowed_advertising))
             raise ChannelValidationError(f"unknown advertising field(s): {names}")
         ad_enabled = raw_advertising.get("enabled", False)
         if not isinstance(ad_enabled, bool):
             raise ChannelValidationError("advertising.enabled must be boolean")
         ad_strategy = raw_advertising.get("selection_strategy", "best_fit")
-        if not isinstance(ad_strategy, str) or ad_strategy not in {"best_fit", "largest", "smallest", "sequential"}:
-            raise ChannelValidationError(
-                "advertising.selection_strategy must be best_fit, largest, smallest, or sequential"
-            )
+        if not isinstance(ad_strategy, str) or ad_strategy not in {
+            "best_fit", "largest", "smallest", "sequential", "least_played", "complete_rotation"
+        }:
+            raise ChannelValidationError("advertising.selection_strategy is not supported")
+        raw_breakpoints = raw_advertising.get("breakpoints_seconds", [])
+        if not isinstance(raw_breakpoints, list):
+            raise ChannelValidationError("advertising.breakpoints_seconds must be a list")
+        try:
+            breakpoints = tuple(float(value) for value in raw_breakpoints)
+            interval_seconds = raw_advertising.get("interval_seconds")
+            interval_seconds = None if interval_seconds is None else float(interval_seconds)
+            break_duration_seconds = float(raw_advertising.get("break_duration_seconds", 120.0))
+        except (TypeError, ValueError) as exc:
+            raise ChannelValidationError("advertising timing values must be numeric") from exc
+        import math
+        timing_values = (*breakpoints, break_duration_seconds)
+        if interval_seconds is not None:
+            timing_values += (interval_seconds,)
+        if any(not math.isfinite(value) for value in timing_values):
+            raise ChannelValidationError("advertising timing values must be finite")
+        if any(value <= 0 for value in breakpoints) or len(set(breakpoints)) != len(breakpoints):
+            raise ChannelValidationError("advertising breakpoints must be unique positive offsets")
+        if interval_seconds is not None and interval_seconds <= 0:
+            raise ChannelValidationError("advertising.interval_seconds must be positive")
+        if break_duration_seconds <= 0:
+            raise ChannelValidationError("advertising.break_duration_seconds must be positive")
+        priority = raw_advertising.get("priority", 0)
+        if not isinstance(priority, int) or isinstance(priority, bool):
+            raise ChannelValidationError("advertising.priority must be an integer")
         raw_ad_sources = raw_advertising.get("sources", [])
         if not isinstance(raw_ad_sources, list):
             raise ChannelValidationError("advertising.sources must be a list")
@@ -367,5 +400,9 @@ class ChannelDefinition:
                 enabled=ad_enabled,
                 sources=tuple(ad_sources),
                 selection_strategy=ad_strategy,
+                breakpoints_seconds=breakpoints,
+                interval_seconds=interval_seconds,
+                break_duration_seconds=break_duration_seconds,
+                priority=priority,
             ),
         )

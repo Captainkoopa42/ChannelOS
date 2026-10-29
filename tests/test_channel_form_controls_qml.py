@@ -117,7 +117,7 @@ def test_focusable_form_controls_use_alpha_style_filled_focus(filename: str) -> 
             "ChannelStudioScreen.qml",
             {
                 "ChannelTextField": 8,
-                "ChannelComboBox": 6,
+                "ChannelComboBox": 7,
                 "ChannelSpinBox": 3,
                 "ChannelProgressBar": 1,
             },

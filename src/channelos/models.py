@@ -190,6 +190,10 @@ class ChannelDefinition:
             raise ChannelValidationError(
                 f"programming.mode must be one of {sorted(SUPPORTED_PROGRAMMING_MODES)}"
             )
+        if ad_enabled and mode != "calendar":
+            raise ChannelValidationError(
+                "advertising is currently supported only for calendar programming"
+            )
         if version == "0.1" and mode == "calendar":
             raise ChannelValidationError(
                 "calendar programming requires schema_version '0.2'"

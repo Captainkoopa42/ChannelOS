@@ -476,3 +476,74 @@ def test_studio_auto_fill_leaves_short_range_remainder_to_filler(tmp_path: Path)
         start + timedelta(seconds=60)
     ).isoformat()
     assert "filler covers any short remainder" in result["message"]
+
+
+def test_ad_break_policy_round_trips_through_portable_yaml(tmp_path: Path) -> None:
+    from channelos.models import ChannelDefinition
+
+    raw = {
+        "schema_version": "0.4",
+        "channel": 77,
+        "name": "Policy Test",
+        "sources": [{"path": str(tmp_path / "programs")}],
+        "programming": {
+            "mode": "calendar",
+            "calendar": [{
+                "start_utc": "2026-10-01T12:00:00+00:00",
+                "asset_id": "sha256:program",
+            }],
+        },
+        "advertising": {
+            "enabled": True,
+            "sources": [{"path": str(tmp_path / "ads")}],
+            "selection_strategy": "complete_rotation",
+            "breakpoints_seconds": [300, 900],
+            "interval_seconds": 600,
+            "break_duration_seconds": 45,
+            "priority": 8,
+        },
+    }
+    definition = ChannelDefinition.from_mapping(raw)
+    encoded = serialize_channel(definition)
+    restored = ChannelDefinition.from_mapping(
+        __import__("yaml").safe_load(encoded)
+    )
+    assert restored.advertising.breakpoints_seconds == (300.0, 900.0)
+    assert restored.advertising.interval_seconds == 600.0
+    assert restored.advertising.break_duration_seconds == 45.0
+    assert restored.advertising.priority == 8
+    assert restored.advertising.selection_strategy == "complete_rotation"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("interval_seconds", 0),
+    ("break_duration_seconds", float("inf")),
+    ("breakpoints_seconds", [30, 30]),
+    ("breakpoints_seconds", [-1]),
+    ("priority", 1.5),
+])
+def test_invalid_ad_break_policy_is_rejected(tmp_path: Path, field, value) -> None:
+    from channelos.models import ChannelDefinition, ChannelValidationError
+
+    advertising = {
+        "enabled": True,
+        "sources": [{"path": str(tmp_path / "ads")}],
+        "breakpoints_seconds": [],
+    }
+    advertising[field] = value
+    raw = {
+        "schema_version": "0.4",
+        "channel": 78,
+        "name": "Invalid Policy",
+        "sources": [{"path": str(tmp_path / "programs")}],
+        "programming": {
+            "mode": "calendar",
+            "calendar": [{
+                "start_utc": "2026-10-01T12:00:00+00:00",
+                "asset_id": "sha256:program",
+            }],
+        },
+        "advertising": advertising,
+    }
+    with pytest.raises(ChannelValidationError):
+        ChannelDefinition.from_mapping(raw)

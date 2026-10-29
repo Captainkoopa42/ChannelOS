@@ -1114,14 +1114,11 @@ Item {
             pendingScheduleOperation = ""
             return
         }
+        // Auto Fill now returns only empty-gap blocks. Keep every existing
+        // fixed program, including those inside the selected range.
         var replacement = []
-        for (var index = 0; index < calendarBlocks.count; ++index) {
-            var existing = calendarBlocks.get(index)
-            var blockMs = new Date(existing.startUtc).getTime()
-            var blockEndMs = new Date(existing.endUtc).getTime()
-            if (!(blockMs < endMs && blockEndMs > startMs))
-                replacement.push(blockObject(existing))
-        }
+        for (var index = 0; index < calendarBlocks.count; ++index)
+            replacement.push(blockObject(calendarBlocks.get(index)))
         var blocks = result.blocks || []
         if (typeof blocks.length !== "number"
                 || replacement.length + blocks.length > maximumCalendarBlocks) {
@@ -1136,6 +1133,19 @@ Item {
             return new Date(left.startUtc).getTime()
                     - new Date(right.startUtc).getTime()
         })
+        // Reject a malformed result rather than ever publishing overlapping
+        // fixed blocks to the detached Studio draft.
+        for (var checkIndex = 1; checkIndex < replacement.length; ++checkIndex) {
+            var previousEnd = new Date(replacement[checkIndex - 1].endUtc).getTime()
+            var currentStart = new Date(replacement[checkIndex].startUtc).getTime()
+            if (!isFinite(previousEnd) || !isFinite(currentStart)
+                    || currentStart < previousEnd) {
+                feedbackMessage = "Auto Fill detected an existing schedule overlap. No draft changes were made."
+                feedbackIsError = true
+                pendingScheduleOperation = ""
+                return
+            }
+        }
 
         // ListModel insertion is intentionally chunked. A two-month range can
         // contain thousands of short clips, and appending them in one JavaScript

@@ -1104,6 +1104,16 @@ class ChannelRuntime:
             selection.program_started_at, selection.program_ends_at,
         )
         opportunities = BreakOpportunityScheduler.for_occurrence(occurrence, policy)
+        earlier_plans = self.break_store.plans_for_channel(
+            self.channel_number, start=self.epoch_utc,
+            end=at + timedelta(microseconds=1),
+        )
+        prior_occurrence_duration = sum(
+            self._plan_duration(plan)
+            for plan in earlier_plans
+            if plan.occurrence_id != occurrence_id
+            and plan.scheduled_at < at
+        )
         candidates = tuple(
             AdCandidate(item.asset.asset_id, float(item.asset.duration_seconds))
             for item in self.channel.ad_media
@@ -1136,9 +1146,10 @@ class ChannelRuntime:
                     channel_number=self.channel_number,
                     scheduled_at=(
                         selection.program_started_at
-                        + timedelta(seconds=opportunity.scheduled_at.__sub__(
-                            selection.program_started_at
-                        ).total_seconds() + prior_duration)
+                        + timedelta(seconds=(
+                            (opportunity.scheduled_at - selection.program_started_at).total_seconds()
+                            + prior_occurrence_duration + prior_duration
+                        ))
                     ),
                     reserved_seconds=opportunity.duration_seconds,
                     segments=tuple(planned),
@@ -1160,6 +1171,7 @@ class ChannelRuntime:
         # consumed by previously committed breaks. Repeating this projection
         # handles a break that pushes the next program across its original boundary.
         content_time = instant
+        elapsed_before = 0.0
         for _ in range(4):
             base = self.timeline.selection_at(self.epoch_utc, content_time)
             plans = self._ensure_occurrence_plans(base, instant)
@@ -1219,7 +1231,18 @@ class ChannelRuntime:
                 break
             content_time = next_content_time
 
-        return self.timeline.selection_at(self.epoch_utc, content_time)
+        selection = self.timeline.selection_at(self.epoch_utc, content_time)
+        if elapsed_before:
+            shift = timedelta(seconds=elapsed_before)
+            selection = BroadcastSelection(
+                selection.program,
+                selection.offset_seconds,
+                selection.program_started_at + shift,
+                selection.program_ends_at + shift,
+                selection.cycle_index,
+                selection.origin,
+            )
+        return selection
 
     def broadcast_at(self, at: datetime | None = None) -> BroadcastSelection:
         return self._selection_at(at or utc_now())

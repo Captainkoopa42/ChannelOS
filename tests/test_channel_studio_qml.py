@@ -39,7 +39,7 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
     assert "DropArea" in qml
     assert 'Drag.keys: ["channelos-media"]' in qml
     assert 'Drag.keys: ["channelos-block"]' in qml
-    assert 'text: "15-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"' in qml
+    assert 'text: studioRoot.snapMinutes + "-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"' in qml
     assert 'text: "−15 min"' in qml
     assert 'text: "+15 min"' in qml
     assert 'placeholderText: "HH:MM"' in qml

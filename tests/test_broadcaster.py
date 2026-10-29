@@ -275,6 +275,35 @@ def test_studio_auto_fill_returns_editable_gapless_blocks(tmp_path: Path) -> Non
         assert left["endUtc"] == right["startUtc"]
 
 
+def test_studio_auto_fill_preserves_existing_blocks_and_fills_only_gaps(
+    tmp_path: Path,
+) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source, name="Studio TV")
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    raw["calendarBlocks"] = [
+        {
+            "assetId": library.list_online_media()[0].asset.asset_id,
+            "startUtc": (start + timedelta(seconds=60)).isoformat(),
+            "endUtc": (start + timedelta(seconds=90)).isoformat(),
+        }
+    ]
+
+    result = service.auto_fill_studio(
+        raw, start.isoformat(), (start + timedelta(seconds=180)).isoformat()
+    )
+
+    assert len(result["blocks"]) == 5
+    occupied_start = start + timedelta(seconds=60)
+    occupied_end = start + timedelta(seconds=90)
+    for block in result["blocks"]:
+        block_start = datetime.fromisoformat(block["startUtc"])
+        block_end = datetime.fromisoformat(block["endUtc"])
+        assert block_end <= occupied_start or block_start >= occupied_end
+    assert "preserving existing fixed programs" in result["message"]
+
+
 def test_studio_auto_fill_reports_progress_and_can_cancel_safely(
     tmp_path: Path,
 ) -> None:

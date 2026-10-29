@@ -272,7 +272,7 @@ Item {
             sources: sources,
             calendarBlocks: blocks,
             adBreaksEnabled: adBreaksEnabledCheck.checked,
-            adSources: adSourcesArea.text.split("\n").map(function(value) {
+            adSources: adSourcesArea.text.split(";").map(function(value) {
                 return value.trim()
             }).filter(function(value) { return value.length > 0 }),
             adSelectionStrategy: ["best_fit", "largest", "smallest", "sequential"][adStrategyBox.currentIndex]
@@ -441,7 +441,7 @@ Item {
                 ? 1 : 0
         repeatDays.value = Number(draftData.avoidRepeatDays || 0)
         adBreaksEnabledCheck.checked = Boolean(draftData.adBreaksEnabled || false)
-        adSourcesArea.text = (draftData.adSources || []).join("\n")
+        adSourcesArea.text = (draftData.adSources || []).join("; ")
         var adStrategy = String(draftData.adSelectionStrategy || "best_fit")
         adStrategyBox.currentIndex = Math.max(0, ["best_fit", "largest", "smallest", "sequential"].indexOf(adStrategy))
 
@@ -2887,11 +2887,10 @@ Item {
         contentItem: ColumnLayout {
             spacing: 12
 
-            CheckBox {
+            ChannelCheckBox {
                 id: adBreaksEnabledCheck
                 text: "Enable ads in calendar gaps"
                 checked: false
-                palette.text: studioRoot.textPrimary
             }
 
             Text {
@@ -2903,26 +2902,16 @@ Item {
             }
 
             Label {
-                text: "Ad source folders — one indexed Library folder per line"
+                text: "Ad source folders — separate indexed paths with semicolons"
                 color: studioRoot.textPrimary
                 font.pixelSize: 12
             }
 
-            TextArea {
+            ChannelTextField {
                 id: adSourcesArea
                 Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.minimumHeight: 110
-                placeholderText: "C:/Media/Advertisements\nD:/ChannelOS/Ads"
-                wrapMode: TextEdit.NoWrap
+                placeholderText: "C:/Media/Advertisements; D:/ChannelOS/Ads"
                 selectByMouse: true
-                color: studioRoot.textPrimary
-                placeholderTextColor: studioRoot.textSecondary
-                background: Rectangle {
-                    color: studioRoot.panel
-                    border.color: studioRoot.line
-                    radius: 6
-                }
             }
 
             RowLayout {
@@ -2931,7 +2920,7 @@ Item {
                     text: "Selection strategy"
                     color: studioRoot.textPrimary
                 }
-                ComboBox {
+                ChannelComboBox {
                     id: adStrategyBox
                     Layout.preferredWidth: 190
                     model: ["Best Fit", "Largest", "Smallest", "Sequential"]

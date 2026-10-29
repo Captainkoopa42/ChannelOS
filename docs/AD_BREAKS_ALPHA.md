@@ -8,7 +8,7 @@ This branch adds the first end-to-end advertisement path for fixed Calendar chan
 2. Open Channel Studio and edit a channel that uses fixed calendar blocks.
 3. Click Ad Breaks in the calendar toolbar.
 4. Enable Enable ads in calendar gaps.
-5. Paste the full path of each ad folder into the source box, one folder per line. These paths are kept separate from the channel's ordinary program sources.
+5. Paste the full path of each ad folder into the source box, separate paths with semicolons. These paths are kept separate from the channel's ordinary program sources.
 6. Choose a selection strategy and click Apply to Draft.
 7. Save/apply the channel, and make sure there is a gap between one fixed program's end and the next program's start. Tune to the channel during that gap.
 

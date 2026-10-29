@@ -446,6 +446,16 @@ def schedule_signature(channel: ResolvedChannel) -> str:
                 for item in signature_media
             ],
         }
+        if channel.definition.advertising.enabled:
+            advertising = channel.definition.advertising
+            payload["advertising"] = {
+                "enabled": True,
+                "strategy": advertising.selection_strategy,
+                "breakpoints_seconds": list(advertising.breakpoints_seconds),
+                "interval_seconds": advertising.interval_seconds,
+                "break_duration_seconds": advertising.break_duration_seconds,
+                "ad_assets": sorted(item.asset.asset_id for item in channel.ad_media),
+            }
         encoded = json.dumps(
             payload,
             sort_keys=True,
@@ -479,6 +489,16 @@ def schedule_signature(channel: ResolvedChannel) -> str:
             for item in signature_media
         ],
     }
+    if channel.definition.advertising.enabled:
+        advertising = channel.definition.advertising
+        payload["advertising"] = {
+            "enabled": True,
+            "strategy": advertising.selection_strategy,
+            "breakpoints_seconds": list(advertising.breakpoints_seconds),
+            "interval_seconds": advertising.interval_seconds,
+            "break_duration_seconds": advertising.break_duration_seconds,
+            "ad_assets": sorted(item.asset.asset_id for item in channel.ad_media),
+        }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 

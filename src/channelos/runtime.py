@@ -1233,12 +1233,30 @@ class ChannelRuntime:
 
         selection = self.timeline.selection_at(self.epoch_utc, content_time)
         if elapsed_before:
-            shift = timedelta(seconds=elapsed_before)
+            occurrence_id = hashlib.sha256(
+                "|".join((
+                    str(self.channel_number), self.signature,
+                    selection.media.asset.asset_id,
+                    selection.program_started_at.isoformat(timespec="microseconds"),
+                )).encode("utf-8")
+            ).hexdigest()
+            persisted = self.break_store.plans_for_channel(
+                self.channel_number, start=self.epoch_utc,
+                end=instant + timedelta(microseconds=1),
+            )
+            start_shift = sum(
+                self._plan_duration(plan)
+                for plan in persisted
+                if plan.occurrence_id != occurrence_id
+                and plan.scheduled_at + timedelta(
+                    seconds=self._plan_duration(plan)
+                ) <= instant
+            )
             selection = BroadcastSelection(
                 selection.program,
                 selection.offset_seconds,
-                selection.program_started_at + shift,
-                selection.program_ends_at + shift,
+                selection.program_started_at + timedelta(seconds=start_shift),
+                selection.program_ends_at + timedelta(seconds=elapsed_before),
                 selection.cycle_index,
                 selection.origin,
             )

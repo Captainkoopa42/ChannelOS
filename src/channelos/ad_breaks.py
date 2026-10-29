@@ -111,6 +111,27 @@ def plan_ad_break(
                     item.asset.asset_id,
                 ),
             )
+        elif strategy == "best_fit":
+            # One-step lookahead can find common combinations such as 60+40
+            # in a 100-second gap even when a 70-second ad is also available.
+            def remainder_after_pair(item: IndexedMedia) -> tuple[float, float, bytes, str]:
+                after_first = remaining - float(item.asset.duration_seconds or 0.0)
+                next_fits = [
+                    other for other in remaining_items
+                    if other is not item
+                    and float(other.asset.duration_seconds or 0.0) <= after_first + 0.001
+                ]
+                after_second = (
+                    min(after_first - float(other.asset.duration_seconds or 0.0) for other in next_fits)
+                    if next_fits else after_first
+                )
+                return (
+                    max(0.0, after_second),
+                    -float(item.asset.duration_seconds or 0.0),
+                    _stable_key(item.asset.asset_id, seed),
+                    item.asset.asset_id,
+                )
+            selected = min(fitting, key=remainder_after_pair)
         else:
             selected = max(
                 fitting,

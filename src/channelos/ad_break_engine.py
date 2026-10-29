@@ -142,19 +142,20 @@ class BreakOpportunityScheduler:
     ) -> tuple[BreakOpportunity, ...]:
         if not policy.enabled:
             return ()
-        offsets: list[tuple[float, Trigger]] = [
-            (point, "breakpoint") for point in policy.breakpoints_seconds
+        offsets: dict[float, Trigger] = {
+            float(point): "breakpoint" for point in policy.breakpoints_seconds
             if point < (occurrence.ends_at - occurrence.starts_at).total_seconds()
-        ]
+        }
         if policy.interval_seconds is not None:
             step = policy.interval_seconds
             offset = step
             duration = (occurrence.ends_at - occurrence.starts_at).total_seconds()
             while offset < duration:
-                offsets.append((offset, "interval"))
+                # Explicit breakpoints win when they coincide with intervals.
+                offsets.setdefault(float(offset), "interval")
                 offset += step
         result = []
-        for offset, trigger in sorted(set(offsets)):
+        for offset, trigger in sorted(offsets.items()):
             at = occurrence.starts_at + timedelta(seconds=offset)
             identity = _stable(occurrence.occurrence_id, trigger, f"{offset:.6f}")
             result.append(BreakOpportunity(

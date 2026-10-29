@@ -118,6 +118,7 @@ Item {
     property var groupsLibrary: draftData.groups || []
     property var blocksByDay: ({})
     property string viewMode: "week"
+    property int snapMinutes: 15
     property bool dayMediaBinVisible: false
     property date anchorDate: new Date()
     property string selectedDayKey: dayKey(new Date())
@@ -644,7 +645,9 @@ Item {
 
     function minuteForTrackPosition(position, trackWidth) {
         var raw = Number(position) / Math.max(1, Number(trackWidth)) * 1440
-        return Math.max(0, Math.min(1425, Math.round(raw / 15) * 15))
+        var step = Math.max(1, Number(snapMinutes))
+        return Math.max(0, Math.min(1440 - step,
+                                    Math.round(raw / step) * step))
     }
 
     function scrollDayToHour(hour) {
@@ -1679,6 +1682,14 @@ Item {
 
                     StudioButton { text: "‹"; onClicked: studioRoot.navigateRange(-1) }
                     StudioButton { text: "Today"; onClicked: studioRoot.goToday() }
+                    Label { text: "SNAP"; color: studioRoot.textSecondary; font.pixelSize: 10 }
+                    ChannelComboBox {
+                        id: snapIntervalBox
+                        Layout.preferredWidth: 92
+                        model: ["5 min", "10 min", "15 min", "30 min"]
+                        currentIndex: 2
+                        onActivated: studioRoot.snapMinutes = [5, 10, 15, 30][currentIndex]
+                    }
                     StudioButton { text: "›"; onClicked: studioRoot.navigateRange(1) }
 
                     Text {
@@ -2238,7 +2249,7 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "15-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"
+                                text: studioRoot.snapMinutes + "-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"
                                 color: studioRoot.textSecondary
                                 font.pixelSize: 10
                                 horizontalAlignment: Text.AlignHCenter
@@ -2288,14 +2299,14 @@ Item {
                         onClicked: programGroupDialog.open()
                     }
                     StudioButton {
-                        text: "−15 min"
+                        text: "−" + studioRoot.snapMinutes + " min"
                         enabled: studioRoot.selectedBlockIndex >= 0
-                        onClicked: studioRoot.nudgeSelected(-900)
+                        onClicked: studioRoot.nudgeSelected(-studioRoot.snapMinutes * 60)
                     }
                     StudioButton {
-                        text: "+15 min"
+                        text: "+" + studioRoot.snapMinutes + " min"
                         enabled: studioRoot.selectedBlockIndex >= 0
-                        onClicked: studioRoot.nudgeSelected(900)
+                        onClicked: studioRoot.nudgeSelected(studioRoot.snapMinutes * 60)
                     }
                     ChannelTextField {
                         id: exactTimeField

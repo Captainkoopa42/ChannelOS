@@ -468,19 +468,23 @@ class BreakPlanStore:
         start_utc, end_utc = _utc(start), _utc(end)
         if end_utc <= start_utc:
             raise ValueError("plan query end must follow start")
+        # Compare parsed UTC instants in Python. SQLite's datetime() emits
+        # a space-separated timestamp while stored values use ISO's "T";
+        # lexicographic comparison across those formats is not chronologically safe.
         rows = self.connection.execute("""
             SELECT plan_id FROM ad_break_plans
             WHERE channel_number = ?
-              AND scheduled_at < ?
-              AND datetime(scheduled_at, '+' || reserved_seconds || ' seconds') > ?
             ORDER BY scheduled_at, plan_id
-        """, (
-            int(channel_number), end_utc.isoformat(), start_utc.isoformat(),
-        )).fetchall()
-        return tuple(
-            plan for row in rows
-            if (plan := self.load_plan(str(row[0]))) is not None
-        )
+        """, (int(channel_number),)).fetchall()
+        matches = []
+        for row in rows:
+            plan = self.load_plan(str(row[0]))
+            if plan is None:
+                continue
+            plan_end = plan.scheduled_at + timedelta(seconds=plan.reserved_seconds)
+            if plan.scheduled_at < end_utc and plan_end > start_utc:
+                matches.append(plan)
+        return tuple(matches)
 
     def active_plan_at(
         self, channel_number: int, at: datetime

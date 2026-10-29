@@ -2882,7 +2882,26 @@ Item {
         height: Math.min(studioRoot.height - 40, 520)
         x: Math.max(20, (studioRoot.width - width) / 2)
         y: Math.max(20, (studioRoot.height - height) / 2)
-        onAccepted: studioRoot.dirty = true
+        property bool savedAdEnabled: false
+        property string savedAdSources: ""
+        property int savedAdStrategy: 0
+
+        onOpened: {
+            savedAdEnabled = adBreaksEnabledCheck.checked
+            savedAdSources = adSourcesArea.text
+            savedAdStrategy = adStrategyBox.currentIndex
+        }
+        onAccepted: {
+            studioRoot.dirty = true
+            savedAdEnabled = adBreaksEnabledCheck.checked
+            savedAdSources = adSourcesArea.text
+            savedAdStrategy = adStrategyBox.currentIndex
+        }
+        onRejected: {
+            adBreaksEnabledCheck.checked = savedAdEnabled
+            adSourcesArea.text = savedAdSources
+            adStrategyBox.currentIndex = savedAdStrategy
+        }
 
         contentItem: ColumnLayout {
             spacing: 12

@@ -143,3 +143,37 @@ def test_planned_segment_rejects_non_finite_offsets():
         pass
     else:
         raise AssertionError("non-finite segment offsets must be rejected")
+
+
+def test_committed_plan_and_airing_ledger_survive_store_reopen(tmp_path):
+    database = tmp_path / "shared-runtime.db"
+    at = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    plan = BreakPlan(
+        "plan-recovery", "opp-recovery", "occ-recovery", 7, at, 40,
+        (
+            PlannedSegment("ad-a", 0, 0, 20),
+            PlannedSegment("ad-b", 20, 0, 20),
+        ),
+        "complete_rotation", "strict_fit",
+    )
+    first = BreakPlanStore(database)
+    assert first.commit(plan) == plan
+    assert first.record_aired("plan-recovery", 0, "ad-a", aired_at=at)
+    first.close()
+
+    recovered = BreakPlanStore(database)
+    assert recovered.load_opportunity("opp-recovery") == plan
+    assert recovered.load_plan("plan-recovery") == plan
+    assert recovered.aired_segments("plan-recovery") == (
+        (0, "ad-a", at),
+    )
+    assert recovered.play_counts() == {"ad-a": 1}
+    recovered.close()
+
+
+def test_unknown_plan_recovery_returns_none(tmp_path):
+    store = BreakPlanStore(tmp_path / "empty.db")
+    assert store.load_opportunity("missing") is None
+    assert store.load_plan("missing") is None
+    assert store.aired_segments("missing") == ()
+    store.close()

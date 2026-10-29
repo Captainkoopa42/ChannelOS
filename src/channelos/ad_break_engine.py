@@ -428,3 +428,43 @@ class BreakPlanStore:
             SELECT asset_id, COUNT(*) FROM ad_break_history GROUP BY asset_id
         """).fetchall()
         return {str(asset): int(count) for asset, count in rows}
+
+    def load_opportunity(self, opportunity_id: str) -> BreakPlan | None:
+        """Recover the immutable committed plan for an opportunity after restart."""
+        row = self.connection.execute("""
+            SELECT plan_id, opportunity_id, occurrence_id, channel_number,
+                   scheduled_at, reserved_seconds, strategy, timing_policy, payload
+            FROM ad_break_plans WHERE opportunity_id = ?
+        """, (str(opportunity_id),)).fetchone()
+        if row is None:
+            return None
+        return BreakPlan(
+            str(row[0]), str(row[1]), str(row[2]), int(row[3]),
+            datetime.fromisoformat(str(row[4])), float(row[5]),
+            tuple(PlannedSegment(**item) for item in json.loads(row[8])),
+            str(row[6]), str(row[7]),
+        )
+
+    def load_plan(self, plan_id: str) -> BreakPlan | None:
+        """Recover a plan by its stable plan ID."""
+        row = self.connection.execute("""
+            SELECT opportunity_id FROM ad_break_plans WHERE plan_id = ?
+        """, (str(plan_id),)).fetchone()
+        return None if row is None else self.load_opportunity(str(
+            self.connection.execute(
+                "SELECT opportunity_id FROM ad_break_plans WHERE plan_id = ?",
+                (str(plan_id),),
+            ).fetchone()[0]
+        ))
+
+    def aired_segments(self, plan_id: str) -> tuple[tuple[int, str, datetime], ...]:
+        """Return the durable airing ledger for a plan in segment order."""
+        rows = self.connection.execute("""
+            SELECT segment_index, asset_id, aired_at
+            FROM ad_break_history WHERE plan_id = ?
+            ORDER BY segment_index
+        """, (str(plan_id),)).fetchall()
+        return tuple(
+            (int(index), str(asset_id), _utc(datetime.fromisoformat(str(aired_at))))
+            for index, asset_id, aired_at in rows
+        )

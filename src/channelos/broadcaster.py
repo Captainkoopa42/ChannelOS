@@ -111,6 +111,10 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
                 for source in definition.advertising.sources
             ],
             "selection_strategy": definition.advertising.selection_strategy,
+            "breakpoints_seconds": list(definition.advertising.breakpoints_seconds),
+            "interval_seconds": definition.advertising.interval_seconds,
+            "break_duration_seconds": definition.advertising.break_duration_seconds,
+            "priority": definition.advertising.priority,
         }
     mapping["presentation"] = {
         "number_width": definition.presentation.number_width,

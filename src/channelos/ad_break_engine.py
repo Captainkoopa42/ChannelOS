@@ -448,14 +448,57 @@ class BreakPlanStore:
     def load_plan(self, plan_id: str) -> BreakPlan | None:
         """Recover a plan by its stable plan ID."""
         row = self.connection.execute("""
-            SELECT opportunity_id FROM ad_break_plans WHERE plan_id = ?
+            SELECT plan_id, opportunity_id, occurrence_id, channel_number,
+                   scheduled_at, reserved_seconds, strategy, timing_policy, payload
+            FROM ad_break_plans WHERE plan_id = ?
         """, (str(plan_id),)).fetchone()
-        return None if row is None else self.load_opportunity(str(
-            self.connection.execute(
-                "SELECT opportunity_id FROM ad_break_plans WHERE plan_id = ?",
-                (str(plan_id),),
-            ).fetchone()[0]
-        ))
+        if row is None:
+            return None
+        return BreakPlan(
+            str(row[0]), str(row[1]), str(row[2]), int(row[3]),
+            datetime.fromisoformat(str(row[4])), float(row[5]),
+            tuple(PlannedSegment(**item) for item in json.loads(row[8])),
+            str(row[6]), str(row[7]),
+        )
+
+    def plans_for_channel(
+        self, channel_number: int, *, start: datetime, end: datetime
+    ) -> tuple[BreakPlan, ...]:
+        """Load committed plans intersecting a UTC time range for runtime projection."""
+        start_utc, end_utc = _utc(start), _utc(end)
+        if end_utc <= start_utc:
+            raise ValueError("plan query end must follow start")
+        rows = self.connection.execute("""
+            SELECT plan_id FROM ad_break_plans
+            WHERE channel_number = ?
+              AND scheduled_at < ?
+              AND datetime(scheduled_at, '+' || reserved_seconds || ' seconds') > ?
+            ORDER BY scheduled_at, plan_id
+        """, (
+            int(channel_number), end_utc.isoformat(), start_utc.isoformat(),
+        )).fetchall()
+        return tuple(
+            plan for row in rows
+            if (plan := self.load_plan(str(row[0]))) is not None
+        )
+
+    def active_plan_at(
+        self, channel_number: int, at: datetime
+    ) -> BreakPlan | None:
+        """Return the already-committed break containing a broadcast instant."""
+        instant = _utc(at)
+        rows = self.connection.execute("""
+            SELECT plan_id FROM ad_break_plans
+            WHERE channel_number = ? AND scheduled_at <= ?
+            ORDER BY scheduled_at DESC, plan_id
+        """, (int(channel_number), instant.isoformat())).fetchall()
+        for row in rows:
+            plan = self.load_plan(str(row[0]))
+            if plan is not None and instant < (
+                plan.scheduled_at + timedelta(seconds=plan.reserved_seconds)
+            ):
+                return plan
+        return None
 
     def aired_segments(self, plan_id: str) -> tuple[tuple[int, str, datetime], ...]:
         """Return the durable airing ledger for a plan in segment order."""

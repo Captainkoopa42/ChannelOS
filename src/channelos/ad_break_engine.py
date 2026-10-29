@@ -191,9 +191,16 @@ class AdSelectionEngine:
         timing_policy: TimingPolicy = "strict_fit",
         smoosh_minimum_seconds: float = 5.0,
         smoosh_max_trim_seconds: float = 15.0,
+        expand_max_seconds: float = 0.0,
     ) -> tuple[PlannedSegment, ...]:
         if budget_seconds <= 0:
             return ()
+        if expand_max_seconds < 0:
+            raise ValueError("Expand limit cannot be negative")
+        selection_budget = (
+            budget_seconds + expand_max_seconds
+            if timing_policy == "expand" else budget_seconds
+        )
         if strategy not in {
             "best_fit", "largest", "smallest", "sequential",
             "least_played", "complete_rotation",
@@ -217,8 +224,8 @@ class AdSelectionEngine:
         selected: list[PlannedSegment] = []
         elapsed = 0.0
         used: set[str] = set()
-        while pool and budget_seconds - elapsed > 0.001:
-            remaining = budget_seconds - elapsed
+        while pool and selection_budget - elapsed > 0.001:
+            remaining = selection_budget - elapsed
             fitting = [x for x in pool if x.duration_seconds <= remaining + 0.001]
             if not fitting and timing_policy == "smoosh":
                 fitting = [

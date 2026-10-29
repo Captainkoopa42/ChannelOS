@@ -2880,7 +2880,8 @@ Item {
         title: "Advertisement Breaks"
         width: Math.min(studioRoot.width - 40, 660)
         height: Math.min(studioRoot.height - 40, 520)
-        anchors.centerIn: parent
+        x: Math.max(20, (studioRoot.width - width) / 2)
+        y: Math.max(20, (studioRoot.height - height) / 2)
         onAccepted: studioRoot.dirty = true
 
         contentItem: ColumnLayout {

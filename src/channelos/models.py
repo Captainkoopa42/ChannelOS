@@ -138,7 +138,7 @@ class ChannelDefinition:
         if not isinstance(ad_enabled, bool):
             raise ChannelValidationError("advertising.enabled must be boolean")
         ad_strategy = raw_advertising.get("selection_strategy", "best_fit")
-        if ad_strategy not in {"best_fit", "largest", "smallest", "sequential"}:
+        if not isinstance(ad_strategy, str) or ad_strategy not in {"best_fit", "largest", "smallest", "sequential"}:
             raise ChannelValidationError(
                 "advertising.selection_strategy must be best_fit, largest, smallest, or sequential"
             )

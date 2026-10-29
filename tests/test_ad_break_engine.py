@@ -76,3 +76,49 @@ def test_expand_uses_only_its_configured_borrow_limit():
                                  expand_max_seconds=5)
     assert sum(x.duration_seconds for x in within_limit) == 110
     assert sum(x.duration_seconds for x in beyond_limit) == 0
+
+
+def test_arbitration_resolves_overlapping_windows_by_priority():
+    start = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    low = BreakOpportunityScheduler.for_occurrence(
+        ProgramOccurrence("low", 2, "show-low", start, start + timedelta(minutes=10)),
+        BreakPolicy(enabled=True, breakpoints_seconds=(60,), duration_seconds=90, priority=1),
+    )[0]
+    high = BreakOpportunityScheduler.for_occurrence(
+        ProgramOccurrence("high", 1, "show-high", start, start + timedelta(minutes=10)),
+        BreakPolicy(enabled=True, breakpoints_seconds=(120,), duration_seconds=90, priority=5),
+    )[0]
+    assert BreakOpportunityScheduler.arbitrate((low, high)) == (high,)
+
+
+def test_record_aired_rejects_asset_not_in_committed_segment(tmp_path):
+    store = BreakPlanStore(tmp_path / "breaks.db")
+    at = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    plan = BreakPlan("plan-check", "opp-check", "occ-check", 7, at, 30,
+                     (PlannedSegment("ad-real", 0, 0, 30),),
+                     "best_fit", "strict_fit")
+    store.commit(plan)
+    try:
+        store.record_aired("plan-check", 0, "ad-forged", aired_at=at)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("mismatched aired asset must be rejected")
+    assert store.record_aired("plan-check", 0, "ad-real", aired_at=at)
+    store.close()
+
+
+def test_selection_rejects_non_finite_budget_and_duplicate_asset_ids():
+    engine = AdSelectionEngine()
+    try:
+        engine.select((AdCandidate("ad-a", 10),), float("inf"))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("infinite budgets must be rejected")
+    try:
+        engine.select((AdCandidate("same", 10), AdCandidate("same", 20)), 30)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("duplicate asset IDs must be rejected")

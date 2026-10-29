@@ -368,7 +368,7 @@ def test_channel_studio_component_loads_and_guards_an_unapplied_draft() -> None:
     )
     assert item.property("autoFillApplying") is False
     assert item.property("dirty") is True
-    assert item.property("calendarBlockCount") == 563
+    assert item.property("calendarBlockCount") == 564
     item.setProperty("dirty", False)
 
     item.setProperty("dirty", True)

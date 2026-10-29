@@ -270,7 +270,12 @@ Item {
             avoidRepeatDays: repeatDays.value,
             numberWidth: 3,
             sources: sources,
-            calendarBlocks: blocks
+            calendarBlocks: blocks,
+            adBreaksEnabled: adBreaksEnabledCheck.checked,
+            adSources: adSourcesArea.text.split("\n").map(function(value) {
+                return value.trim()
+            }).filter(function(value) { return value.length > 0 }),
+            adSelectionStrategy: ["best_fit", "largest", "smallest", "sequential"][adStrategyBox.currentIndex]
         }
     }
 
@@ -435,6 +440,10 @@ Item {
         fillerModeBox.currentIndex = String(draftData.fillerMode) === "shuffle"
                 ? 1 : 0
         repeatDays.value = Number(draftData.avoidRepeatDays || 0)
+        adBreaksEnabledCheck.checked = Boolean(draftData.adBreaksEnabled || false)
+        adSourcesArea.text = (draftData.adSources || []).join("\n")
+        var adStrategy = String(draftData.adSelectionStrategy || "best_fit")
+        adStrategyBox.currentIndex = Math.max(0, ["best_fit", "largest", "smallest", "sequential"].indexOf(adStrategy))
 
         draftSources.clear()
         var sources = draftData.sources || []
@@ -1709,6 +1718,11 @@ Item {
                         enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.autoFillVisibleRange()
                     }
+                    StudioButton {
+                        text: "Ad Breaks"
+                        enabled: !studioRoot.autoFillBusy
+                        onClicked: adBreakSettingsDialog.open()
+                    }
                 }
 
                 Item {
@@ -2857,6 +2871,93 @@ Item {
                 color: studioRoot.warning
                 font.pixelSize: 10
                 wrapMode: Text.Wrap
+            }
+        }
+    }
+
+    StudioDialog {
+        id: adBreakSettingsDialog
+        title: "Advertisement Breaks"
+        width: Math.min(studioRoot.width - 40, 660)
+        height: Math.min(studioRoot.height - 40, 520)
+        anchors.centerIn: parent
+        onAccepted: studioRoot.dirty = true
+
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            CheckBox {
+                id: adBreaksEnabledCheck
+                text: "Enable ads in calendar gaps"
+                checked: false
+                palette.text: studioRoot.textPrimary
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "This first test build places ads in the gaps between fixed calendar programs. It does not yet interrupt a program mid-episode. Ad folders must already be added and scanned in Library; they remain separate from normal program sources."
+                color: studioRoot.textSecondary
+                wrapMode: Text.Wrap
+                font.pixelSize: 12
+            }
+
+            Label {
+                text: "Ad source folders — one indexed Library folder per line"
+                color: studioRoot.textPrimary
+                font.pixelSize: 12
+            }
+
+            TextArea {
+                id: adSourcesArea
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: 110
+                placeholderText: "C:/Media/Advertisements\nD:/ChannelOS/Ads"
+                wrapMode: TextEdit.NoWrap
+                selectByMouse: true
+                color: studioRoot.textPrimary
+                placeholderTextColor: studioRoot.textSecondary
+                background: Rectangle {
+                    color: studioRoot.panel
+                    border.color: studioRoot.line
+                    radius: 6
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    text: "Selection strategy"
+                    color: studioRoot.textPrimary
+                }
+                ComboBox {
+                    id: adStrategyBox
+                    Layout.preferredWidth: 190
+                    model: ["Best Fit", "Largest", "Smallest", "Sequential"]
+                }
+                Item { Layout.fillWidth: true }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Best Fit fills the gap with the largest available ads that fit, without cutting an ad short. Any remaining time falls back to the channel's normal filler. The same gap produces the same ad order after a restart."
+                color: studioRoot.textSecondary
+                wrapMode: Text.Wrap
+                font.pixelSize: 11
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                StudioButton {
+                    text: "Cancel"
+                    onClicked: adBreakSettingsDialog.reject()
+                }
+                StudioButton {
+                    text: "Apply to Draft"
+                    highlighted: true
+                    onClicked: adBreakSettingsDialog.accept()
+                }
             }
         }
     }

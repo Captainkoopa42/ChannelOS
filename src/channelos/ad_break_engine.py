@@ -10,6 +10,7 @@ it to viewers.
 
 import hashlib
 import json
+import math
 import sqlite3
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
@@ -55,12 +56,21 @@ class BreakPolicy:
             raise ValueError(f"unsupported ad strategy: {self.strategy}")
         if self.timing_policy not in {"strict_fit", "smoosh", "expand"}:
             raise ValueError(f"unsupported timing policy: {self.timing_policy}")
+        numeric_values = [self.duration_seconds, self.smoosh_minimum_seconds,
+                          self.smoosh_max_trim_seconds, self.expand_max_seconds]
+        if self.interval_seconds is not None:
+            numeric_values.append(self.interval_seconds)
+        numeric_values.extend(self.breakpoints_seconds)
+        if any(not math.isfinite(float(value)) for value in numeric_values):
+            raise ValueError("break policy values must be finite numbers")
         if self.duration_seconds <= 0:
             raise ValueError("break duration must be positive")
         if self.interval_seconds is not None and self.interval_seconds <= 0:
             raise ValueError("break interval must be positive")
         if any(point <= 0 for point in self.breakpoints_seconds):
             raise ValueError("breakpoints must be positive offsets")
+        if len(set(self.breakpoints_seconds)) != len(self.breakpoints_seconds):
+            raise ValueError("breakpoints must not contain duplicates")
         if self.smoosh_minimum_seconds <= 0 or self.smoosh_max_trim_seconds < 0:
             raise ValueError("invalid Smoosh limits")
         if self.expand_max_seconds < 0:
@@ -97,8 +107,10 @@ class BreakOpportunity:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scheduled_at", _utc(self.scheduled_at))
-        if self.duration_seconds <= 0:
-            raise ValueError("opportunity duration must be positive")
+        if not self.opportunity_id or not self.occurrence_id:
+            raise ValueError("opportunity and occurrence IDs are required")
+        if not math.isfinite(float(self.duration_seconds)) or self.duration_seconds <= 0:
+            raise ValueError("opportunity duration must be finite and positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,8 +119,9 @@ class AdCandidate:
     duration_seconds: float
 
     def __post_init__(self) -> None:
-        if not self.asset_id or self.duration_seconds <= 0:
-            raise ValueError("ad candidate requires an ID and positive duration")
+        if (not self.asset_id or not math.isfinite(float(self.duration_seconds))
+                or self.duration_seconds <= 0):
+            raise ValueError("ad candidate requires an ID and finite positive duration")
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,14 +181,33 @@ class BreakOpportunityScheduler:
     def arbitrate(
         opportunities: tuple[BreakOpportunity, ...],
     ) -> tuple[BreakOpportunity, ...]:
-        """At an identical instant, keep highest priority then stable ID."""
-        chosen: dict[datetime, BreakOpportunity] = {}
-        for item in sorted(
-            opportunities,
-            key=lambda x: (-x.priority, x.channel_number, x.opportunity_id),
-        ):
-            chosen.setdefault(item.scheduled_at, item)
-        return tuple(chosen[key] for key in sorted(chosen))
+        """Keep one deterministic winner for each overlapping break window.
+
+        Windows are half-open [scheduled_at, scheduled_at + duration). A
+        transitive overlap cluster is arbitrated as one opportunity.
+        """
+        ordered = sorted(opportunities, key=lambda x: (
+            x.scheduled_at, -x.priority, x.channel_number, x.opportunity_id
+        ))
+        clusters: list[list[BreakOpportunity]] = []
+        cluster_end: datetime | None = None
+        for item in ordered:
+            item_end = item.scheduled_at + timedelta(seconds=item.duration_seconds)
+            if not clusters or cluster_end is None or item.scheduled_at >= cluster_end:
+                clusters.append([item])
+                cluster_end = item_end
+            else:
+                clusters[-1].append(item)
+                cluster_end = max(cluster_end, item_end)
+        winners = [
+            min(cluster, key=lambda x: (
+                -x.priority, x.scheduled_at, x.channel_number, x.opportunity_id
+            ))
+            for cluster in clusters
+        ]
+        return tuple(sorted(winners, key=lambda x: (
+            x.scheduled_at, x.channel_number, x.opportunity_id
+        )))
 
 
 class AdSelectionEngine:
@@ -193,10 +225,18 @@ class AdSelectionEngine:
         smoosh_max_trim_seconds: float = 15.0,
         expand_max_seconds: float = 0.0,
     ) -> tuple[PlannedSegment, ...]:
+        if not math.isfinite(float(budget_seconds)):
+            raise ValueError("break budget must be finite")
         if budget_seconds <= 0:
             return ()
-        if expand_max_seconds < 0:
-            raise ValueError("Expand limit cannot be negative")
+        if not math.isfinite(float(expand_max_seconds)) or expand_max_seconds < 0:
+            raise ValueError("Expand limit must be finite and non-negative")
+        if not math.isfinite(float(smoosh_minimum_seconds)) or smoosh_minimum_seconds <= 0:
+            raise ValueError("Smoosh minimum must be finite and positive")
+        if not math.isfinite(float(smoosh_max_trim_seconds)) or smoosh_max_trim_seconds < 0:
+            raise ValueError("Smoosh trim limit must be finite and non-negative")
+        if timing_policy not in {"strict_fit", "smoosh", "expand"}:
+            raise ValueError(f"unsupported timing policy: {timing_policy}")
         selection_budget = (
             budget_seconds + expand_max_seconds
             if timing_policy == "expand" else budget_seconds
@@ -207,6 +247,10 @@ class AdSelectionEngine:
         }:
             raise ValueError(f"unsupported ad strategy: {strategy}")
         counts = play_counts or {}
+        if any(int(value) < 0 for value in counts.values()):
+            raise ValueError("play counts cannot be negative")
+        if len({x.asset_id for x in candidates}) != len(candidates):
+            raise ValueError("candidate asset IDs must be unique")
         pool = [x for x in candidates if x.asset_id not in previously_selected]
         if strategy == "least_played":
             pool.sort(key=lambda x: (counts.get(x.asset_id, 0), x.duration_seconds,
@@ -223,7 +267,6 @@ class AdSelectionEngine:
 
         selected: list[PlannedSegment] = []
         elapsed = 0.0
-        used: set[str] = set()
         while pool and selection_budget - elapsed > 0.001:
             remaining = selection_budget - elapsed
             fitting = [x for x in pool if x.duration_seconds <= remaining + 0.001]
@@ -250,7 +293,6 @@ class AdSelectionEngine:
                 item.asset_id, elapsed, 0.0, duration, trimmed
             ))
             elapsed += duration
-            used.add(item.asset_id)
             pool.remove(item)
             if trimmed:
                 break
@@ -331,6 +373,18 @@ class BreakPlanStore:
         self, plan_id: str, segment_index: int, asset_id: str,
         *, aired_at: datetime,
     ) -> bool:
+        if segment_index < 0:
+            raise ValueError("segment index cannot be negative")
+        row = self.connection.execute(
+            "SELECT payload FROM ad_break_plans WHERE plan_id = ?", (plan_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"unknown ad break plan: {plan_id}")
+        segments = json.loads(row[0])
+        if segment_index >= len(segments):
+            raise IndexError("segment index is outside the committed break plan")
+        if segments[segment_index]["asset_id"] != asset_id:
+            raise ValueError("aired asset ID does not match the committed plan segment")
         cursor = self.connection.execute("""
             INSERT OR IGNORE INTO ad_break_history
             (plan_id, segment_index, asset_id, aired_at) VALUES (?, ?, ?, ?)

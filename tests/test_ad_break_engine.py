@@ -177,3 +177,22 @@ def test_unknown_plan_recovery_returns_none(tmp_path):
     assert store.load_plan("missing") is None
     assert store.aired_segments("missing") == ()
     store.close()
+
+
+def test_runtime_can_query_committed_plans_by_channel_and_instant(tmp_path):
+    store = BreakPlanStore(tmp_path / "runtime.db")
+    start = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    plan = BreakPlan(
+        "plan-runtime", "opp-runtime", "occ-runtime", 9, start, 60,
+        (PlannedSegment("ad-runtime", 0, 0, 60),),
+        "best_fit", "strict_fit",
+    )
+    store.commit(plan)
+    assert store.active_plan_at(9, start + timedelta(seconds=30)) == plan
+    assert store.active_plan_at(9, start + timedelta(seconds=60)) is None
+    assert store.active_plan_at(8, start + timedelta(seconds=30)) is None
+    assert store.plans_for_channel(
+        9, start=start + timedelta(seconds=30),
+        end=start + timedelta(seconds=90),
+    ) == (plan,)
+    store.close()

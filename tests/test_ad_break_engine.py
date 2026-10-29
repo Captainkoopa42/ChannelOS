@@ -122,3 +122,24 @@ def test_selection_rejects_non_finite_budget_and_duplicate_asset_ids():
         pass
     else:
         raise AssertionError("duplicate asset IDs must be rejected")
+
+
+def test_break_plan_rejects_segments_that_overrun_reserved_window():
+    at = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    try:
+        BreakPlan("plan-overrun", "opp-overrun", "occ-overrun", 7, at, 30,
+                  (PlannedSegment("ad-too-long", 0, 0, 31),),
+                  "best_fit", "strict_fit")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a plan must not overrun its reserved break window")
+
+
+def test_planned_segment_rejects_non_finite_offsets():
+    try:
+        PlannedSegment("ad-bad", float("nan"), 0, 10)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-finite segment offsets must be rejected")

@@ -41,9 +41,9 @@ def plan_ad_break(
 ) -> tuple[PlannedAd, ...]:
     """Pack unique ads into a fixed time budget without ever overrunning it.
 
-    `best_fit` prefers the largest ad that fits the remaining time, with a
-    stable hash tie-breaker. `largest` and `smallest` use the corresponding
-    duration ordering. `sequential` walks a stable, seed-rotated ordering and
+    `best_fit` uses one-step lookahead to reduce leftover time. `largest`
+    and `smallest` use the corresponding duration ordering. `sequential`
+    walks a stable, seed-rotated ordering and
     skips ads that do not fit. An ad is used at most once in one break.
     """
     if strategy not in SUPPORTED_AD_STRATEGIES:

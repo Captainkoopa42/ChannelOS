@@ -16,6 +16,9 @@ class ChannelResolutionError(RuntimeError):
 class ResolvedChannel:
     definition: ChannelDefinition
     media: tuple[IndexedMedia, ...]
+    # Advertising media is resolved independently and never added to the
+    # ordinary program pool merely because it is used by ad breaks.
+    ad_media: tuple[IndexedMedia, ...] = ()
 
     @property
     def first(self) -> IndexedMedia:
@@ -164,6 +167,16 @@ def _resolve_preserved_sequence(
 
 def resolve_channel(channel: ChannelDefinition, library: MediaLibrary) -> ResolvedChannel:
     source_keys = [normalize_path(source.path)[1] for source in channel.sources]
+    ad_media: list[IndexedMedia] = []
+    if channel.advertising.enabled:
+        seen_ad_assets: set[str] = set()
+        for source in channel.advertising.sources:
+            for item in library.list_online_media_for_source(source.path):
+                if item.asset.asset_id in seen_ad_assets:
+                    continue
+                seen_ad_assets.add(item.asset.asset_id)
+                ad_media.append(item)
+        ad_media.sort(key=lambda item: item.location.path_key)
     indexed: list[IndexedMedia] = []
     seen_locations: set[str] = set()
     for source in channel.sources:
@@ -178,7 +191,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary) -> Resolv
         and channel.programming.preserve_episode_order
     ):
         media = _resolve_preserved_sequence(channel, indexed, source_keys)
-        return ResolvedChannel(definition=channel, media=media)
+        return ResolvedChannel(definition=channel, media=media, ad_media=tuple(ad_media))
 
     # Compatibility/default behavior: resolve from the canonical library's
     # stable path ordering. Shuffle later derives its own deterministic order.
@@ -195,4 +208,4 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary) -> Resolv
             seen_assets.add(item.asset.asset_id)
 
     selected.sort(key=lambda item: item.location.path_key)
-    return ResolvedChannel(definition=channel, media=tuple(selected))
+    return ResolvedChannel(definition=channel, media=tuple(selected), ad_media=tuple(ad_media))

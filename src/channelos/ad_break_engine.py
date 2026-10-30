@@ -373,6 +373,18 @@ class BreakPlanStore:
             );
             CREATE INDEX IF NOT EXISTS idx_ad_break_history_asset
                 ON ad_break_history(asset_id);
+            CREATE TABLE IF NOT EXISTS ad_view_history (
+                plan_id TEXT NOT NULL,
+                segment_index INTEGER NOT NULL,
+                viewer_id TEXT NOT NULL,
+                asset_id TEXT NOT NULL,
+                consumed_seconds REAL NOT NULL,
+                completed_at TEXT NOT NULL,
+                PRIMARY KEY (plan_id, segment_index, viewer_id),
+                FOREIGN KEY (plan_id) REFERENCES ad_break_plans(plan_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_ad_view_history_asset
+                ON ad_view_history(asset_id);
             CREATE TABLE IF NOT EXISTS ad_break_policy_state (
                 channel_number INTEGER PRIMARY KEY,
                 policy_revision TEXT NOT NULL,
@@ -506,6 +518,83 @@ class BreakPlanStore:
                     if self.record_aired(plan.plan_id, index, segment.asset_id, aired_at=ended_at):
                         recorded += 1
         return recorded
+
+    def record_viewed(
+        self, plan_id: str, segment_index: int, asset_id: str, *,
+        viewer_id: str = "default", consumed_seconds: float,
+        completed_at: datetime,
+    ) -> bool:
+        """Record a verified *viewer* completion, separate from logical airing.
+
+        The caller must establish genuine playback consumption, not merely
+        observe a broadcast timestamp or seek into a segment.
+        """
+        plan = self.load_plan(plan_id)
+        if plan is None:
+            raise KeyError(f"unknown ad plan: {plan_id}")
+        if segment_index < 0 or segment_index >= len(plan.segments):
+            raise IndexError("unknown segment index")
+        segment = plan.segments[segment_index]
+        if asset_id != segment.asset_id:
+            raise ValueError("viewer asset must match committed plan")
+        if not viewer_id:
+            raise ValueError("viewer ID cannot be empty")
+        if not math.isfinite(float(consumed_seconds)) or (
+            consumed_seconds < segment.duration_seconds - 0.5
+            or consumed_seconds > segment.duration_seconds + 0.5
+        ):
+            raise ValueError("viewed completion requires verified full-duration consumption")
+        cursor = self.connection.execute("""
+            INSERT OR IGNORE INTO ad_view_history (
+                plan_id, segment_index, viewer_id, asset_id,
+                consumed_seconds, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            plan_id, segment_index, viewer_id, asset_id,
+            float(consumed_seconds), _utc(completed_at).isoformat(),
+        ))
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def viewer_counts(self, channel_number: int | None = None) -> dict[str, int]:
+        query = """
+            SELECT h.asset_id, COUNT(*) FROM ad_view_history h
+            JOIN ad_break_plans p ON p.plan_id = h.plan_id
+        """
+        params: tuple[int, ...] = ()
+        if channel_number is not None:
+            query += " WHERE p.channel_number = ?"
+            params = (int(channel_number),)
+        query += " GROUP BY h.asset_id"
+        return {
+            str(asset_id): int(count)
+            for asset_id, count in self.connection.execute(query, params)
+        }
+
+    def diagnostics(self, channel_number: int) -> dict[str, object]:
+        number = int(channel_number)
+        plans = self.connection.execute(
+            "SELECT COUNT(*) FROM ad_break_plans WHERE channel_number = ?",
+            (number,),
+        ).fetchone()[0]
+        aired = self.connection.execute("""
+            SELECT COUNT(*), MAX(h.aired_at) FROM ad_break_history h
+            JOIN ad_break_plans p ON p.plan_id = h.plan_id
+            WHERE p.channel_number = ?
+        """, (number,)).fetchone()
+        viewed = self.connection.execute("""
+            SELECT COUNT(*) FROM ad_view_history h
+            JOIN ad_break_plans p ON p.plan_id = h.plan_id
+            WHERE p.channel_number = ?
+        """, (number,)).fetchone()[0]
+        return {
+            "channelNumber": number,
+            "plannedBreaks": int(plans),
+            "completedAirings": int(aired[0]),
+            "completedViewings": int(viewed),
+            "lastAiredUtc": aired[1] or "",
+            "viewerCounts": self.viewer_counts(number),
+        }
 
     def play_counts(self) -> dict[str, int]:
         rows = self.connection.execute("""

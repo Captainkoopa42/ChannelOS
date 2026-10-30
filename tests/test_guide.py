@@ -271,9 +271,6 @@ def test_now_next_projects_active_ad_then_the_interrupted_program(tmp_path: Path
     assert result.now.event_id
     assert result.now.parent_program_id
     assert result.now.break_id
-    assert result.now.event_id
-    assert result.now.parent_program_id
-    assert result.now.break_id
     assert not result.next.is_advertisement
     assert result.next.asset_id == base.media[0].asset.asset_id
 
@@ -288,3 +285,14 @@ def test_now_next_projects_active_ad_then_the_interrupted_program(tmp_path: Path
     assert programs[0].break_markers[0].break_id
     assert programs[0].break_markers[0].start_utc == epoch + timedelta(seconds=10)
     assert programs[0].break_markers[0].end_utc == epoch + timedelta(seconds=15)
+
+    extended = GuideService((runtime,)).horizon(
+        epoch, epoch + timedelta(seconds=69), generated_at=epoch
+    ).rows[0].programs
+    assert len(extended) == 2
+    assert extended[1].start_utc == epoch + timedelta(seconds=35)
+    assert len(extended[1].break_markers) == 1
+    assert extended[1].break_markers[0].start_utc == epoch + timedelta(seconds=45)
+    assert len(runtime.break_store.plans_for_channel(
+        88, start=epoch, end=epoch + timedelta(seconds=100)
+    )) == 2

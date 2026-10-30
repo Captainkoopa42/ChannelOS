@@ -190,6 +190,42 @@ class AdCatalogStore:
             row = db.execute("SELECT * FROM ad_break_profiles WHERE profile_id=?", (profile_id,)).fetchone()
         return None if row is None else BreakProfile(row["profile_id"], row["name"], json.loads(row["defaults_json"]))
 
+    def list_collections(self) -> tuple[AdCollection, ...]:
+        with self._connect() as db:
+            ids = [
+                row[0] for row in db.execute(
+                    "SELECT collection_id FROM ad_collections ORDER BY name, collection_id"
+                )
+            ]
+        return tuple(
+            item for collection_id in ids
+            if (item := self.get_collection(collection_id)) is not None
+        )
+
+    def list_profiles(self) -> tuple[BreakProfile, ...]:
+        with self._connect() as db:
+            ids = [
+                row[0] for row in db.execute(
+                    "SELECT profile_id FROM ad_break_profiles ORDER BY name, profile_id"
+                )
+            ]
+        return tuple(
+            item for profile_id in ids
+            if (item := self.get_profile(profile_id)) is not None
+        )
+
+    def list_assignments(self) -> tuple[ChannelAdAssignment, ...]:
+        with self._connect() as db:
+            numbers = [
+                row[0] for row in db.execute(
+                    "SELECT channel_number FROM channel_ad_assignments ORDER BY channel_number"
+                )
+            ]
+        return tuple(
+            item for number in numbers
+            if (item := self.get_assignment(number)) is not None
+        )
+
     def assign_channel(self, item: ChannelAdAssignment) -> None:
         with self._connect() as db:
             for table, key, value in (

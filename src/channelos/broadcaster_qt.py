@@ -708,6 +708,46 @@ class BroadcasterCouchController(CouchController):
         ) as exc:
             return self._error(exc)
 
+    @Slot(result="QVariantMap")
+    def adCatalogSnapshot(self) -> dict[str, object]:
+        try:
+            return {"ok": True, **self._broadcaster.ad_catalog_snapshot()}
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def saveAdCollection(self, payload: dict[str, object]) -> dict[str, object]:
+        try:
+            return {
+                "ok": True,
+                "message": "Advertisement collection saved",
+                **self._broadcaster.save_ad_collection(dict(payload)),
+            }
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def saveAdBreakProfile(self, payload: dict[str, object]) -> dict[str, object]:
+        try:
+            return {
+                "ok": True,
+                "message": "Reusable break profile saved",
+                **self._broadcaster.save_ad_profile(dict(payload)),
+            }
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def assignAdBreakProfile(self, payload: dict[str, object]) -> dict[str, object]:
+        try:
+            return {
+                "ok": True,
+                "message": "Channel assignment saved; apply Studio draft to activate",
+                **self._broadcaster.assign_ad_profile(dict(payload)),
+            }
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
     @Slot(str, "QVariantList", str, result="QVariantMap")
     def createStudioGroup(
         self,

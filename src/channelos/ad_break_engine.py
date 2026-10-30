@@ -308,6 +308,40 @@ class AdSelectionEngine:
         else:
             pool.sort(key=lambda x: (_stable(seed, x.asset_id), x.asset_id))
 
+        if strategy == "best_fit" and timing_policy == "strict_fit" and len(pool) <= 14:
+            # Exact bounded subset search. A greedy longest-first decision can
+            # waste a gap even when a perfect combination is available.
+            # Above the bound, use the existing deterministic greedy fallback.
+            best_mask = 0
+            best_total = 0.0
+            best_count = 0
+            sizes = [item.duration_seconds for item in pool]
+            for mask in range(1, 1 << len(pool)):
+                total = sum(size for index, size in enumerate(sizes) if mask & (1 << index))
+                if total > selection_budget + 0.001:
+                    continue
+                count = mask.bit_count()
+                if (total > best_total + 0.001
+                        or (abs(total - best_total) <= 0.001
+                            and (count < best_count or best_mask == 0))
+                        or (abs(total - best_total) <= 0.001
+                            and count == best_count and mask < best_mask)):
+                    best_mask = mask
+                    best_total = total
+                    best_count = count
+            selected_pool = [
+                item for index, item in enumerate(pool)
+                if best_mask & (1 << index)
+            ]
+            start_offset = 0.0
+            result: list[PlannedSegment] = []
+            for item in selected_pool:
+                result.append(PlannedSegment(
+                    item.asset_id, start_offset, 0.0, item.duration_seconds,
+                ))
+                start_offset += item.duration_seconds
+            return tuple(result)
+
         selected: list[PlannedSegment] = []
         elapsed = 0.0
         while pool and selection_budget - elapsed > 0.001:

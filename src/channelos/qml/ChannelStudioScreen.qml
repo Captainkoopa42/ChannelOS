@@ -3146,7 +3146,7 @@ Item {
                 ChannelComboBox {
                     id: adTransitionBox
                     Layout.preferredWidth: 120
-                    model: ["Cut", "Fade", "Hold"]
+                    model: ["Cut", "Fade (not available)", "Hold (not available)"]
                 }
             }
             ChannelTextField {

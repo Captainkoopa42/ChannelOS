@@ -384,8 +384,6 @@ class CalendarTimeline:
             if policy.timing_policy == "expand":
                 budget += policy.expand_max_seconds
             budget = min(budget, slack_remaining)
-            if budget < policy.smoosh_minimum_seconds and policy.timing_policy == "smoosh":
-                continue
             expected_at = opportunity.scheduled_at + timedelta(seconds=inserted)
             stored = (
                 self.break_store.load_opportunity(opportunity.opportunity_id)

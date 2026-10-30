@@ -1370,14 +1370,6 @@ class ChannelRuntime:
         program_occurrence_id = self._program_occurrence_id(selection)
         break_occurrence_id = self._break_occurrence_id(selection)
         if elapsed_before:
-            occurrence_id = hashlib.sha256(
-                "|".join((
-                    str(self.channel_number), self.signature,
-                    advertising_signature(self.channel),
-                    selection.media.asset.asset_id,
-                    selection.program_started_at.isoformat(timespec="microseconds"),
-                )).encode("utf-8")
-            ).hexdigest()
             persisted = self.break_store.plans_for_channel(
                 self.channel_number, start=self.epoch_utc,
                 end=instant + timedelta(microseconds=1),

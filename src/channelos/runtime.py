@@ -70,6 +70,20 @@ class ScheduledProgram:
 
 
 @dataclass(frozen=True, slots=True)
+class BroadcastEvent:
+    """One typed segment occupying a bounded interval on the broadcast clock."""
+
+    event_id: str
+    event_type: str
+    asset_id: str
+    start_utc: datetime
+    end_utc: datetime
+    source_offset_seconds: float
+    parent_program_id: str | None = None
+    break_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class BroadcastSelection:
     program: ScheduledProgram
     offset_seconds: float
@@ -77,10 +91,35 @@ class BroadcastSelection:
     program_ends_at: datetime
     cycle_index: int
     origin: str = "cycle"
+    parent_program_id: str | None = None
+    break_id: str | None = None
 
     @property
     def media(self) -> IndexedMedia:
         return self.program.media
+
+    @property
+    def event(self) -> BroadcastEvent:
+        event_type = "advertisement" if self.origin == "advertisement" else (
+            "filler" if self.origin in {"filler", "show-filler"} else "program"
+        )
+        identity = hashlib.sha256("|".join((
+            event_type,
+            self.media.asset.asset_id,
+            self.program_started_at.isoformat(timespec="microseconds"),
+            self.program_ends_at.isoformat(timespec="microseconds"),
+            self.break_id or "",
+        )).encode("utf-8")).hexdigest()
+        return BroadcastEvent(
+            event_id=identity,
+            event_type=event_type,
+            asset_id=self.media.asset.asset_id,
+            start_utc=self.program_started_at,
+            end_utc=self.program_ends_at,
+            source_offset_seconds=self.offset_seconds,
+            parent_program_id=self.parent_program_id,
+            break_id=self.break_id,
+        )
 
 
 class SequentialTimeline:
@@ -446,16 +485,6 @@ def schedule_signature(channel: ResolvedChannel) -> str:
                 for item in signature_media
             ],
         }
-        if channel.definition.advertising.enabled:
-            advertising = channel.definition.advertising
-            payload["advertising"] = {
-                "enabled": True,
-                "strategy": advertising.selection_strategy,
-                "breakpoints_seconds": list(advertising.breakpoints_seconds),
-                "interval_seconds": advertising.interval_seconds,
-                "break_duration_seconds": advertising.break_duration_seconds,
-                "ad_assets": sorted(item.asset.asset_id for item in channel.ad_media),
-            }
         encoded = json.dumps(
             payload,
             sort_keys=True,
@@ -489,16 +518,28 @@ def schedule_signature(channel: ResolvedChannel) -> str:
             for item in signature_media
         ],
     }
-    if channel.definition.advertising.enabled:
-        advertising = channel.definition.advertising
-        payload["advertising"] = {
-            "enabled": True,
-            "strategy": advertising.selection_strategy,
-            "breakpoints_seconds": list(advertising.breakpoints_seconds),
-            "interval_seconds": advertising.interval_seconds,
-            "break_duration_seconds": advertising.break_duration_seconds,
-            "ad_assets": sorted(item.asset.asset_id for item in channel.ad_media),
-        }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def advertising_signature(channel: ResolvedChannel) -> str:
+    """Fingerprint ad policy independently from the program Broadcast Clock.
+
+    Advertising edits must never change the channel epoch or viewer continuity.
+    This revision is available to plan invalidation and diagnostics without
+    becoming part of RuntimeStore's program-schedule signature.
+    """
+    advertising = channel.definition.advertising
+    payload = {
+        "enabled": advertising.enabled,
+        "sources": [str(source.path) for source in advertising.sources],
+        "strategy": advertising.selection_strategy,
+        "breakpoints_seconds": list(advertising.breakpoints_seconds),
+        "interval_seconds": advertising.interval_seconds,
+        "break_duration_seconds": advertising.break_duration_seconds,
+        "priority": advertising.priority,
+        "ad_assets": sorted(item.asset.asset_id for item in channel.ad_media),
+    }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -1245,6 +1286,8 @@ class ChannelRuntime:
                             segment_end,
                             base.cycle_index,
                             origin="advertisement",
+                            parent_program_id=base.event.event_id,
+                            break_id=active.plan_id,
                         )
             next_content_time = instant - timedelta(seconds=elapsed_before)
             if next_content_time == content_time:

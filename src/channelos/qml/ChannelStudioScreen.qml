@@ -2971,8 +2971,17 @@ Item {
             adStrategyBox.currentIndex = savedAdStrategy
         }
 
-        contentItem: ColumnLayout {
-            spacing: 12
+        contentItem: Flickable {
+            id: adSettingsScroll
+            clip: true
+            contentWidth: width
+            contentHeight: adSettingsColumn.implicitHeight + 12
+            boundsBehavior: Flickable.StopAtBounds
+
+            ColumnLayout {
+                id: adSettingsColumn
+                width: adSettingsScroll.width - 16
+                spacing: 12
 
             ChannelCheckBox {
                 id: adBreaksEnabledCheck
@@ -3110,6 +3119,32 @@ Item {
                 text: "breakpoint; interval; between_programs; calendar_boundary"
                 placeholderText: "breakpoint; interval; between_programs; calendar_boundary"
             }
+            Text {
+                id: adPreviewStatus
+                Layout.fillWidth: true
+                text: "Preview an ad break before applying your detached draft."
+                color: studioRoot.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+            StudioButton {
+                text: "Preview Ad Schedule"
+                onClicked: {
+                    var result = channelOS.previewChannel(studioRoot.editorObject())
+                    if (result && result.ok) {
+                        var events = result.adPreview || []
+                        adPreviewStatus.text = events.length
+                                ? events.map(function(event) {
+                                    return event.eventType + ": " + event.title
+                                        + " @ " + event.startUtc
+                                  }).join(" | ")
+                                : "No ad event is scheduled in the sampled window."
+                    } else {
+                        adPreviewStatus.text = result && result.message
+                                ? result.message : "Preview failed."
+                    }
+                }
+            }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -3122,6 +3157,7 @@ Item {
                     highlighted: true
                     onClicked: adBreakSettingsDialog.accept()
                 }
+            }
             }
         }
     }
@@ -3345,6 +3381,18 @@ Item {
                           + ((adCatalogDialog.catalogData.profiles || []).map(function(item) {
                                 return item.profileId
                              }).join(", ") || "none")
+                }
+                StudioButton {
+                    text: "Current Channel Diagnostics"
+                    onClicked: {
+                        var report = channelOS.adBreakDiagnostics(
+                            Number(channelNumberField.text))
+                        adCatalogDialog.catalogFeedback = report && report.ok
+                                ? ("Plans: " + report.plannedBreaks
+                                   + " | Aired: " + report.completedAirings
+                                   + " | Viewed: " + report.completedViewings)
+                                : String(report && report.message || "Channel is not active")
+                    }
                 }
                 StudioButton {
                     text: "Close"

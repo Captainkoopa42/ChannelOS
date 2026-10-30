@@ -1415,6 +1415,33 @@ class ChannelRuntime:
                 at=revision_time,
             ):
                 policy_revision_changed_at = revision_time
+            if programming.mode in {"sequential", "shuffle"}:
+                previously_committed = break_store.plans_for_channel(
+                    channel.definition.channel,
+                    start=persisted.epoch_utc,
+                    end=revision_time + timedelta(microseconds=1),
+                )
+                completed_duration = sum(
+                    plan.duration_seconds for plan in previously_committed
+                    if plan.scheduled_at + timedelta(
+                        seconds=plan.duration_seconds
+                    ) <= revision_time
+                )
+                content_now = revision_time - timedelta(
+                    seconds=completed_duration
+                )
+                # A newly enabled ad policy begins at the program currently
+                # airing, not months before it was enabled. A matching
+                # revision recovers its prior durable checkpoint on restart.
+                initial = timeline.selection_at(
+                    persisted.epoch_utc, content_now,
+                ).program_started_at
+                break_store.ensure_catchup_cursor(
+                    channel.definition.channel,
+                    advertising_signature(channel),
+                    start_at=initial,
+                    activated_at=revision_time,
+                )
         return cls(
             channel=channel,
             timeline=timeline,
@@ -1566,9 +1593,70 @@ class ChannelRuntime:
             committed.append(plan)
         return tuple(committed)
 
+    def _catch_up_sequential(self, instant: datetime) -> None:
+        """Reconcile missed logical program occurrences before tuning.
+
+        The cursor advances by program *content time*, while persisted breaks
+        supply the offset to each program's actual broadcast start. Each
+        occurrence is planned chronologically, so Least Played sees completed
+        prior airings even after a long shutdown. A crash between committing
+        a plan and checkpointing safely reuses the immutable plan on retry.
+        """
+        if self.break_store is None or not isinstance(
+            self.timeline, SequentialTimeline
+        ):
+            return
+        cursor = self.break_store.catchup_cursor(self.channel_number)
+        if cursor is None or cursor > instant:
+            return
+        # Fail closed rather than guess the LIVE event after an unbounded
+        # backlog. A subsequent request resumes from the persisted checkpoint.
+        for _ in range(10000):
+            base = self.timeline.selection_at(
+                self.epoch_utc, cursor + timedelta(microseconds=1)
+            )
+            if base.program_started_at > instant:
+                return
+            occurrence_id = self._program_occurrence_id(base)
+            existing = self.break_store.plans_for_channel(
+                self.channel_number,
+                start=self.epoch_utc,
+                end=instant + timedelta(microseconds=1),
+            )
+            previous_breaks = sum(
+                plan.duration_seconds for plan in existing
+                if plan.occurrence_id != occurrence_id
+                and plan.scheduled_at <= instant
+            )
+            actual_start = base.program_started_at + timedelta(
+                seconds=previous_breaks
+            )
+            if actual_start > instant:
+                return
+            self._ensure_occurrence_plans(base, instant)
+            self.break_store.reconcile_completed(
+                self.channel_number, through=instant
+            )
+            if base.program_ends_at <= cursor:
+                raise ChannelRuntimeError(
+                    "ad catch-up did not advance the program-content cursor"
+                )
+            cursor = base.program_ends_at
+            self.break_store.advance_catchup_cursor(
+                self.channel_number, cursor
+            )
+            if cursor > instant:
+                return
+        raise ChannelRuntimeError(
+            "advertising catch-up has more than 10000 outstanding program "
+            "occurrences; repeat the operation to advance its saved checkpoint"
+        )
+
     def _selection_at(self, at: datetime) -> BroadcastSelection:
         instant = require_aware_utc(at)
         if self.break_store is not None:
+            if self.channel.definition.programming.mode != "calendar":
+                self._catch_up_sequential(instant)
             self.break_store.reconcile_completed(self.channel_number, through=instant)
         if (
             self.break_store is None

@@ -361,11 +361,57 @@ class BreakPlanStore:
             );
             CREATE INDEX IF NOT EXISTS idx_ad_break_history_asset
                 ON ad_break_history(asset_id);
+            CREATE TABLE IF NOT EXISTS ad_break_policy_state (
+                channel_number INTEGER PRIMARY KEY,
+                policy_revision TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
         """)
         self.connection.commit()
 
     def close(self) -> None:
         self.connection.close()
+
+
+    def apply_policy_revision(
+        self, channel_number: int, revision: str, *, at: datetime
+    ) -> bool:
+        """Invalidate unstarted plans when ad policy changes; preserve airing plans.
+
+        Returns True when an existing policy revision changed. Plans that have
+        already started or have an airing-history row remain immutable.
+        """
+        instant = _utc(at)
+        updated = instant.isoformat()
+        self.connection.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.connection.execute(
+                "SELECT policy_revision FROM ad_break_policy_state WHERE channel_number = ?",
+                (int(channel_number),),
+            ).fetchone()
+            changed = row is not None and str(row[0]) != str(revision)
+            if changed:
+                self.connection.execute("""
+                    DELETE FROM ad_break_plans
+                    WHERE channel_number = ?
+                      AND scheduled_at > ?
+                      AND plan_id NOT IN (
+                          SELECT DISTINCT plan_id FROM ad_break_history
+                      )
+                """, (int(channel_number), updated))
+            self.connection.execute("""
+                INSERT INTO ad_break_policy_state
+                    (channel_number, policy_revision, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(channel_number) DO UPDATE SET
+                    policy_revision = excluded.policy_revision,
+                    updated_at = excluded.updated_at
+            """, (int(channel_number), str(revision), updated))
+            self.connection.commit()
+            return changed
+        except Exception:
+            self.connection.rollback()
+            raise
 
     def commit(self, plan: BreakPlan) -> BreakPlan:
         payload = json.dumps([asdict(s) for s in plan.segments], sort_keys=True)

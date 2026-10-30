@@ -564,3 +564,26 @@ def test_legacy_plan_without_location_snapshot_recovers_from_canonical_library(t
     assert recovered.break_id == active.break_id
     assert recovered.media.asset.asset_id == active.media.asset.asset_id
     assert recovered.offset_seconds == 3
+
+
+@pytest.mark.parametrize('enabled', [True, False])
+def test_placement_disable_override_and_asset_scope_survive_portable_export(tmp_path, enabled):
+    library, _, ids = setup(tmp_path)
+    catalog = AdCatalogStore(tmp_path / 'catalog.sqlite')
+    for index, asset_id in enumerate(ids):
+        catalog.save_collection(AdCollection(f'c{index}', f'Collection {index}', (asset_id,)))
+    catalog.save_profile(BreakProfile('p', 'Standard', {'enabled': True, 'breakpoints_seconds': [20]}))
+    catalog.assign_channel(ChannelAdAssignment(7, profile_id='p', placements=(
+        AdPlacementAssignment('off', 'breakpoint', 'c0', 'p', {'enabled': False}),
+        AdPlacementAssignment('on', 'between_programs', 'c1', 'p'),
+    )))
+    base = ChannelDefinition.from_mapping({'schema_version': '0.1', 'channel': 7, 'name': 'Scope',
+        'sources': [{'path': str(tmp_path)}], 'programming': {'mode': 'sequential'}})
+    portable = export_portable_channel(base, catalog, library, enabled_override=enabled)
+    portable = ChannelDefinition.from_mapping(channel_to_mapping(portable))
+    assert not portable.advertising.placements[0].policy.enabled
+    assert portable.advertising.placements[1].policy.enabled is enabled
+    assert {asset_id for p in portable.advertising.placements for asset_id in p.policy.asset_ids} == set(ids)
+    with library.connect() as connection:
+        connection.execute('UPDATE media_locations SET online = 0 WHERE asset_id = ?', (ids[0],))
+    assert len(resolve_channel(portable, library).media) == 1

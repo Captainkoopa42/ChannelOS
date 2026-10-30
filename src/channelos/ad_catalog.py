@@ -437,7 +437,7 @@ def export_portable_channel(
                 raise AdCatalogValidationError(f"missing profile {item.profile_id}")
             defaults.update(profile.defaults)
         defaults.update(item.overrides)
-        defaults["enabled"] = enabled
+        defaults["enabled"] = bool(enabled and defaults.get("enabled", True))
         defaults["triggers"] = [item.trigger]
         effective = store.resolve_assignment(ChannelAdAssignment(
             channel.channel, item.collection_id or assignment.collection_id,
@@ -447,7 +447,10 @@ def export_portable_channel(
         aliases = {"strategy": "selection_strategy", "duration_seconds": "break_duration_seconds"}
         leaf.update({aliases.get(key, key): value for key, value in defaults.items()})
         leaf.update(
-            asset_ids=tuple(location.asset_id for location in effective.ad_media),
+            asset_ids=(tuple(location.asset_id for location in effective.ad_media)
+                       or next((p.policy.asset_ids for p in channel.advertising.placements
+                                if p.placement_id == item.placement_id), ())
+                       or (effective.collection.asset_ids if effective.collection else ())),
             collection_id=item.collection_id or assignment.collection_id,
             profile_id=item.profile_id or assignment.profile_id,
             sources=(), placements=(), triggers=(item.trigger,),

@@ -176,8 +176,10 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
         for source in policy.sources:
             configured_ad_ids.update(item.asset.asset_id for item in library.list_online_media_for_source(source.path))
     if channel.advertising.enabled:
+        active_policies = (tuple(item.policy for item in channel.advertising.placements if item.policy.enabled)
+                           if channel.advertising.placements else (channel.advertising,))
         seen_ad_assets: set[str] = set()
-        for source in (source for policy in policies for source in policy.sources):
+        for source in (source for policy in active_policies for source in policy.sources):
             for item in library.list_online_media_for_source(source.path):
                 if allow_offline_ads and not item.location.path.is_file():
                     continue
@@ -186,7 +188,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
                 seen_ad_assets.add(item.asset.asset_id)
                 ad_media.append(item)
         ad_media.sort(key=lambda item: item.location.path_key)
-        requested_ids = tuple(dict.fromkeys(asset_id for policy in policies for asset_id in policy.asset_ids))
+        requested_ids = tuple(dict.fromkeys(asset_id for policy in active_policies for asset_id in policy.asset_ids))
         if requested_ids:
             # The YAML carries a complete, portable snapshot of its collection.
             # Resolve by canonical identity, not by the Studio catalog database.

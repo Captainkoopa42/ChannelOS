@@ -2,6 +2,34 @@
 
 This document defines the complete advertisement system built on top of the alpha implementation. It is an implementation contract, not a claim that every listed capability is already shipped.
 
+## Implementation checkpoint — October 30, 2026
+
+The feature branch now includes reusable SQLite ad catalogs with fixed or
+dynamic canonical Library membership; self-contained v0.5 channel exports;
+separate ad source resolution; sequential breakpoint and interval insertion;
+calendar gap plans committed before exposure; deterministic selection including
+bounded exact Best Fit, Least Played, and Complete Rotation; Smoosh and
+bounded sequential Expand; a dedicated completed-broadcast ledger and an
+independent verified-viewer ledger; Guide markers, the Live AD indicator, and
+Studio authoring, previews, and diagnostics. Python tests and Windows-package
+validation run in GitHub Actions. These are **implemented development slices**,
+not a full Phase A–E acceptance declaration.
+
+**Still required to meet the entire master design:**
+
+- True transition execution for the selectable `fade` and `hold` policies
+  through the playback backend, without corrupting volume controls or clock
+  authority.
+- Deterministic restart catch-up that generates *missed* program and ad
+  opportunities while the process was closed, in chronological order, with
+  bounded work and rotation parity against uninterrupted playback.
+- Richer placement-specific collections/profiles and complete schedule-priority
+  semantics for different Expand borrowing sources.
+- Dedicated per-viewer transition, pause/rewind, media-disappearance, offline
+  ad source, channel-switch, and full Windows Qt/native VLC smoke verification.
+- Explicit backward compatibility and regression evidence for the final
+  release candidate before marking all phases complete.
+
 ## Non-negotiable runtime invariants
 
 1. `ChannelRuntime` remains the sole authority for what is airing at a broadcast timestamp. The Guide is a read-only projection of that timeline.

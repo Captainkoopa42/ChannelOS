@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3", "0.4"}
+SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3", "0.4", "0.5"}
 SUPPORTED_PROGRAMMING_MODES = {"sequential", "shuffle", "calendar"}
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -70,6 +70,17 @@ class AdvertisingDefinition:
     interval_seconds: float | None = None
     break_duration_seconds: float = 120.0
     priority: int = 0
+    # Schema 0.5 embeds canonical asset IDs and effective profile settings:
+    # playback does not depend on the author's private Studio catalog.
+    asset_ids: tuple[str, ...] = ()
+    collection_id: str | None = None
+    profile_id: str | None = None
+    timing_policy: str = "strict_fit"
+    smoosh_minimum_seconds: float = 5.0
+    smoosh_max_trim_seconds: float = 15.0
+    expand_max_seconds: float = 0.0
+    triggers: tuple[str, ...] = ("breakpoint", "interval", "between_programs", "calendar_boundary")
+    transition_behavior: str = "cut"
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,7 +140,7 @@ class ChannelDefinition:
             sources.append(SourceDefinition(path=Path(path_value)))
 
         raw_advertising = raw.get("advertising", {})
-        if version != "0.4" and "advertising" in raw:
+        if version not in {"0.4", "0.5"} and "advertising" in raw:
             raise ChannelValidationError(
                 "advertising settings require schema_version '0.4'"
             )
@@ -139,6 +150,13 @@ class ChannelDefinition:
             "enabled", "sources", "selection_strategy", "breakpoints_seconds",
             "interval_seconds", "break_duration_seconds", "priority",
         }
+        new_ad_keys = {
+            "asset_ids", "collection_id", "profile_id", "timing_policy",
+            "smoosh_minimum_seconds", "smoosh_max_trim_seconds",
+            "expand_max_seconds", "triggers", "transition_behavior",
+        }
+        if version == "0.5":
+            allowed_advertising.update(new_ad_keys)
         if set(raw_advertising) - allowed_advertising:
             names = ", ".join(sorted(set(raw_advertising) - allowed_advertising))
             raise ChannelValidationError(f"unknown advertising field(s): {names}")
@@ -197,9 +215,47 @@ class ChannelDefinition:
                 )
             seen_ad_paths.add(normalized_path.casefold())
             ad_sources.append(SourceDefinition(path=Path(normalized_path)))
-        if ad_enabled and not ad_sources:
+        raw_asset_ids = raw_advertising.get("asset_ids", [])
+        if not isinstance(raw_asset_ids, list) or any(
+            not isinstance(asset_id, str) or not asset_id.strip()
+            for asset_id in raw_asset_ids
+        ):
+            raise ChannelValidationError("advertising.asset_ids must be a list of non-empty strings")
+        asset_ids = tuple(asset_id.strip() for asset_id in raw_asset_ids)
+        if len(set(asset_ids)) != len(asset_ids):
+            raise ChannelValidationError("advertising.asset_ids cannot contain duplicates")
+        collection_id = raw_advertising.get("collection_id")
+        profile_id = raw_advertising.get("profile_id")
+        for field_name, value in (("collection_id", collection_id), ("profile_id", profile_id)):
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ChannelValidationError(f"advertising.{field_name} must be a non-empty string")
+        triggers = raw_advertising.get("triggers",
+            ["breakpoint", "interval", "between_programs", "calendar_boundary"])
+        if not isinstance(triggers, list) or any(
+            not isinstance(trigger, str) for trigger in triggers
+        ) or len(set(triggers)) != len(triggers) or set(triggers) - {
+            "breakpoint", "interval", "between_programs", "calendar_boundary",
+        }:
+            raise ChannelValidationError("advertising.triggers contains invalid or duplicate triggers")
+        transition = raw_advertising.get("transition_behavior", "cut")
+        if transition not in {"cut", "fade", "hold"}:
+            raise ChannelValidationError("advertising.transition_behavior is unsupported")
+        policy_name = raw_advertising.get("timing_policy", "strict_fit")
+        if policy_name not in {"strict_fit", "smoosh", "expand"}:
+            raise ChannelValidationError("advertising.timing_policy is unsupported")
+        try:
+            smoosh_min = float(raw_advertising.get("smoosh_minimum_seconds", 5.0))
+            smoosh_trim = float(raw_advertising.get("smoosh_max_trim_seconds", 15.0))
+            expand_max = float(raw_advertising.get("expand_max_seconds", 0.0))
+        except (TypeError, ValueError) as exc:
+            raise ChannelValidationError("advertising timing limits must be numeric") from exc
+        if not all(math.isfinite(value) for value in (smoosh_min, smoosh_trim, expand_max)):
+            raise ChannelValidationError("advertising timing limits must be finite")
+        if smoosh_min <= 0 or smoosh_trim < 0 or expand_max < 0:
+            raise ChannelValidationError("advertising Smoosh/Expand limits are invalid")
+        if ad_enabled and not (ad_sources or asset_ids):
             raise ChannelValidationError(
-                "advertising.sources must contain at least one indexed media folder when advertising is enabled"
+                "advertising requires indexed sources or canonical asset_ids when enabled"
             )
 
         raw_programming = raw.get("programming")
@@ -211,7 +267,7 @@ class ChannelDefinition:
             "preserve_episode_order",
             "avoid_repeat_days",
         }
-        if version in {"0.2", "0.3", "0.4"}:
+        if version in {"0.2", "0.3", "0.4", "0.5"}:
             allowed_programming.update({"filler_mode", "calendar"})
         unknown_programming = set(raw_programming) - allowed_programming
         if unknown_programming:
@@ -266,7 +322,7 @@ class ChannelDefinition:
         seen_starts: set[datetime] = set()
         for index, item in enumerate(raw_calendar):
             allowed_block = {"start_utc", "asset_id"}
-            if version in {"0.3", "0.4"}:
+            if version in {"0.3", "0.4", "0.5"}:
                 allowed_block.add("filler")
             if (
                 not isinstance(item, dict)
@@ -306,7 +362,7 @@ class ChannelDefinition:
             filler: CalendarFillerDefinition | None = None
             raw_filler = item.get("filler")
             if raw_filler is not None:
-                if version not in {"0.3", "0.4"}:
+                if version not in {"0.3", "0.4", "0.5"}:
                     raise ChannelValidationError(
                         "show-specific filler requires schema_version '0.3' or '0.4'"
                     )
@@ -400,5 +456,14 @@ class ChannelDefinition:
                 interval_seconds=interval_seconds,
                 break_duration_seconds=break_duration_seconds,
                 priority=priority,
+                asset_ids=asset_ids,
+                collection_id=collection_id,
+                profile_id=profile_id,
+                timing_policy=policy_name,
+                smoosh_minimum_seconds=smoosh_min,
+                smoosh_max_trim_seconds=smoosh_trim,
+                expand_max_seconds=expand_max,
+                triggers=tuple(triggers),
+                transition_behavior=transition,
             ),
         )

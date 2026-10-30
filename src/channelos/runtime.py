@@ -1385,7 +1385,7 @@ class ChannelRuntime:
             start_shift = sum(
                 self._plan_duration(plan)
                 for plan in persisted
-                if plan.occurrence_id != occurrence_id
+                if plan.scheduled_at <= selection.program_started_at
                 and plan.scheduled_at + timedelta(
                     seconds=self._plan_duration(plan)
                 ) <= instant

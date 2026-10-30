@@ -481,6 +481,32 @@ class BreakPlanStore:
         self.connection.commit()
         return cursor.rowcount == 1
 
+    def reconcile_completed(self, channel_number: int, *, through: datetime) -> int:
+        """Record only ads whose *scheduled* broadcast has finished.
+
+        A viewer tuning into an advertisement does not mean it has aired to
+        completion. The ledger is idempotent and independent of viewer state.
+        """
+        instant = _utc(through)
+        rows = self.connection.execute(
+            "SELECT plan_id FROM ad_break_plans WHERE channel_number = ? "
+            "ORDER BY scheduled_at, plan_id",
+            (int(channel_number),),
+        ).fetchall()
+        recorded = 0
+        for row in rows:
+            plan = self.load_plan(str(row[0]))
+            if plan is None or plan.scheduled_at > instant:
+                continue
+            for index, segment in enumerate(plan.segments):
+                ended_at = plan.scheduled_at + timedelta(
+                    seconds=segment.start_offset_seconds + segment.duration_seconds
+                )
+                if ended_at <= instant:
+                    if self.record_aired(plan.plan_id, index, segment.asset_id, aired_at=ended_at):
+                        recorded += 1
+        return recorded
+
     def play_counts(self) -> dict[str, int]:
         rows = self.connection.execute("""
             SELECT asset_id, COUNT(*) FROM ad_break_history GROUP BY asset_id

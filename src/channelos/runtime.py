@@ -1155,11 +1155,7 @@ class ChannelRuntime:
 
     @staticmethod
     def _plan_duration(plan: BreakPlan) -> float:
-        return max(
-            (segment.start_offset_seconds + segment.duration_seconds
-             for segment in plan.segments),
-            default=0.0,
-        )
+        return plan.duration_seconds
 
     def _ensure_occurrence_plans(
         self, selection: BroadcastSelection, at: datetime

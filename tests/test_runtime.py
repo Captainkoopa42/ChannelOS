@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from channelos.library import IndexedMedia, MediaAsset, MediaLocation, MediaLibrary
-from channelos.models import ChannelDefinition
+from channelos.models import AdvertisingDefinition, ChannelDefinition, SourceDefinition
 from channelos.probe import MediaProbeResult
 from channelos.resolve import ResolvedChannel, resolve_channel
 from channelos.runtime import (
     ChannelRuntime,
+    advertising_signature,
     ChannelRuntimeError,
     ReturnChoiceRequired,
     RuntimeStore,
@@ -668,3 +670,26 @@ def test_ad_break_pauses_program_clock_and_recovers_committed_plan(
         plan_id, 0, ad_asset.asset_id, aired_at=epoch + timedelta(seconds=12)
     ) is False
     recovered.break_store.close()
+
+
+
+def test_ad_policy_revision_does_not_reset_program_broadcast_clock(tmp_path: Path) -> None:
+    base = build_resolved_channel(tmp_path, [30.0, 45.0], channel_number=72)
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = RuntimeStore(tmp_path / "policy-revision.db")
+    original = ChannelRuntime.open(base, store, now=epoch)
+
+    ad_policy = AdvertisingDefinition(
+        enabled=True,
+        sources=(SourceDefinition(tmp_path / "ads"),),
+        selection_strategy="best_fit",
+        breakpoints_seconds=(10.0,),
+        break_duration_seconds=5.0,
+    )
+    changed_definition = replace(base.definition, advertising=ad_policy)
+    changed = ResolvedChannel(changed_definition, base.media, ())
+    revised = ChannelRuntime.open(changed, store, now=epoch + timedelta(minutes=5))
+
+    assert revised.signature == original.signature
+    assert revised.epoch_utc == original.epoch_utc
+    assert advertising_signature(changed) != advertising_signature(base)

@@ -335,6 +335,8 @@ class GuideService:
             if program.start_utc >= end:
                 break
             programs.append(program)
+            if program.end_utc >= end:
+                break
             selection = _selection_after_boundary(runtime, program.end_utc)
 
         return GuideChannelRow(

@@ -443,6 +443,26 @@ class CalendarTimeline:
                         program_ends_at=segment_end,
                         cycle_index=previous_index,
                         origin="advertisement",
+                        break_id=hashlib.sha256(
+                            (
+                                f"channel:{self.channel_number}:"
+                                f"{gap_anchor.isoformat(timespec='microseconds')}:"
+                                f"{next_start.isoformat(timespec='microseconds')}:"
+                                f"{self.ad_revision}"
+                            ).encode("utf-8")
+                        ).hexdigest(),
+                        parent_program_asset_id=(
+                            self.programs[previous_index].media.asset.asset_id
+                            if previous_index >= 0 else None
+                        ),
+                        parent_program_started_at=(
+                            self._starts[previous_index]
+                            if previous_index >= 0 else None
+                        ),
+                        parent_program_ends_at=(
+                            self._ends[previous_index]
+                            if previous_index >= 0 else None
+                        ),
                     )
             if ad_plan:
                 final_segment = ad_plan[-1]

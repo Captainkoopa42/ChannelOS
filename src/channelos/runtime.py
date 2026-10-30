@@ -1306,6 +1306,7 @@ class ChannelRuntime:
             occurrence_id = hashlib.sha256(
                 "|".join((
                     str(self.channel_number), self.signature,
+                    advertising_signature(self.channel),
                     selection.media.asset.asset_id,
                     selection.program_started_at.isoformat(timespec="microseconds"),
                 )).encode("utf-8")

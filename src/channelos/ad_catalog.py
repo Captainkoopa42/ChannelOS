@@ -8,12 +8,13 @@ performed against MediaLibrary so offline assets cannot silently be substituted.
 
 import json
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from .ad_break_engine import BreakPolicy
 from .library import IndexedMedia, MediaLibrary
+from .models import ChannelDefinition
 
 
 class AdCatalogValidationError(ValueError):
@@ -193,6 +194,9 @@ class AdCatalogStore:
         settings = dict(profile.defaults) if profile else {}
         settings.update(assignment.overrides)
         settings.setdefault("enabled", bool(explicitly_enabled))
+        # Validate inherited defaults *after* overrides, so an invalid
+        # channel-specific policy never slips into the portable snapshot.
+        BreakProfile("resolved", "Resolved", settings)
         media: tuple[Any, ...] = ()
         if settings["enabled"] and collection:
             online = library.online_locations_for_assets(collection.asset_ids)
@@ -224,3 +228,56 @@ def resolve_indexed_ad_media(
             "collection contains missing or offline library assets: " + ", ".join(missing)
         )
     return tuple(indexed[asset_id] for asset_id in requested)
+
+
+def export_portable_channel(
+    channel: ChannelDefinition,
+    store: AdCatalogStore,
+    library: MediaLibrary,
+) -> ChannelDefinition:
+    """Embed the assigned catalog and effective profile into a portable v0.5 YAML.
+
+    The catalog remains an authoring aid, not a runtime dependency. Once
+    serialized, all required canonical media IDs and policy defaults travel
+    with the channel. Unassigned channels are left unchanged.
+    """
+    assignment = store.get_assignment(channel.channel)
+    if assignment is None:
+        return channel
+    resolved = store.resolve_channel(
+        channel.channel, library,
+        explicitly_enabled=channel.advertising.enabled,
+    )
+    settings = resolved.settings
+    enabled = settings.get("enabled", False)
+    if not isinstance(enabled, bool):
+        raise AdCatalogValidationError("advertising.enabled must be boolean")
+    collection = resolved.collection
+    if enabled and collection is None and not channel.advertising.sources:
+        raise AdCatalogValidationError(
+            "an enabled catalog assignment needs a collection or legacy ad source"
+        )
+    options = {
+        "enabled": enabled,
+        "asset_ids": collection.asset_ids if collection else (),
+        "collection_id": assignment.collection_id,
+        "profile_id": assignment.profile_id,
+        "selection_strategy": settings.get("strategy", channel.advertising.selection_strategy),
+        "breakpoints_seconds": tuple(settings.get(
+            "breakpoints_seconds", channel.advertising.breakpoints_seconds)),
+        "interval_seconds": settings.get("interval_seconds", channel.advertising.interval_seconds),
+        "break_duration_seconds": settings.get("duration_seconds", channel.advertising.break_duration_seconds),
+        "priority": settings.get("priority", channel.advertising.priority),
+        "timing_policy": settings.get("timing_policy", "strict_fit"),
+        "smoosh_minimum_seconds": settings.get("smoosh_minimum_seconds", 5.0),
+        "smoosh_max_trim_seconds": settings.get("smoosh_max_trim_seconds", 15.0),
+        "expand_max_seconds": settings.get("expand_max_seconds", 0.0),
+        "triggers": tuple(settings.get(
+            "triggers", ("breakpoint", "interval", "between_programs", "calendar_boundary"))),
+        "transition_behavior": settings.get("transition_behavior", "cut"),
+    }
+    return replace(
+        channel,
+        schema_version="0.5",
+        advertising=replace(channel.advertising, **options),
+    )

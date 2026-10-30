@@ -532,6 +532,18 @@ class BreakPlanStore:
                 matches.append(plan)
         return tuple(matches)
 
+    def plans_for_occurrence(self, occurrence_id: str) -> tuple[BreakPlan, ...]:
+        """Load all immutable plans belonging to one program occurrence."""
+        rows = self.connection.execute("""
+            SELECT plan_id FROM ad_break_plans
+            WHERE occurrence_id = ?
+            ORDER BY scheduled_at, plan_id
+        """, (str(occurrence_id),)).fetchall()
+        return tuple(
+            plan for row in rows
+            if (plan := self.load_plan(str(row[0]))) is not None
+        )
+
     def active_plan_at(
         self, channel_number: int, at: datetime
     ) -> BreakPlan | None:

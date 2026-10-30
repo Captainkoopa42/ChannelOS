@@ -1193,12 +1193,15 @@ class ChannelRuntime:
         if self.break_store is None or not self.channel.ad_media:
             return ()
         policy = self._ad_policy()
-        occurrence_id = self._break_occurrence_id(selection)
+        occurrence_id = self._program_occurrence_id(selection)
+        policy_revision = advertising_signature(self.channel)
         occurrence = ProgramOccurrence(
             occurrence_id, self.channel_number, selection.media.asset.asset_id,
             selection.program_started_at, selection.program_ends_at,
         )
-        opportunities = BreakOpportunityScheduler.for_occurrence(occurrence, policy)
+        opportunities = BreakOpportunityScheduler.for_occurrence(
+            occurrence, policy, revision=policy_revision
+        )
         earlier_plans = self.break_store.plans_for_channel(
             self.channel_number, start=self.epoch_utc,
             end=at + timedelta(microseconds=1),
@@ -1209,6 +1212,9 @@ class ChannelRuntime:
             if plan.occurrence_id != occurrence_id
             and plan.scheduled_at < at
         )
+        occurrence_plans = list(
+            self.break_store.plans_for_occurrence(occurrence_id)
+        )
         candidates = tuple(
             AdCandidate(item.asset.asset_id, float(item.asset.duration_seconds))
             for item in self.channel.ad_media
@@ -1217,7 +1223,6 @@ class ChannelRuntime:
         )
         engine = AdSelectionEngine()
         committed: list[BreakPlan] = []
-        prior_duration = 0.0
         counts = self.break_store.play_counts()
         for opportunity in opportunities:
             existing = self.break_store.load_opportunity(opportunity.opportunity_id)
@@ -1235,6 +1240,14 @@ class ChannelRuntime:
                     and opportunity_offset <= selection.offset_seconds + 1e-6
                 ):
                     continue
+                prior_duration = sum(
+                    self._plan_duration(previous)
+                    for previous in occurrence_plans
+                    if previous.scheduled_at < (
+                        opportunity.scheduled_at
+                        + timedelta(seconds=prior_occurrence_duration)
+                    )
+                )
                 planned = engine.select(
                     candidates,
                     opportunity.duration_seconds,
@@ -1253,8 +1266,7 @@ class ChannelRuntime:
                     scheduled_at=(
                         selection.program_started_at
                         + timedelta(seconds=(
-                            (opportunity.scheduled_at - selection.program_started_at).total_seconds()
-                            + prior_occurrence_duration + prior_duration
+                            opportunity_offset + prior_occurrence_duration + prior_duration
                         ))
                     ),
                     reserved_seconds=opportunity.duration_seconds,
@@ -1264,8 +1276,8 @@ class ChannelRuntime:
                 )
                 # The immutable plan is durable before runtime can expose its first ad.
                 plan = self.break_store.commit(plan)
+                occurrence_plans.append(plan)
             committed.append(plan)
-            prior_duration += self._plan_duration(plan)
         return tuple(committed)
 
     def _selection_at(self, at: datetime) -> BroadcastSelection:
@@ -1413,7 +1425,7 @@ class ChannelRuntime:
         if self.break_store is None:
             return ()
         event = selection.event
-        occurrence_id = event.break_occurrence_id
+        occurrence_id = event.program_occurrence_id
         if not occurrence_id:
             return ()
         return self.break_store.plans_for_occurrence(occurrence_id)

@@ -103,7 +103,7 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
             _calendar_block_mapping(block)
             for block in definition.programming.calendar
         ]
-    if definition.advertising.enabled or definition.advertising.sources:
+    if definition.advertising.enabled or definition.advertising.sources or definition.advertising.asset_ids:
         mapping["advertising"] = {
             "enabled": definition.advertising.enabled,
             "sources": [
@@ -116,6 +116,18 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
             "break_duration_seconds": definition.advertising.break_duration_seconds,
             "priority": definition.advertising.priority,
         }
+        if definition.schema_version == "0.5":
+            mapping["advertising"].update({
+                "asset_ids": list(definition.advertising.asset_ids),
+                "collection_id": definition.advertising.collection_id,
+                "profile_id": definition.advertising.profile_id,
+                "timing_policy": definition.advertising.timing_policy,
+                "smoosh_minimum_seconds": definition.advertising.smoosh_minimum_seconds,
+                "smoosh_max_trim_seconds": definition.advertising.smoosh_max_trim_seconds,
+                "expand_max_seconds": definition.advertising.expand_max_seconds,
+                "triggers": list(definition.advertising.triggers),
+                "transition_behavior": definition.advertising.transition_behavior,
+            })
     mapping["presentation"] = {
         "number_width": definition.presentation.number_width,
     }

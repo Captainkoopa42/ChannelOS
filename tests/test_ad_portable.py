@@ -348,3 +348,70 @@ def test_active_calendar_ad_plan_survives_policy_revision(tmp_path):
     assert unchanged.media.asset.asset_id == playing.media.asset.asset_id
     assert runtime2.broadcast_at(epoch + timedelta(seconds=91)).origin == "calendar"
     runtime2.break_store.close()
+
+
+
+def test_calendar_mid_program_break_resumes_content_without_moving_fixed_slot(tmp_path):
+    library, root, ads = indexed(tmp_path)
+    asset_ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
+    show = library.list_online_media_for_source(root)[0]
+    epoch = datetime(2026, 10, 30, 12, tzinfo=UTC)
+    blocks = [
+        {"asset_id": show.asset.asset_id, "start_utc": epoch.isoformat()},
+        {"asset_id": show.asset.asset_id,
+         "start_utc": (epoch + timedelta(seconds=90)).isoformat()},
+    ]
+    raw = channel_to_mapping(config(
+        root, asset_ids, mode="calendar", calendar=blocks, triggers=["breakpoint"],
+    ))
+    raw["advertising"]["breakpoints_seconds"] = [30]
+    raw["advertising"]["break_duration_seconds"] = 10
+    resolved = resolve_channel(ChannelDefinition.from_mapping(raw), library)
+    state = RuntimeStore(tmp_path / "calendar-mid.db")
+    runtime = ChannelRuntime.open(resolved, state, now=epoch)
+    before = runtime.broadcast_at(epoch + timedelta(seconds=29))
+    middle = runtime.broadcast_at(epoch + timedelta(seconds=35))
+    resumed = runtime.broadcast_at(epoch + timedelta(seconds=43))
+    next_fixed = runtime.broadcast_at(epoch + timedelta(seconds=91))
+    assert before.origin == "calendar"
+    assert before.offset_seconds == pytest.approx(29)
+    assert middle.origin == "advertisement"
+    assert middle.offset_seconds == pytest.approx(5)
+    assert middle.event.break_id
+    assert middle.event.parent_program_asset_id == show.asset.asset_id
+    assert resumed.origin == "calendar"
+    assert resumed.offset_seconds == pytest.approx(33)
+    assert resumed.program_ends_at == epoch + timedelta(seconds=70)
+    assert next_fixed.origin == "calendar"
+    assert next_fixed.offset_seconds == pytest.approx(1)
+    runtime.break_store.close()
+    restarted = ChannelRuntime.open(resolved, RuntimeStore(tmp_path / "calendar-mid.db"),
+                                    now=epoch)
+    again = restarted.broadcast_at(epoch + timedelta(seconds=35))
+    assert again.event.break_id == middle.event.break_id
+    assert again.media.asset.asset_id == middle.media.asset.asset_id
+    restarted.break_store.close()
+
+
+def test_calendar_mid_program_break_skips_when_no_slack(tmp_path):
+    library, root, ads = indexed(tmp_path)
+    asset_ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
+    show = library.list_online_media_for_source(root)[0]
+    epoch = datetime(2026, 10, 30, 12, tzinfo=UTC)
+    blocks = [
+        {"asset_id": show.asset.asset_id, "start_utc": epoch.isoformat()},
+        {"asset_id": show.asset.asset_id,
+         "start_utc": (epoch + timedelta(seconds=60)).isoformat()},
+    ]
+    raw = channel_to_mapping(config(
+        root, asset_ids, mode="calendar", calendar=blocks, triggers=["breakpoint"],
+    ))
+    raw["advertising"]["breakpoints_seconds"] = [30]
+    raw["advertising"]["break_duration_seconds"] = 10
+    resolved = resolve_channel(ChannelDefinition.from_mapping(raw), library)
+    runtime = ChannelRuntime.open(resolved, RuntimeStore(tmp_path / "no-slack.db"),
+                                  now=epoch)
+    assert runtime.broadcast_at(epoch + timedelta(seconds=35)).origin == "calendar"
+    assert runtime.broadcast_at(epoch + timedelta(seconds=61)).origin == "calendar"
+    assert runtime.broadcast_at(epoch + timedelta(seconds=61)).offset_seconds == pytest.approx(1)
+    runtime.break_store.close()

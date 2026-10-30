@@ -103,7 +103,12 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
             _calendar_block_mapping(block)
             for block in definition.programming.calendar
         ]
-    if definition.advertising.enabled or definition.advertising.sources or definition.advertising.asset_ids:
+    if (
+        definition.schema_version in {"0.4", "0.5"}
+        and (definition.advertising.enabled
+             or definition.advertising.sources
+             or definition.advertising.asset_ids)
+    ):
         mapping["advertising"] = {
             "enabled": definition.advertising.enabled,
             "sources": [

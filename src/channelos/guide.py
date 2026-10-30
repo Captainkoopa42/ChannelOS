@@ -34,6 +34,9 @@ class GuideProgram:
     is_past: bool
     is_future: bool
     is_advertisement: bool = False
+    event_id: str = ""
+    parent_program_id: str | None = None
+    break_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,15 +63,7 @@ class GuideHorizon:
 
 
 def _schedule_id(runtime: ChannelRuntime, selection: BroadcastSelection) -> str:
-    payload = "|".join(
-        (
-            str(runtime.channel_number),
-            runtime.signature,
-            selection.media.asset.asset_id,
-            selection.program_started_at.isoformat(timespec="microseconds"),
-        )
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return selection.event.event_id
 
 
 def _explanation(runtime: ChannelRuntime, selection: BroadcastSelection) -> tuple[str, ...]:
@@ -143,7 +138,10 @@ def _program_from_selection(
         is_current=start <= reference < end,
         is_past=end <= reference,
         is_future=start > reference,
-        is_advertisement=selection.origin == "advertisement",
+        is_advertisement=selection.event.event_type == "advertisement",
+        event_id=selection.event.event_id,
+        parent_program_id=selection.event.parent_program_id,
+        break_id=selection.event.break_id,
     )
 
 

@@ -415,3 +415,38 @@ def test_calendar_mid_program_break_skips_when_no_slack(tmp_path):
     assert runtime.broadcast_at(epoch + timedelta(seconds=61)).origin == "calendar"
     assert runtime.broadcast_at(epoch + timedelta(seconds=61)).offset_seconds == pytest.approx(1)
     runtime.break_store.close()
+
+
+
+def test_restart_catches_up_missed_airings_in_program_order(tmp_path):
+    library, root, ads = indexed(tmp_path)
+    ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
+    raw = channel_to_mapping(config(root, ids, number=88))
+    raw["advertising"]["selection_strategy"] = "least_played"
+    raw["advertising"]["break_duration_seconds"] = 15
+    resolved = resolve_channel(ChannelDefinition.from_mapping(raw), library)
+    epoch = datetime(2026, 10, 30, 12, tzinfo=UTC)
+
+    baseline_store = RuntimeStore(tmp_path / "baseline.sqlite")
+    baseline = ChannelRuntime.open(resolved, baseline_store, now=epoch)
+    for second in range(0, 301, 5):
+        baseline.broadcast_at(epoch + timedelta(seconds=second))
+    expected = baseline.broadcast_at(epoch + timedelta(seconds=300))
+    expected_counts = baseline.break_store.play_counts()
+    assert sum(expected_counts.values()) >= 3
+    baseline.break_store.close()
+
+    offline_store = RuntimeStore(tmp_path / "offline.sqlite")
+    first = ChannelRuntime.open(resolved, offline_store, now=epoch)
+    first.broadcast_at(epoch)
+    first.break_store.close()
+    reopened = ChannelRuntime.open(
+        resolved, RuntimeStore(tmp_path / "offline.sqlite"),
+        now=epoch + timedelta(seconds=300),
+    )
+    recovered = reopened.broadcast_at(epoch + timedelta(seconds=300))
+    assert reopened.break_store.play_counts() == expected_counts
+    assert recovered.media.asset.asset_id == expected.media.asset.asset_id
+    assert recovered.offset_seconds == pytest.approx(expected.offset_seconds)
+    assert reopened.break_store.catchup_cursor(88) is not None
+    reopened.break_store.close()

@@ -494,29 +494,44 @@ class BreakPlanStore:
         return cursor.rowcount == 1
 
     def reconcile_completed(self, channel_number: int, *, through: datetime) -> int:
-        """Record only ads whose *scheduled* broadcast has finished.
+        """Catch up durable completed-airing entries for already committed plans.
 
-        A viewer tuning into an advertisement does not mean it has aired to
-        completion. The ledger is idempotent and independent of viewer state.
+        Reads completed segment identities in one query, avoiding reloading the
+        entire plans table and rechecking all existing rows one at a time on
+        every Tune/Guide projection. No viewer count is changed by this action.
         """
         instant = _utc(through)
-        rows = self.connection.execute(
-            "SELECT plan_id FROM ad_break_plans WHERE channel_number = ? "
-            "ORDER BY scheduled_at, plan_id",
-            (int(channel_number),),
-        ).fetchall()
+        rows = self.connection.execute("""
+            SELECT plan_id, scheduled_at, payload FROM ad_break_plans
+            WHERE channel_number = ? AND scheduled_at <= ?
+            ORDER BY scheduled_at, plan_id
+        """, (int(channel_number), instant.isoformat())).fetchall()
+        if not rows:
+            return 0
+        completed = {
+            (str(row[0]), int(row[1]))
+            for row in self.connection.execute("""
+                SELECT h.plan_id, h.segment_index FROM ad_break_history h
+                JOIN ad_break_plans p ON p.plan_id = h.plan_id
+                WHERE p.channel_number = ?
+            """, (int(channel_number),))
+        }
         recorded = 0
-        for row in rows:
-            plan = self.load_plan(str(row[0]))
-            if plan is None or plan.scheduled_at > instant:
-                continue
-            for index, segment in enumerate(plan.segments):
-                ended_at = plan.scheduled_at + timedelta(
-                    seconds=segment.start_offset_seconds + segment.duration_seconds
+        for plan_id, start_text, payload in rows:
+            starts_at = _utc(datetime.fromisoformat(str(start_text)))
+            for index, segment in enumerate(json.loads(payload)):
+                if (str(plan_id), index) in completed:
+                    continue
+                ended_at = starts_at + timedelta(
+                    seconds=float(segment["start_offset_seconds"])
+                    + float(segment["duration_seconds"])
                 )
-                if ended_at <= instant:
-                    if self.record_aired(plan.plan_id, index, segment.asset_id, aired_at=ended_at):
-                        recorded += 1
+                if ended_at > instant:
+                    continue
+                if self.record_aired(
+                    str(plan_id), index, str(segment["asset_id"]), aired_at=ended_at
+                ):
+                    recorded += 1
         return recorded
 
     def record_viewed(

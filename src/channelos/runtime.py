@@ -1368,7 +1368,13 @@ class ChannelRuntime:
         instant = require_aware_utc(at)
         if self.break_store is not None:
             self.break_store.reconcile_completed(self.channel_number, through=instant)
-        if self.break_store is None or not self.channel.definition.advertising.enabled:
+        if (
+            self.break_store is None
+            or not self.channel.definition.advertising.enabled
+            or self.channel.definition.programming.mode == "calendar"
+        ):
+            # Fixed calendar starts are authoritative; the calendar timeline
+            # already projects its persisted gap ads.
             return self.timeline.selection_at(self.epoch_utc, instant)
 
         # First project using the program clock, then remove the broadcast time

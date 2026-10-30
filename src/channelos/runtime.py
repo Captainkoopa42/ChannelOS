@@ -84,6 +84,7 @@ class BroadcastEvent:
     parent_program_asset_id: str | None = None
     parent_program_started_at: datetime | None = None
     parent_program_ends_at: datetime | None = None
+    program_occurrence_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +100,7 @@ class BroadcastSelection:
     parent_program_asset_id: str | None = None
     parent_program_started_at: datetime | None = None
     parent_program_ends_at: datetime | None = None
+    program_occurrence_id: str | None = None
 
     @property
     def media(self) -> IndexedMedia:
@@ -112,7 +114,11 @@ class BroadcastSelection:
         identity = hashlib.sha256("|".join((
             event_type,
             self.media.asset.asset_id,
-            self.program_started_at.isoformat(timespec="microseconds"),
+            (
+                self.program_occurrence_id
+                if event_type != "advertisement" and self.program_occurrence_id
+                else self.program_started_at.isoformat(timespec="microseconds")
+            ),
             self.break_id or "",
         )).encode("utf-8")).hexdigest()
         return BroadcastEvent(
@@ -127,6 +133,7 @@ class BroadcastSelection:
             parent_program_asset_id=self.parent_program_asset_id,
             parent_program_started_at=self.parent_program_started_at,
             parent_program_ends_at=self.parent_program_ends_at,
+            program_occurrence_id=self.program_occurrence_id,
         )
 
 
@@ -1157,20 +1164,21 @@ class ChannelRuntime:
     def _plan_duration(plan: BreakPlan) -> float:
         return plan.duration_seconds
 
+    def _program_occurrence_id(self, selection: BroadcastSelection) -> str:
+        return hashlib.sha256("|".join((
+            str(self.channel_number), self.signature,
+            advertising_signature(self.channel),
+            selection.media.asset.asset_id,
+            selection.program_started_at.isoformat(timespec="microseconds"),
+        )).encode("utf-8")).hexdigest()
+
     def _ensure_occurrence_plans(
         self, selection: BroadcastSelection, at: datetime
     ) -> tuple[BreakPlan, ...]:
         if self.break_store is None or not self.channel.ad_media:
             return ()
         policy = self._ad_policy()
-        occurrence_id = hashlib.sha256(
-            "|".join((
-                str(self.channel_number), self.signature,
-                advertising_signature(self.channel),
-                selection.media.asset.asset_id,
-                selection.program_started_at.isoformat(timespec="microseconds"),
-            )).encode("utf-8")
-        ).hexdigest()
+        occurrence_id = self._program_occurrence_id(selection)
         occurrence = ProgramOccurrence(
             occurrence_id, self.channel_number, selection.media.asset.asset_id,
             selection.program_started_at, selection.program_ends_at,
@@ -1290,6 +1298,26 @@ class ChannelRuntime:
                         segment_end = segment_start + timedelta(
                             seconds=segment.duration_seconds
                         )
+                        occurrence_id = self._program_occurrence_id(base)
+                        prior_program_duration = sum(
+                            self._plan_duration(plan)
+                            for plan in prior
+                            if plan.occurrence_id != occurrence_id
+                            and plan.scheduled_at + timedelta(
+                                seconds=self._plan_duration(plan)
+                            ) <= active.scheduled_at
+                        )
+                        parent_start = base.program_started_at + timedelta(
+                            seconds=prior_program_duration
+                        )
+                        parent_end = base.program_ends_at + timedelta(
+                            seconds=prior_program_duration
+                        )
+                        parent_selection = BroadcastSelection(
+                            base.program, base.offset_seconds, parent_start,
+                            parent_end, base.cycle_index,
+                            program_occurrence_id=occurrence_id,
+                        )
                         return BroadcastSelection(
                             ad_program,
                             (instant - segment_start).total_seconds(),
@@ -1297,11 +1325,12 @@ class ChannelRuntime:
                             segment_end,
                             base.cycle_index,
                             origin="advertisement",
-                            parent_program_id=base.event.event_id,
+                            parent_program_id=parent_selection.event.event_id,
                             break_id=active.plan_id,
                             parent_program_asset_id=base.media.asset.asset_id,
-                            parent_program_started_at=base.program_started_at,
-                            parent_program_ends_at=base.program_ends_at,
+                            parent_program_started_at=parent_start,
+                            parent_program_ends_at=parent_end,
+                            program_occurrence_id=occurrence_id,
                         )
             next_content_time = instant - timedelta(seconds=elapsed_before)
             if next_content_time == content_time:
@@ -1309,6 +1338,7 @@ class ChannelRuntime:
             content_time = next_content_time
 
         selection = self.timeline.selection_at(self.epoch_utc, content_time)
+        occurrence_id = self._program_occurrence_id(selection)
         if elapsed_before:
             occurrence_id = hashlib.sha256(
                 "|".join((
@@ -1337,6 +1367,14 @@ class ChannelRuntime:
                 selection.program_ends_at + timedelta(seconds=elapsed_before),
                 selection.cycle_index,
                 selection.origin,
+                program_occurrence_id=occurrence_id,
+            )
+        else:
+            selection = BroadcastSelection(
+                selection.program, selection.offset_seconds,
+                selection.program_started_at, selection.program_ends_at,
+                selection.cycle_index, selection.origin,
+                program_occurrence_id=occurrence_id,
             )
         return selection
 
@@ -1352,21 +1390,11 @@ class ChannelRuntime:
             return ()
         event = selection.event
         if event.event_type == "advertisement":
-            asset_id = event.parent_program_asset_id
-            started_at = event.parent_program_started_at
-            ends_at = event.parent_program_ends_at
+            occurrence_id = event.program_occurrence_id
         else:
-            asset_id = event.asset_id
-            started_at = event.start_utc
-            ends_at = event.end_utc
-            self._ensure_occurrence_plans(selection, at or started_at)
-        if not asset_id or started_at is None or ends_at is None:
+            occurrence_id = event.program_occurrence_id
+        if not occurrence_id:
             return ()
-        occurrence_id = hashlib.sha256("|".join((
-            str(self.channel_number), self.signature,
-            advertising_signature(self.channel), asset_id,
-            started_at.isoformat(timespec="microseconds"),
-        )).encode("utf-8")).hexdigest()
         return self.break_store.plans_for_occurrence(occurrence_id)
 
     def broadcast_at(self, at: datetime | None = None) -> BroadcastSelection:

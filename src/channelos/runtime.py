@@ -352,10 +352,19 @@ class CalendarTimeline:
         for opportunity, settings in opportunities:
             if opportunity.trigger not in {"breakpoint", "interval"}:
                 continue
+            content_offset = (opportunity.scheduled_at - start).total_seconds()
+            inserted = 0.0
+            elapsed = 0.0
+            previous = None
+            for saved in sorted(existing, key=lambda p: p.scheduled_at):
+                saved_offset = (saved.scheduled_at - start).total_seconds() - elapsed
+                if saved_offset < content_offset - .001:
+                    inserted += saved.duration_seconds
+                elif abs(saved_offset - content_offset) < .001:
+                    previous = saved
+                elapsed += saved.duration_seconds
             expected = opportunity.scheduled_at + timedelta(seconds=inserted)
-            previous = next((p for p in existing if abs((p.scheduled_at - expected).total_seconds()) < .001), None)
             if previous is not None:
-                inserted += previous.duration_seconds
                 continue
             activation = self.break_store.policy_activation(self.channel_number) if self.break_store else None
             if activation is not None and expected < activation:

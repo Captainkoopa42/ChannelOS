@@ -465,3 +465,25 @@ def test_watch_from_beginning_respects_explicit_next_event_content_borrow(tmp_pa
     session = TelevisionSession(TelevisionRuntime((runtime,), store), FakeBackend())
     decision = session.watch_from_beginning(7, EPOCH + timedelta(seconds=75), now=EPOCH + timedelta(seconds=80))
     assert decision.viewer_selection.offset_seconds == 5
+
+
+def test_calendar_policy_removing_trigger_keeps_its_active_time_in_resume_mapping(tmp_path):
+    library, definition, _ = setup(tmp_path, breakpoints_seconds=[10, 20],
+        break_duration_seconds=10, triggers=['breakpoint'])
+    show = resolve_channel(definition, library).media[0].asset.asset_id
+    raw = channel_to_mapping(definition)
+    raw['programming'] = {'mode': 'calendar', 'calendar': [
+        {'asset_id': show, 'start_utc': EPOCH.isoformat()},
+        {'asset_id': show, 'start_utc': (EPOCH + timedelta(seconds=100)).isoformat()},
+    ]}
+    first, _ = open_runtime(tmp_path, library, ChannelDefinition.from_mapping(raw))
+    active = first.broadcast_at(EPOCH + timedelta(seconds=11))
+    first.break_store.close()
+    raw['advertising']['breakpoints_seconds'] = [20]
+    revised, _ = open_runtime(tmp_path, library, ChannelDefinition.from_mapping(raw),
+                              now=EPOCH + timedelta(seconds=12))
+    assert revised.broadcast_at(EPOCH + timedelta(seconds=12)).break_id == active.break_id
+    following = revised.broadcast_at(EPOCH + timedelta(seconds=31))
+    assert following.origin == 'advertisement'
+    assert following.program_started_at == EPOCH + timedelta(seconds=30)
+    assert revised.broadcast_at(EPOCH + timedelta(seconds=41)).offset_seconds == 21

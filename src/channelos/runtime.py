@@ -556,6 +556,12 @@ def advertising_signature(channel: ResolvedChannel) -> str:
         "interval_seconds": advertising.interval_seconds,
         "break_duration_seconds": advertising.break_duration_seconds,
         "priority": advertising.priority,
+        "timing_policy": advertising.timing_policy,
+        "smoosh_minimum_seconds": advertising.smoosh_minimum_seconds,
+        "smoosh_max_trim_seconds": advertising.smoosh_max_trim_seconds,
+        "expand_max_seconds": advertising.expand_max_seconds,
+        "triggers": list(advertising.triggers),
+        "transition_behavior": advertising.transition_behavior,
         "ad_assets": sorted(item.asset.asset_id for item in channel.ad_media),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -1166,6 +1172,10 @@ class ChannelRuntime:
             duration_seconds=definition.break_duration_seconds,
             priority=definition.priority,
             strategy=definition.selection_strategy,
+            timing_policy=definition.timing_policy,
+            smoosh_minimum_seconds=definition.smoosh_minimum_seconds,
+            smoosh_max_trim_seconds=definition.smoosh_max_trim_seconds,
+            expand_max_seconds=definition.expand_max_seconds,
         )
 
     @staticmethod
@@ -1199,9 +1209,12 @@ class ChannelRuntime:
             occurrence_id, self.channel_number, selection.media.asset.asset_id,
             selection.program_started_at, selection.program_ends_at,
         )
-        opportunities = BreakOpportunityScheduler.for_occurrence(
-            occurrence, policy, revision=policy_revision
+        opportunities = tuple(
+            opportunity for opportunity in BreakOpportunityScheduler.for_occurrence(
+                occurrence, policy, revision=policy_revision
+            ) if opportunity.trigger in self.channel.definition.advertising.triggers
         )
+        opportunities = BreakOpportunityScheduler.arbitrate(opportunities)
         earlier_plans = self.break_store.plans_for_channel(
             self.channel_number, start=self.epoch_utc,
             end=at + timedelta(microseconds=1),
@@ -1254,6 +1267,10 @@ class ChannelRuntime:
                     strategy=policy.strategy,
                     seed=opportunity.opportunity_id,
                     play_counts=counts,
+                    timing_policy=policy.timing_policy,
+                    smoosh_minimum_seconds=policy.smoosh_minimum_seconds,
+                    smoosh_max_trim_seconds=policy.smoosh_max_trim_seconds,
+                    expand_max_seconds=policy.expand_max_seconds,
                 )
                 plan_id = hashlib.sha256(
                     opportunity.opportunity_id.encode("utf-8")
@@ -1269,10 +1286,14 @@ class ChannelRuntime:
                             opportunity_offset + prior_occurrence_duration + prior_duration
                         ))
                     ),
-                    reserved_seconds=opportunity.duration_seconds,
+                    reserved_seconds=max(
+                        opportunity.duration_seconds,
+                        max((segment.start_offset_seconds + segment.duration_seconds
+                             for segment in planned), default=0.0),
+                    ),
                     segments=tuple(planned),
                     strategy=policy.strategy,
-                    timing_policy="strict_fit",
+                    timing_policy=policy.timing_policy,
                 )
                 # The immutable plan is durable before runtime can expose its first ad.
                 plan = self.break_store.commit(plan)

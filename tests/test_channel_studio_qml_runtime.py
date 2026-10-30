@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -457,6 +458,100 @@ def test_ad_management_controls_edit_transition_placements_and_restore_cancelled
     assert controller.saved['placements'][0]['trigger'] == 'between_programs'
     assert controller.saved['placements'][0]['collection_id'] == 'ads'
     evaluate('adCatalogDialog.close()')
+    window.close()
+    item.setParentItem(None)
+    item.deleteLater()
+    engine.deleteLater()
+    app.processEvents()
+
+
+def test_media_bin_browses_only_selected_sources_and_searches_their_programs():
+    from PySide6.QtQuick import QQuickWindow
+
+    class SourceController(FakeStudioController):
+        @Slot(int, result="QVariantMap")
+        def loadChannelStudio(self, channel_number):
+            result = super().loadChannelStudio(channel_number)
+
+            def media(asset, title, path, **extra):
+                return {"assetId": asset, "title": title, "path": path,
+                        "sourceRoot": "C:/Shows", "durationSeconds": 30,
+                        "containerFormat": "MP4", **extra}
+
+            result["draft"].update({
+                "sources": ["C:/Shows/Comedy", "C:/Shows/Drama", "C:/Shows/Empty", "C:/Copies"],
+                "adSources": ["C:/Shows/Comedy/Ads"],
+                "media": [
+                    media("a", "Alpha", "C:/Shows/Comedy/alpha.mp4", locations=[
+                        {"path": "C:/Shows/Comedy/alpha.mp4", "sourceRoot": "C:/Shows"},
+                        {"path": "C:/Copies/alpha.mp4", "sourceRoot": "C:/Copies"}]),
+                    media("b", "Beta", "C:/Shows/Comedy/beta.mp4"),
+                    media("c", "Drama", "c:\\shows\\DRAMA\\drama.mp4"),
+                    media("sibling", "Wrong sibling", "C:/Shows/Comedy Extra/wrong.mp4"),
+                    media("hidden", "Hidden", "X:/Other/hidden.mp4"),
+                    media("ad", "Advertisement", "C:/Shows/Comedy/Ads/ad.mp4"),
+                    media("shared", "Shared", "X:/Other/shared.mp4", locations=[
+                        {"path": "X:/Other/shared.mp4", "sourceRoot": "X:/Other"},
+                        {"path": "C:/Copies/shared.mp4", "sourceRoot": "C:/Copies"}]),
+                ],
+                "calendarBlocks": [],
+            })
+            return result
+
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller, host = SourceController(), FakeStudioHost()
+    engine = QQmlApplicationEngine()
+    warnings = []
+    engine.warnings.connect(lambda errors: warnings.extend(error.toString() for error in errors))
+    engine.rootContext().setContextProperty("channelOS", controller)
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(
+        Path(channelos.__file__).resolve().parent / "qml" / "ChannelStudioScreen.qml")))
+    while component.isLoading():
+        app.processEvents()
+    assert component.isReady(), [error.toString() for error in component.errors()]
+    item = component.create()
+    window = QQuickWindow()
+    window.resize(1600, 1000)
+    item.setParentItem(window.contentItem())
+    item.setProperty("hostWindow", host)
+    window.show()
+    app.processEvents()
+
+    def evaluate(code):
+        expression = QQmlExpression(engine.contextForObject(item), item, code)
+        result, _ = expression.evaluate()
+        assert not expression.hasError(), expression.error().toString()
+        app.processEvents()
+        return result.toVariant() if hasattr(result, "toVariant") else result
+
+    assert evaluate("mediaBinRows().map(function(row) { return row.count })") == [2, 1, 0, 2]
+    assert item.property("mediaBinAssetCount") == 4  # shared copies count once in the pool
+    assert evaluate("mediaBinRows().every(function(row) { return row.kind === 'source' })")
+    assert "C:/Copies" in evaluate("sourceChoices()")
+    evaluate("toggleMediaSource('C:/Shows/Comedy')")
+    assert evaluate("mediaBinRows().filter(function(row) { return row.kind === 'media' }).map(function(row) { return row.media.assetId })") == ["a", "b"]
+
+    evaluate('mediaSearch.text = "Beta"')
+    assert evaluate("mediaBinRows().filter(function(row) { return row.kind === 'source' }).map(function(row) { return row.matchCount })") == [1, 0, 0, 0]
+    assert evaluate("mediaBinRows().filter(function(row) { return row.kind === 'media' }).map(function(row) { return row.media.assetId })") == ["b"]
+    evaluate('mediaSearch.text = "Hidden"')
+    assert evaluate("mediaBinRows().filter(function(row) { return row.kind === 'media' }).length") == 0
+    evaluate('mediaSearch.text = "C:/Copies/shared"')
+    assert evaluate("mediaBinRows().filter(function(row) { return row.kind === 'media' })[0].media.path") == "C:/Copies/shared.mp4"
+
+    evaluate('mediaSearch.text = ""; removeMediaSource("C:/Shows/Comedy")')
+    assert item.property("mediaBinAssetCount") == 3
+    assert evaluate("editorObject().sources") == ["C:/Shows/Drama", "C:/Shows/Empty", "C:/Copies"]
+    assert item.property("dirty") is True
+    evaluate("clearMediaSources()")
+    assert evaluate("mediaBinRows()") == []
+    assert item.property("mediaBinAssetCount") == 0
+    evaluate("appendSource('C:/Shows/Comedy', true)")
+    assert evaluate("appendSource(" + json.dumps("c:\\shows\\COMEDY\\") + ", true)") is False
+    assert evaluate("editorObject().sources") == ["C:/Shows/Comedy"]
+    assert evaluate("mediaBinRows().length") == 3
+    assert warnings == []
+
     window.close()
     item.setParentItem(None)
     item.deleteLater()

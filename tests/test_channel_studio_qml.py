@@ -43,7 +43,7 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
     assert 'text: "−15 min"' in qml
     assert 'text: "+15 min"' in qml
     assert 'placeholderText: "HH:MM"' in qml
-    assert 'text: "FILLER SOURCES  •  "' in qml
+    assert 'placeholderText: "Search selected sources…"' in qml
     assert "channelOS.startStudioAutoFill" in qml
     assert "channelOS.cancelStudioAutoFill" in qml
     assert "onStudioAutoFillCompleted" in qml

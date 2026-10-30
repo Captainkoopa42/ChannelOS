@@ -116,6 +116,9 @@ Item {
     property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
     property var mediaLibrary: draftData.media || []
     property var mediaByAssetId: ({})
+    property var expandedMediaSources: ({})
+    readonly property var mediaBinGroups: selectedSourceMedia()
+    readonly property int mediaBinAssetCount: selectedMediaCount()
     property var groupsLibrary: draftData.groups || []
     property var blocksByDay: ({})
     property string viewMode: "week"
@@ -334,15 +337,55 @@ Item {
         mediaByAssetId = byAssetId
     }
 
-    function appendSource(sourceRoot) {
-        var value = String(sourceRoot || "")
+    function appendSource(sourceRoot, expand) {
+        var value = String(sourceRoot || "").trim()
         if (!value.length)
-            return
+            return false
         for (var index = 0; index < draftSources.count; ++index) {
-            if (String(draftSources.get(index).path) === value)
-                return
+            if (sourcePathKey(draftSources.get(index).path) === sourcePathKey(value))
+                return false
         }
         draftSources.append({ path: value })
+        if (expand) {
+            var next = Object.assign({}, expandedMediaSources)
+            next[value] = true
+            expandedMediaSources = next
+        }
+        return true
+    }
+
+    function removeMediaSource(path) {
+        for (var index = 0; index < draftSources.count; ++index) {
+            if (sourcePathKey(draftSources.get(index).path) === sourcePathKey(path)) {
+                draftSources.remove(index)
+                var next = Object.assign({}, expandedMediaSources)
+                delete next[path]
+                expandedMediaSources = next
+                dirty = true
+                return
+            }
+        }
+    }
+
+    function clearMediaSources() {
+        draftSources.clear()
+        expandedMediaSources = ({})
+        dirty = true
+    }
+
+    function toggleMediaSource(path) {
+        var next = Object.assign({}, expandedMediaSources)
+        next[path] = !next[path]
+        expandedMediaSources = next
+    }
+
+    function expandMediaSearchResults() {
+        if (!String(mediaSearch.text || "").trim().length)
+            return
+        var next = Object.assign({}, expandedMediaSources)
+        for (var index = 0; index < mediaBinGroups.length; ++index)
+            next[mediaBinGroups[index].path] = true
+        expandedMediaSources = next
     }
 
     function appendBlock(block) {
@@ -503,6 +546,8 @@ Item {
         adPlacementSnapshots = draftData.adPlacements || []
 
         draftSources.clear()
+        expandedMediaSources = ({})
+        mediaSearch.text = ""
         var sources = draftData.sources || []
         for (var sourceIndex = 0; sourceIndex < sources.length; ++sourceIndex)
             appendSource(sources[sourceIndex])
@@ -534,16 +579,104 @@ Item {
         feedbackIsError = false
     }
 
-    function filteredMedia() {
-        var result = []
+    function sourcePathKey(value) {
+        var path = String(value || "").replace(/\\/g, "/")
+        if (path !== "/")
+            path = path.replace(/\/+$/, "")
+        // Windows paths are case-insensitive; Linux source names are not.
+        return /^[a-z]:/i.test(path) || path.indexOf("//") === 0
+                ? path.toLowerCase() : path
+    }
+
+    function sourceContainsMedia(path, source) {
+        var candidate = sourcePathKey(path)
+        var root = sourcePathKey(source)
+        return root.length > 0 && (candidate === root
+                || candidate.indexOf(root === "/" ? "/" : root + "/") === 0)
+    }
+
+    function mediaLocations(item) {
+        return item.locations && item.locations.length
+                ? item.locations : [{path: item.path, sourceRoot: item.sourceRoot}]
+    }
+
+    function selectedSourceMedia() {
+        var groups = []
+        for (var sourceIndex = 0; sourceIndex < draftSources.count; ++sourceIndex) {
+            var path = String(draftSources.get(sourceIndex).path)
+            var parts = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/")
+            groups.push({path: path, name: parts[parts.length - 1] || path, media: []})
+        }
+        // Match the runtime's separate advertising scope, including disabled
+        // policies and alternate copies of a canonical asset.
+        var adRoots = String(adSourcesArea.text || "").split(";").map(function(value) {
+            return value.trim()
+        }).filter(function(value) { return value.length > 0 })
+        var adIds = ({})
+        String(adAssetIdsField.text || "").split(";").forEach(function(value) {
+            if (value.trim().length) adIds[value.trim()] = true
+        })
+        for (var placementIndex = 0; placementIndex < adPlacementSnapshots.length; ++placementIndex) {
+            var policy = adPlacementSnapshots[placementIndex].policy || ({})
+            var policyAssets = policy.asset_ids || []
+            var policySources = policy.sources || []
+            policyAssets.forEach(function(assetId) { adIds[assetId] = true })
+            policySources.forEach(function(source) { adRoots.push(String(source.path || "")) })
+        }
+        for (var mediaIndex = 0; mediaIndex < mediaLibrary.length; ++mediaIndex) {
+            var item = mediaLibrary[mediaIndex]
+            var locations = mediaLocations(item)
+            var advertising = Boolean(adIds[String(item.assetId || "")])
+            for (var locationIndex = 0; !advertising && locationIndex < locations.length; ++locationIndex) {
+                for (var adIndex = 0; adIndex < adRoots.length; ++adIndex) {
+                    if (sourceContainsMedia(locations[locationIndex].path, adRoots[adIndex])) {
+                        advertising = true
+                        break
+                    }
+                }
+            }
+            if (advertising)
+                continue
+            for (var groupIndex = 0; groupIndex < groups.length; ++groupIndex) {
+                for (var copyIndex = 0; copyIndex < locations.length; ++copyIndex) {
+                    if (sourceContainsMedia(locations[copyIndex].path, groups[groupIndex].path)) {
+                        groups[groupIndex].media.push(Object.assign({}, item, locations[copyIndex]))
+                        break
+                    }
+                }
+            }
+        }
+        return groups
+    }
+
+    function selectedMediaCount() {
+        var seen = ({})
+        for (var index = 0; index < mediaBinGroups.length; ++index) {
+            mediaBinGroups[index].media.forEach(function(item) { seen[item.assetId] = true })
+        }
+        return Object.keys(seen).length
+    }
+
+    function mediaMatchesSearch(item) {
         var needle = String(mediaSearch.text || "").toLowerCase().trim()
-        for (var index = 0; index < mediaLibrary.length; ++index) {
-            var item = mediaLibrary[index]
-            var haystack = (String(item.title || "") + " "
-                            + String(item.path || "") + " "
-                            + String(item.containerFormat || "")).toLowerCase()
-            if (!needle.length || haystack.indexOf(needle) >= 0)
-                result.push(item)
+        var haystack = (String(item.title || "") + " "
+                        + String(item.path || "") + " "
+                        + String(item.containerFormat || "")).toLowerCase()
+        return !needle.length || haystack.indexOf(needle) >= 0
+    }
+
+    function mediaBinRows() {
+        var result = []
+        for (var index = 0; index < mediaBinGroups.length; ++index) {
+            var group = mediaBinGroups[index]
+            var matching = group.media.filter(mediaMatchesSearch)
+            var expanded = Boolean(expandedMediaSources[group.path])
+            result.push({kind: "source", path: group.path, name: group.name,
+                         count: group.media.length, matchCount: matching.length, expanded: expanded})
+            if (expanded) {
+                for (var mediaIndex = 0; mediaIndex < matching.length; ++mediaIndex)
+                    result.push({kind: "media", media: matching[mediaIndex]})
+            }
         }
         return result
     }
@@ -551,12 +684,20 @@ Item {
     function sourceChoices() {
         var result = []
         var seen = ({})
-        for (var index = 0; index < mediaLibrary.length; ++index) {
-            var source = String(mediaLibrary[index].sourceRoot || "")
-            if (source.length && !seen[source]) {
-                seen[source] = true
+        var roots = draftData.sourceOptions || []
+        function addRoot(source) {
+            var key = sourcePathKey(source)
+            if (key.length && !seen[key]) {
+                seen[key] = true
                 result.push(source)
             }
+        }
+        for (var rootIndex = 0; rootIndex < roots.length; ++rootIndex)
+            addRoot(String(roots[rootIndex]))
+        for (var index = 0; index < mediaLibrary.length; ++index) {
+            mediaLocations(mediaLibrary[index]).forEach(function(location) {
+                addRoot(String(location.sourceRoot || ""))
+            })
         }
         result.sort()
         return result
@@ -1577,18 +1718,22 @@ Item {
                     font.weight: Font.DemiBold
                 }
                 Text {
-                    text: mediaLibrary.length + " indexed assets • drag or click +"
+                    Layout.fillWidth: true
+                    text: studioRoot.mediaBinAssetCount + " program videos in "
+                          + draftSources.count + " selected sources"
                     color: studioRoot.textSecondary
                     font.pixelSize: 11
+                    wrapMode: Text.Wrap
                 }
                 ChannelTextField {
                     id: mediaSearch
                     Layout.fillWidth: true
-                    placeholderText: "Search indexed media…"
+                    placeholderText: "Search selected sources…"
+                    onTextChanged: studioRoot.expandMediaSearchResults()
                 }
 
                 Text {
-                    text: "FILLER SOURCES  •  " + draftSources.count + " selected"
+                    text: "ADD INDEXED SOURCE"
                     color: studioRoot.textSecondary
                     font.pixelSize: 10
                 }
@@ -1600,23 +1745,30 @@ Item {
                         id: fillerSourceBox
                         Layout.fillWidth: true
                         model: studioRoot.sourceChoices()
+                        ToolTip.visible: hovered
+                        ToolTip.text: currentText
                     }
                     StudioButton {
                         text: "Add"
                         enabled: fillerSourceBox.count > 0
                         onClicked: {
-                            studioRoot.appendSource(fillerSourceBox.currentText)
-                            studioRoot.dirty = true
+                            if (studioRoot.appendSource(fillerSourceBox.currentText, true))
+                                studioRoot.dirty = true
                         }
                     }
                     StudioButton {
                         text: "Clear"
                         enabled: draftSources.count > 0
-                        onClicked: {
-                            draftSources.clear()
-                            studioRoot.dirty = true
-                        }
+                        onClicked: studioRoot.clearMediaSources()
                     }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Expand a source to browse. Selected sources feed Auto Fill and gap filler. Ad clips use Advertisement Breaks."
+                    color: studioRoot.textSecondary
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
                 }
 
                 ListView {
@@ -1625,26 +1777,106 @@ Item {
                     Layout.fillHeight: true
                     clip: true
                     spacing: 7
-                    model: studioRoot.filteredMedia()
+                    model: studioRoot.mediaBinRows()
+
+                    Text {
+                        anchors.centerIn: parent
+                        width: parent.width - 20
+                        visible: draftSources.count === 0
+                        text: "No sources selected.\nAdd an indexed source above."
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 12
+                    }
 
                     delegate: Rectangle {
                         id: mediaCard
                         required property var modelData
                         width: mediaList.width
-                        height: 76
+                        height: isSource ? 70 : 76
                         radius: 7
                         color: mediaMouse.containsMouse
                                ? "#14304a" : studioRoot.panelRaised
                         border.color: mediaMouse.containsMouse
                                       ? studioRoot.accentBright : studioRoot.line
 
-                        property var assetData: modelData
+                        property bool isSource: modelData.kind === "source"
+                        property var assetData: modelData.media || ({})
+
+                        Item {
+                            anchors.fill: parent
+                            visible: mediaCard.isSource
+
+                            StudioButton {
+                                id: sourceToggle
+                                anchors.left: parent.left
+                                anchors.right: removeBinSource.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                anchors.rightMargin: 4
+                                checked: Boolean(mediaCard.modelData.expanded)
+                                onClicked: studioRoot.toggleMediaSource(mediaCard.modelData.path)
+                                ToolTip.visible: hovered
+                                ToolTip.text: String(mediaCard.modelData.path || "")
+                                Accessible.name: String(mediaCard.modelData.name || "")
+                                                 + ", " + mediaCard.modelData.count + " videos"
+                                Accessible.description: checked ? "Collapse source" : "Expand source"
+
+                                contentItem: Column {
+                                    spacing: 5
+                                    Row {
+                                        width: parent.width
+                                        spacing: 6
+                                        Text {
+                                            width: parent.width - sourceCount.implicitWidth - parent.spacing
+                                            text: (mediaCard.modelData.expanded ? "▾  " : "▸  ")
+                                                  + String(mediaCard.modelData.name || "")
+                                            color: studioRoot.textPrimary
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            id: sourceCount
+                                            text: String(mediaSearch.text || "").trim().length
+                                                  ? mediaCard.modelData.matchCount + "/" + mediaCard.modelData.count
+                                                  : String(mediaCard.modelData.count || 0)
+                                            color: studioRoot.accentBright
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                        }
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        text: String(mediaCard.modelData.path || "")
+                                        color: studioRoot.textSecondary
+                                        font.pixelSize: 10
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                            }
+                            StudioButton {
+                                id: removeBinSource
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.rightMargin: 5
+                                width: 30
+                                height: 32
+                                text: "×"
+                                destructive: true
+                                onClicked: studioRoot.removeMediaSource(mediaCard.modelData.path)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Remove source from this draft"
+                                Accessible.name: "Remove " + String(mediaCard.modelData.name || "source")
+                            }
+                        }
 
                         Item {
                             id: mediaDragProxy
                             width: 1
                             height: 1
-                            Drag.active: mediaMouse.drag.active
+                            Drag.active: !mediaCard.isSource && mediaMouse.drag.active
                             Drag.keys: ["channelos-media"]
                             Drag.hotSpot.x: 0
                             Drag.hotSpot.y: 0
@@ -1652,6 +1884,7 @@ Item {
                         }
 
                         Column {
+                            visible: !mediaCard.isSource
                             anchors.left: parent.left
                             anchors.right: addMediaButton.left
                             anchors.verticalCenter: parent.verticalCenter
@@ -1679,6 +1912,7 @@ Item {
 
                         StudioButton {
                             id: addMediaButton
+                            visible: !mediaCard.isSource
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.rightMargin: 8
@@ -1692,6 +1926,7 @@ Item {
 
                         MouseArea {
                             id: mediaMouse
+                            visible: !mediaCard.isSource
                             anchors.left: parent.left
                             anchors.right: addMediaButton.left
                             anchors.top: parent.top
@@ -3133,22 +3368,49 @@ Item {
             }
             RowLayout {
                 Layout.fillWidth: true
-                ChannelTextField {
-                    id: adDurationField
+                ColumnLayout {
                     Layout.fillWidth: true
-                    placeholderText: "Break length (seconds)"
-                    text: "120"
+                    spacing: 4
+                    Label {
+                        text: "Break length (seconds)"
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 10
+                    }
+                    ChannelTextField {
+                        id: adDurationField
+                        Layout.fillWidth: true
+                        placeholderText: "Break length (seconds)"
+                        text: "120"
+                    }
                 }
-                ChannelTextField {
-                    id: adPriorityField
+                ColumnLayout {
                     Layout.fillWidth: true
-                    placeholderText: "Priority"
-                    text: "0"
+                    spacing: 4
+                    Label {
+                        text: "Priority (whole number)"
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 10
+                    }
+                    ChannelTextField {
+                        id: adPriorityField
+                        Layout.fillWidth: true
+                        placeholderText: "Priority"
+                        text: "0"
+                    }
                 }
-                ChannelComboBox {
-                    id: adTimingBox
+                ColumnLayout {
                     Layout.preferredWidth: 120
-                    model: ["Strict fit", "Smoosh", "Expand"]
+                    spacing: 4
+                    Label {
+                        text: "Timing"
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 10
+                    }
+                    ChannelComboBox {
+                        id: adTimingBox
+                        Layout.fillWidth: true
+                        model: ["Strict fit", "Smoosh", "Expand"]
+                    }
                 }
             }
             RowLayout {

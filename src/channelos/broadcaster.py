@@ -172,10 +172,22 @@ def serialize_channel(definition: ChannelDefinition) -> str:
 def _coerce_int(value: object, field: str) -> int:
     if isinstance(value, bool):
         raise ChannelValidationError(f"{field} must be an integer")
+    # QML JavaScript Numbers arrive through QVariantMap as Python doubles,
+    # even when the user entered a whole number such as the default priority 0.
+    # Normalize at the editor boundary; the portable schema stays strict.
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
     try:
         return int(str(value).strip())
     except (TypeError, ValueError) as exc:
         raise ChannelValidationError(f"{field} must be an integer") from exc
+
+
+def _editor_ad_policy(raw: dict[str, Any]) -> dict[str, Any]:
+    policy = dict(raw)
+    if "priority" in policy:
+        policy["priority"] = _coerce_int(policy["priority"], "advertising.priority")
+    return policy
 
 
 def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
@@ -303,6 +315,14 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
                     raise ChannelValidationError(f"{key} must be a list")
                 return [str(item).strip() for item in value if str(item).strip()]
 
+            placements = raw.get("adPlacements", [])
+            if isinstance(placements, (list, tuple)):
+                placements = [
+                    {**item, "policy": _editor_ad_policy(item["policy"])}
+                    if isinstance(item, dict) and isinstance(item.get("policy"), dict)
+                    else item
+                    for item in placements
+                ]
             settings = mapping["advertising"]
             settings.update({
                 "asset_ids": [str(value) for value in ad_asset_ids],
@@ -311,7 +331,7 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
                 "breakpoints_seconds": values("adBreakpointsSeconds"),
                 "interval_seconds": raw.get("adIntervalSeconds") or None,
                 "break_duration_seconds": raw.get("adBreakDurationSeconds", 120),
-                "priority": raw.get("adPriority", 0),
+                "priority": _coerce_int(raw.get("adPriority", 0), "advertising.priority"),
                 "timing_policy": raw.get("adTimingPolicy", "strict_fit"),
                 "smoosh_minimum_seconds": raw.get("adSmooshMinimumSeconds", 5),
                 "smoosh_max_trim_seconds": raw.get("adSmooshMaxTrimSeconds", 15),
@@ -324,7 +344,7 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
                 "slot_seconds": raw.get("adSlotSeconds") or None,
                 "schedule_priority": raw.get("adSchedulePriority", "program"),
                 "expand_source": raw.get("adExpandSource", "schedule_shift"),
-                "placements": raw.get("adPlacements", []),
+                "placements": placements,
                 "collection_membership": raw.get("adCollectionMembership", "fixed"),
                 "excluded_asset_ids": raw.get("adExcludedAssetIds", []),
             })
@@ -488,14 +508,11 @@ class BroadcasterService:
     def studio_media(self) -> list[dict[str, Any]]:
         """Return one online Library card per stable asset for Channel Studio."""
 
-        items: list[dict[str, Any]] = []
-        seen: set[str] = set()
+        items: dict[str, dict[str, Any]] = {}
         for media in self.library.list_online_media():
-            if media.asset.asset_id in seen:
-                continue
-            seen.add(media.asset.asset_id)
-            items.append(
-                {
+            asset_id = media.asset.asset_id
+            if asset_id not in items:
+                items[asset_id] = {
                     "assetId": media.asset.asset_id,
                     "title": media.location.path.stem,
                     "path": str(media.location.path),
@@ -506,9 +523,15 @@ class BroadcasterService:
                     "containerFormat": str(
                         media.asset.container_format or "media"
                     ).upper(),
+                    "locations": [],
                 }
-            )
-        return items
+            # A canonical asset can have copies in several sources. Retain
+            # every online location so the bin can scope to any selected copy.
+            items[asset_id]["locations"].append({
+                "path": str(media.location.path),
+                "sourceRoot": str(media.location.source_root),
+            })
+        return list(items.values())
 
     @property
     def _studio_groups_path(self) -> Path:
@@ -754,7 +777,7 @@ class BroadcasterService:
         profile = BreakProfile(
             str(payload.get("profileId", "")).strip(),
             str(payload.get("name", "")).strip(),
-            dict(payload.get("defaults", {})),
+            _editor_ad_policy(payload.get("defaults", {})),
         )
         self.ad_catalog.save_profile(profile)
         return self.ad_catalog_snapshot()
@@ -764,8 +787,10 @@ class BroadcasterService:
             int(payload.get("channelNumber", 0)),
             str(payload.get("collectionId") or "").strip() or None,
             str(payload.get("profileId") or "").strip() or None,
-            dict(payload.get("overrides", {})),
-            tuple(AdPlacementAssignment(**item) for item in payload.get("placements", [])),
+            _editor_ad_policy(payload.get("overrides", {})),
+            tuple(AdPlacementAssignment(**{
+                **item, "overrides": _editor_ad_policy(item.get("overrides", {})),
+            }) for item in payload.get("placements", [])),
         )
         self.ad_catalog.assign_channel(assignment)
         return self.ad_catalog_snapshot()
@@ -819,6 +844,7 @@ class BroadcasterService:
                 "adTriggers": ["breakpoint", "interval", "between_programs", "calendar_boundary"],
                 "adTransitionBehavior": "cut",
                 "sources": sources,
+                "sourceOptions": list(self.source_options()),
                 "calendarBlocks": [],
                 "media": media,
                 "groups": self.studio_groups(
@@ -920,6 +946,7 @@ class BroadcasterService:
             "adCollectionMembership": definition.advertising.collection_membership,
             "adExcludedAssetIds": list(definition.advertising.excluded_asset_ids),
             "sources": [str(source.path) for source in definition.sources],
+            "sourceOptions": list(self.source_options()),
             "calendarBlocks": blocks,
             "media": list(media_by_id.values()),
             "groups": groups,

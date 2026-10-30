@@ -120,6 +120,18 @@ duration, fixed slots, scheduling priority and expansion source. Advanced JSON
 overrides are optional. Preview resolves an isolated full event timeline and
 returns segment/source boundaries and diagnostics without writing live history.
 
+The Studio Media Bin lists only the channel's selected sources, with expandable
+folder rows and per-source program-video counts. Search stays within that pool;
+configured advertising assets are excluded just as they are from Auto Fill and
+normal gap filler. Source membership considers every online copy of a canonical
+asset, while the overall pool counts each asset once. Removing a source changes the detached
+draft and does not remove existing fixed calendar blocks.
+
+Editor priority values are normalized at the Qt boundary: JavaScript's whole
+number `0` can arrive as Python `0.0`. Auto Fill, preview, profile authoring and
+apply accept those integral doubles while rejecting fractions, booleans and
+non-finite values. Portable channel YAML still requires integer priorities.
+
 Playback implements:
 
 - **Cut**: load/seek the authoritative next segment.
@@ -148,6 +160,9 @@ partial viewing/rewind, decoder failure, schema compatibility and schedule edits
 The existing runtime, Guide, Studio, playback and migration suites remain part of
 the required run. `test_channel_studio_qml_runtime.py` also drives the actual ad
 settings and placement controls and checks cancellation/restoration.
+It also verifies selected-source browsing, search, duplicate locations and ad
+isolation. `test_studio_autofill_qt.py` drives actual QML ad settings through the
+real controller, background Auto Fill, preview, profile save and channel apply.
 
 Required checks for each release candidate:
 

@@ -547,3 +547,44 @@ def test_invalid_ad_break_policy_is_rejected(tmp_path: Path, field, value) -> No
     }
     with pytest.raises(ChannelValidationError):
         ChannelDefinition.from_mapping(raw)
+
+
+@pytest.mark.parametrize("priority", [0.0, 3.0, -2.0, "4"])
+def test_editor_normalizes_integral_qt_ad_priorities(tmp_path: Path, priority) -> None:
+    raw = editor(7, tmp_path / "programs")
+    raw.update(adBreaksEnabled=True, adSources=[str(tmp_path / "ads")],
+               adConfigVersion="0.5", adPriority=priority,
+               adPlacements=[{"id": "gap", "trigger": "calendar_boundary",
+                              "policy": {"priority": priority}}])
+
+    definition = definition_from_editor(raw)
+
+    assert definition.advertising.priority == int(float(priority))
+    assert type(definition.advertising.priority) is int
+    assert type(definition.advertising.placements[0].policy.priority) is int
+
+
+@pytest.mark.parametrize("priority", [True, 0.5, float("nan"), float("inf"), "bad"])
+def test_editor_rejects_invalid_ad_priority_without_truncation(tmp_path: Path, priority) -> None:
+    from channelos.models import ChannelValidationError
+
+    raw = editor(7, tmp_path / "programs")
+    raw.update(adSources=[str(tmp_path / "ads")], adConfigVersion="0.5", adPriority=priority)
+    with pytest.raises(ChannelValidationError, match="advertising.priority must be an integer"):
+        definition_from_editor(raw)
+
+
+def test_studio_media_retains_every_source_for_a_duplicate_asset(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "copied.mp4").write_bytes((source / "01-alpha.mp4").read_bytes())
+    MediaScanner(library, FixedProbe()).scan(other)
+    service = BroadcasterService((), tmp_path / "channels", library)
+
+    media = service.studio_media()
+    duplicated = next(item for item in media if len(item["locations"]) == 2)
+
+    assert len(media) == 3
+    assert {location["sourceRoot"] for location in duplicated["locations"]} == {str(source), str(other)}
+    assert set(service.studio_draft()["sourceOptions"]) == {str(source), str(other)}

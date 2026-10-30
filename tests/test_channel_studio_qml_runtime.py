@@ -401,6 +401,12 @@ def test_ad_management_controls_edit_transition_placements_and_restore_cancelled
     class AdController(FakeStudioController):
         saved = None
 
+        @Slot(int, result='QVariantMap')
+        def loadChannelStudio(self, channel_number):
+            result = super().loadChannelStudio(channel_number)
+            result['draft'].update(adSmooshMaxTrimSeconds=0, adTriggers=[])
+            return result
+
         @Slot(result='QVariantMap')
         def adCatalogSnapshot(self):
             return {'ok': True, 'collections': [{'collectionId': 'ads', 'name': 'Commercials'}],
@@ -439,6 +445,8 @@ def test_ad_management_controls_edit_transition_placements_and_restore_cancelled
                       'adBreakSettingsDialog.accept(); editorObject()')
     assert edited['adTransitionBehavior'] == 'fade'
     assert edited['adTransitionSeconds'] == .75
+    assert edited['adSmooshMaxTrimSeconds'] == 0
+    assert edited['adTriggers'] == []
     assert edited['adSlotSeconds'] == 1800
     restored = evaluate('adBreakSettingsDialog.open(); adTransitionSecondsField.text = "4"; '
                         'adBreakSettingsDialog.reject(); editorObject()')

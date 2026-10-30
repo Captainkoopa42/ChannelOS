@@ -488,7 +488,7 @@ Item {
         adPriorityField.text = String(draftData.adPriority || 0)
         adTimingBox.currentIndex = Math.max(0, ["strict_fit", "smoosh", "expand"].indexOf(
             String(draftData.adTimingPolicy || "strict_fit")))
-        adSmooshTrimField.text = String(draftData.adSmooshMaxTrimSeconds || 15)
+        adSmooshTrimField.text = String(draftData.adSmooshMaxTrimSeconds === undefined ? 15 : draftData.adSmooshMaxTrimSeconds)
         adExpandField.text = String(draftData.adExpandMaxSeconds || 0)
         adTriggersField.text = (draftData.adTriggers || [
             "breakpoint", "interval", "between_programs", "calendar_boundary"

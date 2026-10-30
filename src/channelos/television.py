@@ -142,11 +142,12 @@ class TelevisionSession:
             self._finish_ad_viewing(decision.viewer_time_utc)
         if (
             self.loaded_asset_id != asset_id
-            or self.loaded_program_started_at != program_started_at
+            or (self.loaded_program_started_at != program_started_at
+                and event.event_type != "transition")
         ):
             self.backend.load(path)
-            self.loaded_asset_id = asset_id
-            self.loaded_program_started_at = program_started_at
+        self.loaded_asset_id = asset_id
+        self.loaded_program_started_at = program_started_at
 
         if play:
             self.backend.play()

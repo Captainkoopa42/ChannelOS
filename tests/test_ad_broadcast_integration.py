@@ -487,3 +487,47 @@ def test_calendar_policy_removing_trigger_keeps_its_active_time_in_resume_mappin
     assert following.origin == 'advertisement'
     assert following.program_started_at == EPOCH + timedelta(seconds=30)
     assert revised.broadcast_at(EPOCH + timedelta(seconds=41)).offset_seconds == 21
+
+
+def test_empty_triggers_and_zero_trim_are_explicit_channel_overrides(tmp_path):
+    from channelos.broadcaster import definition_from_editor
+    library, definition, ids = setup(tmp_path)
+    editor = {'channel': 7, 'name': 'No triggers', 'mode': 'sequential',
+              'sources': [str(tmp_path / 'programs')], 'adBreaksEnabled': True,
+              'adConfigVersion': '0.5', 'adAssetIds': ids, 'adBreakpointsSeconds': [20],
+              'adSmooshMaxTrimSeconds': 0, 'adTriggers': []}
+    result = definition_from_editor(editor)
+    assert result.advertising.triggers == ()
+    assert result.advertising.smoosh_max_trim_seconds == 0
+    runtime, _ = open_runtime(tmp_path, library, result)
+    assert runtime.broadcast_at(EPOCH + timedelta(seconds=21)).origin == 'cycle'
+
+
+def test_mute_intent_survives_absent_audio_output_and_is_reapplied():
+    from channelos.playback import LibVLCBackend
+    from types import SimpleNamespace
+    calls = []
+    backend = object.__new__(LibVLCBackend)
+    backend._player = SimpleNamespace(audio_set_mute=lambda value: calls.append(value),
+                                      audio_get_mute=lambda: False)
+    backend.set_muted(True)
+    assert backend.get_muted()
+    backend._apply_audio_settings()
+    assert calls == [True, True]
+    backend.set_muted(False)
+    assert not backend.get_muted()
+
+
+def test_hold_reuses_the_preceding_decoder_and_frame(tmp_path):
+    library, definition, _ = setup(tmp_path, transition_behavior='hold', transition_seconds=.5,
+                                  break_duration_seconds=11, triggers=['breakpoint'])
+    runtime, store = open_runtime(tmp_path, library, definition)
+    backend = FakeBackend()
+    session = TelevisionSession(TelevisionRuntime((runtime,), store), backend)
+    session.tune(7, now=EPOCH + timedelta(seconds=29.5))
+    backend.position = 10
+    held = session.sync(now=EPOCH + timedelta(seconds=30.25))
+    assert held.viewer_selection.origin == 'transition'
+    assert backend.events.count('load') == 1
+    session.sync(now=EPOCH + timedelta(seconds=30.3))
+    assert backend.events.count('load') == 1

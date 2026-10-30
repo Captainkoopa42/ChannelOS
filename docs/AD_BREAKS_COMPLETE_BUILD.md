@@ -156,8 +156,8 @@ Required checks for each release candidate:
 3. Windows locked-environment tests, portable package build and package audit.
 4. `tools/windows/smoke_ad_playback.py`: native Qt HWND with the bundled libVLC,
    generated AVI fixtures, real cut/fade/hold playback, transitions, native video
-   output and preservation of audio controls. CI uses GDI software output so it
-   does not depend on a physical GPU.
+   output and preservation of audio controls. CI requests GDI video output and software decoding; physical audio output is
+   checked separately from retained volume/mute intent.
 5. Publish the Windows artifact only after the preceding Windows gates pass.
 
 The automated native check does not replace validation of D3D11 hardware decode,

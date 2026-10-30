@@ -210,6 +210,7 @@ class LibVLCBackend(PlaybackBackend):
         self._vlc: Any = vlc
         self._loaded_path: Path | None = None
         self._user_volume: int | None = None
+        self._user_muted: bool | None = None
         self._transition_level = 1.0
         try:
             self._instance = vlc.Instance(*instance_options)
@@ -313,6 +314,9 @@ class LibVLCBackend(PlaybackBackend):
             return False
 
     def playback_error(self) -> str | None:
+        # Audio outputs are recreated asynchronously as streams change. Keep
+        # user intent through silent clips and machines without an audio device.
+        self._apply_audio_settings()
         try:
             state = self._player.get_state()
         except Exception:
@@ -364,10 +368,20 @@ class LibVLCBackend(PlaybackBackend):
         self._player.video_set_adjust_float(brightness, float(level))
 
     def set_muted(self, muted: bool) -> None:
-        self._player.audio_set_mute(bool(muted))
+        self._user_muted = bool(muted)
+        self._player.audio_set_mute(self._user_muted)
 
     def get_muted(self) -> bool:
-        return bool(self._player.audio_get_mute())
+        if getattr(self, "_user_muted", None) is not None:
+            return self._user_muted
+        value = self._player.audio_get_mute()
+        return bool(value) if value is not None and value >= 0 else False
+
+    def _apply_audio_settings(self) -> None:
+        if getattr(self, "_user_volume", None) is not None:
+            self._player.audio_set_volume(round(self._user_volume * self._transition_level))
+        if getattr(self, "_user_muted", None) is not None:
+            self._player.audio_set_mute(self._user_muted)
 
     @staticmethod
     def _decode_vlc_text(value: Any) -> str:

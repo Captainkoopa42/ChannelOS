@@ -316,7 +316,7 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
                 "smoosh_minimum_seconds": raw.get("adSmooshMinimumSeconds", 5),
                 "smoosh_max_trim_seconds": raw.get("adSmooshMaxTrimSeconds", 15),
                 "expand_max_seconds": raw.get("adExpandMaxSeconds", 0),
-                "triggers": values("adTriggers") or [
+                "triggers": values("adTriggers") if "adTriggers" in raw else [
                     "breakpoint", "interval", "between_programs", "calendar_boundary",
                 ],
                 "transition_behavior": raw.get("adTransitionBehavior", "cut"),

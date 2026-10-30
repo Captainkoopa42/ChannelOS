@@ -101,6 +101,11 @@ def _prepare_windows_vlc_runtime() -> tuple[Any | None, Path | None]:
         plugins = candidate / "plugins"
         if plugins.is_dir():
             os.environ["VLC_PLUGIN_PATH"] = str(plugins)
+        # python-vlc can explicitly CDLL('.\\libvlc.dll'), bypassing the DLL
+        # directory registered below. Give its binding the absolute primary
+        # library as well as the dependency/plugin search paths.
+        os.environ["PYTHON_VLC_LIB_PATH"] = str(candidate / "libvlc.dll")
+        os.environ["PYTHON_VLC_MODULE_PATH"] = str(candidate)
 
         add_dll_directory = getattr(os, "add_dll_directory", None)
         if add_dll_directory is not None:

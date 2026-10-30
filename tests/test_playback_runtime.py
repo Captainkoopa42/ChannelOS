@@ -19,6 +19,8 @@ def test_windows_vlc_override_registers_runtime(monkeypatch, tmp_path: Path) -> 
     sentinel = object()
     registered: list[str] = []
 
+    monkeypatch.setenv("PYTHON_VLC_LIB_PATH", "")
+    monkeypatch.setenv("PYTHON_VLC_MODULE_PATH", "")
     monkeypatch.setattr(playback, "IS_WINDOWS", True)
     monkeypatch.setattr(playback, "_bundled_vlc_runtime_candidates", lambda: ())
     monkeypatch.setenv(playback.VLC_RUNTIME_ENV, str(runtime))
@@ -35,6 +37,8 @@ def test_windows_vlc_override_registers_runtime(monkeypatch, tmp_path: Path) -> 
     assert selected == runtime
     assert registered == [str(runtime)]
     assert playback.os.environ["VLC_PLUGIN_PATH"] == str(runtime / "plugins")
+    assert playback.os.environ["PYTHON_VLC_LIB_PATH"] == str(runtime / "libvlc.dll")
+    assert playback.os.environ["PYTHON_VLC_MODULE_PATH"] == str(runtime)
 
 
 def test_bundled_vlc_precedes_developer_override(monkeypatch, tmp_path: Path) -> None:
@@ -42,6 +46,8 @@ def test_bundled_vlc_precedes_developer_override(monkeypatch, tmp_path: Path) ->
     override = _make_vlc_runtime(tmp_path / "override")
     registered: list[str] = []
 
+    monkeypatch.setenv("PYTHON_VLC_LIB_PATH", "")
+    monkeypatch.setenv("PYTHON_VLC_MODULE_PATH", "")
     monkeypatch.setattr(playback, "IS_WINDOWS", True)
     monkeypatch.setattr(playback, "_bundled_vlc_runtime_candidates", lambda: (bundled,))
     monkeypatch.setenv(playback.VLC_RUNTIME_ENV, str(override))

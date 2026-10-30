@@ -81,32 +81,39 @@ def run(vlc_dir: Path) -> None:
             epoch = datetime.now(timezone.utc)
             store = RuntimeStore(root / (behavior + '.sqlite'))
             runtime = ChannelRuntime.open(resolve_channel(definition, library), store, now=epoch)
-            backend = LibVLCBackend('--no-audio', '--vout=wingdi', '--avcodec-hw=none', '--no-video-title-show')
-            backend.attach_video_surface(NativeVideoSurface('windows', int(window.winId())))
-            session = TelevisionSession(TelevisionRuntime((runtime,), store), backend)
-            session.tune(7, now=epoch)
-            seen = set()
-            native_output = False
-            deadline = time.monotonic() + 5.5
-            while time.monotonic() < deadline:
-                app.processEvents()
-                decision = session.sync()
-                seen.add(decision.viewer_selection.event.event_type)
-                native_output = native_output or bool(backend._player.has_vout())
-                if decision.viewer_selection.offset_seconds < 0:
-                    raise AssertionError('negative resume offset')
-                time.sleep(.025)
-            assert {'program', 'advertisement'} <= seen, (behavior, seen)
-            if behavior == 'hold':
-                assert 'transition' in seen
-            assert native_output, f'{behavior}: libVLC never created a native video output'
-            backend.set_volume(37)
-            assert backend.get_volume() == 37
-            backend.set_muted(True)
-            assert backend.get_muted()
-            session.stop()
-            assert backend.get_volume() == 37
-            runtime.break_store.close()
+            backend = None
+            try:
+                backend = LibVLCBackend('--no-audio', '--vout=wingdi', '--avcodec-hw=none', '--no-video-title-show')
+                backend.attach_video_surface(NativeVideoSurface('windows', int(window.winId())))
+                session = TelevisionSession(TelevisionRuntime((runtime,), store), backend)
+                session.tune(7, now=epoch)
+                seen = set()
+                native_output = False
+                deadline = time.monotonic() + 5.5
+                while time.monotonic() < deadline:
+                    app.processEvents()
+                    decision = session.sync()
+                    seen.add(decision.viewer_selection.event.event_type)
+                    native_output = native_output or bool(backend._player.has_vout())
+                    if decision.viewer_selection.offset_seconds < 0:
+                        raise AssertionError('negative resume offset')
+                    time.sleep(.025)
+                assert {'program', 'advertisement'} <= seen, (behavior, seen)
+                if behavior == 'hold':
+                    assert 'transition' in seen
+                assert native_output, f'{behavior}: libVLC never created a native video output'
+                backend.set_volume(37)
+                assert backend.get_volume() == 37
+                backend.set_muted(True)
+                assert backend.get_muted()
+                session.stop()
+                assert backend.get_volume() == 37
+            finally:
+                if backend is not None:
+                    backend.stop()
+                    backend._player.release()
+                    backend._instance.release()
+                runtime.break_store.close()
             observed.append({'behavior': behavior, 'events': sorted(seen), 'nativeVideo': native_output})
     window.close()
     print(json.dumps({'nativeAdPlayback': 'passed', 'results': observed}, indent=2))

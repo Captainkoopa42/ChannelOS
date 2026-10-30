@@ -276,7 +276,30 @@ Item {
             adSources: adSourcesArea.text.split(";").map(function(value) {
                 return value.trim()
             }).filter(function(value) { return value.length > 0 }),
-            adSelectionStrategy: ["best_fit", "largest", "smallest", "sequential"][adStrategyBox.currentIndex]
+            adSelectionStrategy: [
+                "best_fit", "largest", "smallest", "sequential",
+                "least_played", "complete_rotation"
+            ][adStrategyBox.currentIndex],
+            adConfigVersion: "0.5",
+            adAssetIds: adAssetIdsField.text.split(";").map(function(value) {
+                return value.trim()
+            }).filter(function(value) { return value.length > 0 }),
+            adCollectionId: adCollectionField.text.trim(),
+            adProfileId: adProfileField.text.trim(),
+            adBreakpointsSeconds: adBreakpointsField.text.split(";").map(function(value) {
+                return value.trim()
+            }).filter(function(value) { return value.length > 0 }),
+            adIntervalSeconds: adIntervalField.text.trim(),
+            adBreakDurationSeconds: Number(adDurationField.text),
+            adPriority: Number(adPriorityField.text),
+            adTimingPolicy: ["strict_fit", "smoosh", "expand"][adTimingBox.currentIndex],
+            adSmooshMinimumSeconds: 5,
+            adSmooshMaxTrimSeconds: Number(adSmooshTrimField.text),
+            adExpandMaxSeconds: Number(adExpandField.text),
+            adTriggers: adTriggersField.text.split(";").map(function(value) {
+                return value.trim()
+            }).filter(function(value) { return value.length > 0 }),
+            adTransitionBehavior: ["cut", "fade", "hold"][adTransitionBox.currentIndex]
         }
     }
 
@@ -444,7 +467,26 @@ Item {
         adBreaksEnabledCheck.checked = Boolean(draftData.adBreaksEnabled || false)
         adSourcesArea.text = (draftData.adSources || []).join("; ")
         var adStrategy = String(draftData.adSelectionStrategy || "best_fit")
-        adStrategyBox.currentIndex = Math.max(0, ["best_fit", "largest", "smallest", "sequential"].indexOf(adStrategy))
+        adStrategyBox.currentIndex = Math.max(0, [
+            "best_fit", "largest", "smallest", "sequential",
+            "least_played", "complete_rotation"
+        ].indexOf(adStrategy))
+        adAssetIdsField.text = (draftData.adAssetIds || []).join("; ")
+        adCollectionField.text = String(draftData.adCollectionId || "")
+        adProfileField.text = String(draftData.adProfileId || "")
+        adBreakpointsField.text = (draftData.adBreakpointsSeconds || []).join("; ")
+        adIntervalField.text = String(draftData.adIntervalSeconds || "")
+        adDurationField.text = String(draftData.adBreakDurationSeconds || 120)
+        adPriorityField.text = String(draftData.adPriority || 0)
+        adTimingBox.currentIndex = Math.max(0, ["strict_fit", "smoosh", "expand"].indexOf(
+            String(draftData.adTimingPolicy || "strict_fit")))
+        adSmooshTrimField.text = String(draftData.adSmooshMaxTrimSeconds || 15)
+        adExpandField.text = String(draftData.adExpandMaxSeconds || 0)
+        adTriggersField.text = (draftData.adTriggers || [
+            "breakpoint", "interval", "between_programs", "calendar_boundary"
+        ]).join("; ")
+        adTransitionBox.currentIndex = Math.max(0, ["cut", "fade", "hold"].indexOf(
+            String(draftData.adTransitionBehavior || "cut")))
 
         draftSources.clear()
         var sources = draftData.sources || []
@@ -1744,6 +1786,11 @@ Item {
                         enabled: !studioRoot.autoFillBusy
                         onClicked: adBreakSettingsDialog.open()
                     }
+                    StudioButton {
+                        text: "Ad Catalog"
+                        enabled: !studioRoot.autoFillBusy
+                        onClicked: adCatalogDialog.open()
+                    }
                 }
 
                 Item {
@@ -2900,7 +2947,7 @@ Item {
         id: adBreakSettingsDialog
         title: "Advertisement Breaks"
         width: Math.min(studioRoot.width - 40, 660)
-        height: Math.min(studioRoot.height - 40, 520)
+        height: Math.min(studioRoot.height - 40, 770)
         x: Math.max(20, (studioRoot.width - width) / 2)
         y: Math.max(20, (studioRoot.height - height) / 2)
         property bool savedAdEnabled: false
@@ -2929,13 +2976,15 @@ Item {
 
             ChannelCheckBox {
                 id: adBreaksEnabledCheck
-                text: "Enable ads in calendar gaps"
+                text: "Enable broadcast advertising"
                 checked: false
             }
 
             Text {
                 Layout.fillWidth: true
-                text: "This first test build places ads in the gaps between fixed calendar programs. It does not yet interrupt a program mid-episode. Ad folders must already be added and scanned in Library; they remain separate from normal program sources."
+                text: "Configure indexed advertisements separately from programs. "
+                      + "Calendar channels use fixed gaps; sequential channels can "
+                      + "interrupt episodes at explicit breakpoints or content-time intervals."
                 color: studioRoot.textSecondary
                 wrapMode: Text.Wrap
                 font.pixelSize: 12
@@ -2963,7 +3012,8 @@ Item {
                 ChannelComboBox {
                     id: adStrategyBox
                     Layout.preferredWidth: 190
-                    model: ["Best Fit", "Largest", "Smallest", "Sequential"]
+                    model: ["Best Fit", "Largest", "Smallest", "Sequential",
+                            "Least Played", "Complete Rotation"]
                 }
                 Item { Layout.fillWidth: true }
             }
@@ -2976,6 +3026,90 @@ Item {
                 font.pixelSize: 11
             }
 
+            Text {
+                Layout.fillWidth: true
+                text: "Canonical ad asset IDs (semicolon separated; optional when source folders are set)"
+                color: studioRoot.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+            ChannelTextField {
+                id: adAssetIdsField
+                Layout.fillWidth: true
+                placeholderText: "sha256:…; sha256:…"
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: adCollectionField
+                    Layout.fillWidth: true
+                    placeholderText: "Collection ID"
+                }
+                ChannelTextField {
+                    id: adProfileField
+                    Layout.fillWidth: true
+                    placeholderText: "Profile ID"
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: adBreakpointsField
+                    Layout.fillWidth: true
+                    placeholderText: "Breakpoints in seconds: 900; 1800"
+                }
+                ChannelTextField {
+                    id: adIntervalField
+                    Layout.fillWidth: true
+                    placeholderText: "Interval seconds (optional)"
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: adDurationField
+                    Layout.fillWidth: true
+                    placeholderText: "Break length (seconds)"
+                    text: "120"
+                }
+                ChannelTextField {
+                    id: adPriorityField
+                    Layout.fillWidth: true
+                    placeholderText: "Priority"
+                    text: "0"
+                }
+                ChannelComboBox {
+                    id: adTimingBox
+                    Layout.preferredWidth: 120
+                    model: ["Strict fit", "Smoosh", "Expand"]
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: adSmooshTrimField
+                    Layout.fillWidth: true
+                    placeholderText: "Max trim seconds"
+                    text: "15"
+                }
+                ChannelTextField {
+                    id: adExpandField
+                    Layout.fillWidth: true
+                    placeholderText: "Max extra seconds"
+                    text: "0"
+                }
+                ChannelComboBox {
+                    id: adTransitionBox
+                    Layout.preferredWidth: 120
+                    model: ["Cut", "Fade", "Hold"]
+                }
+            }
+            ChannelTextField {
+                id: adTriggersField
+                Layout.fillWidth: true
+                text: "breakpoint; interval; between_programs; calendar_boundary"
+                placeholderText: "breakpoint; interval; between_programs; calendar_boundary"
+            }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }

@@ -9,6 +9,9 @@ from pathlib import Path
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# Match the app's Fusion theme before any QML controls are loaded. Windows'
+# native style rejects the custom backgrounds/content used by Channel Studio.
+os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Fusion")
 
 pytest.importorskip("PySide6")
 

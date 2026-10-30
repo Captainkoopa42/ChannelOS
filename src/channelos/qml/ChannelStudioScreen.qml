@@ -2953,22 +2953,58 @@ Item {
         property bool savedAdEnabled: false
         property string savedAdSources: ""
         property int savedAdStrategy: 0
+        property var savedAdvanced: ({})
+
+        function snapshotAdvanced() {
+            return {
+                assets: adAssetIdsField.text,
+                collection: adCollectionField.text,
+                profile: adProfileField.text,
+                breakpoints: adBreakpointsField.text,
+                interval: adIntervalField.text,
+                duration: adDurationField.text,
+                priority: adPriorityField.text,
+                timing: adTimingBox.currentIndex,
+                smoosh: adSmooshTrimField.text,
+                expand: adExpandField.text,
+                triggers: adTriggersField.text,
+                transition: adTransitionBox.currentIndex
+            }
+        }
+
+        function restoreAdvanced(values) {
+            adAssetIdsField.text = String(values.assets || "")
+            adCollectionField.text = String(values.collection || "")
+            adProfileField.text = String(values.profile || "")
+            adBreakpointsField.text = String(values.breakpoints || "")
+            adIntervalField.text = String(values.interval || "")
+            adDurationField.text = String(values.duration || "120")
+            adPriorityField.text = String(values.priority || "0")
+            adTimingBox.currentIndex = Number(values.timing || 0)
+            adSmooshTrimField.text = String(values.smoosh || "15")
+            adExpandField.text = String(values.expand || "0")
+            adTriggersField.text = String(values.triggers || "")
+            adTransitionBox.currentIndex = Number(values.transition || 0)
+        }
 
         onOpened: {
             savedAdEnabled = adBreaksEnabledCheck.checked
             savedAdSources = adSourcesArea.text
             savedAdStrategy = adStrategyBox.currentIndex
+            savedAdvanced = snapshotAdvanced()
         }
         onAccepted: {
             studioRoot.dirty = true
             savedAdEnabled = adBreaksEnabledCheck.checked
             savedAdSources = adSourcesArea.text
             savedAdStrategy = adStrategyBox.currentIndex
+            savedAdvanced = snapshotAdvanced()
         }
         onRejected: {
             adBreaksEnabledCheck.checked = savedAdEnabled
             adSourcesArea.text = savedAdSources
             adStrategyBox.currentIndex = savedAdStrategy
+            restoreAdvanced(savedAdvanced)
         }
 
         contentItem: Flickable {

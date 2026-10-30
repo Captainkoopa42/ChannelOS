@@ -1116,6 +1116,12 @@ class ChannelRuntime:
             and programming.mode != "calendar"
             else None
         )
+        if break_store is not None and not transient:
+            break_store.apply_policy_revision(
+                channel.definition.channel,
+                advertising_signature(channel),
+                at=require_aware_utc(now or utc_now()),
+            )
         return cls(
             channel=channel,
             timeline=timeline,
@@ -1156,6 +1162,7 @@ class ChannelRuntime:
         occurrence_id = hashlib.sha256(
             "|".join((
                 str(self.channel_number), self.signature,
+                advertising_signature(self.channel),
                 selection.media.asset.asset_id,
                 selection.program_started_at.isoformat(timespec="microseconds"),
             )).encode("utf-8")

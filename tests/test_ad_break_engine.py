@@ -196,3 +196,49 @@ def test_runtime_can_query_committed_plans_by_channel_and_instant(tmp_path):
         end=start + timedelta(seconds=90),
     ) == (plan,)
     store.close()
+
+
+
+def test_air_ledger_only_advances_after_scheduled_completion(tmp_path):
+    store = BreakPlanStore(tmp_path / "ledger.db")
+    start = datetime(2026, 10, 30, 12, tzinfo=UTC)
+    plan = BreakPlan(
+        "air-plan", "air-opportunity", "air-occurrence", 7, start, 20,
+        (PlannedSegment("ad-one", 0, 0, 10),
+         PlannedSegment("ad-two", 10, 0, 10)),
+        "least_played", "strict_fit",
+    )
+    store.commit(plan)
+    assert store.reconcile_completed(7, through=start + timedelta(seconds=9)) == 0
+    assert store.play_counts() == {}
+    assert store.reconcile_completed(7, through=start + timedelta(seconds=10)) == 1
+    assert store.play_counts() == {"ad-one": 1}
+    assert store.reconcile_completed(7, through=start + timedelta(seconds=21)) == 1
+    assert store.play_counts() == {"ad-one": 1, "ad-two": 1}
+    assert store.reconcile_completed(7, through=start + timedelta(seconds=60)) == 0
+    assert store.diagnostics(7)["completedAirings"] == 2
+    store.close()
+
+
+def test_view_history_is_separate_and_requires_proven_consumption(tmp_path):
+    import pytest
+
+    store = BreakPlanStore(tmp_path / "views.db")
+    start = datetime(2026, 10, 30, 12, tzinfo=UTC)
+    plan = BreakPlan(
+        "view-plan", "view-opportunity", "view-occurrence", 3, start, 5,
+        (PlannedSegment("ad-one", 0, 0, 5),),
+        "best_fit", "strict_fit",
+    )
+    store.commit(plan)
+    with pytest.raises(ValueError, match="full-duration"):
+        store.record_viewed("view-plan", 0, "ad-one",
+                            consumed_seconds=1, completed_at=start)
+    assert store.record_viewed("view-plan", 0, "ad-one",
+                               consumed_seconds=5, completed_at=start + timedelta(seconds=5))
+    assert not store.record_viewed("view-plan", 0, "ad-one",
+                                   consumed_seconds=5, completed_at=start + timedelta(seconds=6))
+    assert store.viewer_counts(3) == {"ad-one": 1}
+    assert store.play_counts() == {}
+    assert store.diagnostics(3)["completedViewings"] == 1
+    store.close()

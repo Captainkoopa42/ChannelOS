@@ -744,12 +744,23 @@ class CouchController(QObject):
             decision.channel_number,
             at=decision.viewer_time_utc,
         ).next
+        event = selected.event
+        parent_title = ""
+        if event.parent_program_asset_id:
+            for program in self._actions.runtime.channels[decision.channel_number].channel.media:
+                if program.asset.asset_id == event.parent_program_asset_id:
+                    parent_title = program.location.path.stem
+                    break
         return {
             "active": True,
             "channelNumber": decision.channel_number,
             "displayNumber": definition.display_number,
             "channelName": decision.channel_name,
             "title": selected.media.location.path.stem,
+            "eventType": event.event_type,
+            "isAdvertisement": event.event_type == "advertisement",
+            "breakId": event.break_id or "",
+            "parentProgramTitle": parent_title,
             "assetId": selected.media.asset.asset_id,
             "offsetSeconds": float(selected.offset_seconds),
             "lagSeconds": float(decision.lag_seconds),

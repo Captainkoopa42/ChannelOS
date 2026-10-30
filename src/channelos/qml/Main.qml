@@ -962,6 +962,7 @@ ApplicationWindow {
                     Text {
                         visible: Boolean(root.playback.isAdvertisement)
                         text: "Now airing: " + (root.playback.title || "Commercial")
+                              + " • " + Math.ceil(root.playback.breakRemainingSeconds || 0) + "s remaining"
                         color: root.textSecondary
                         font.pixelSize: 14
                         elide: Text.ElideRight
@@ -2364,6 +2365,21 @@ ApplicationWindow {
                                           )
 
                             border.width: selectedSegment ? 2 : 1
+                            property var broadcastSegment: modelData
+                            Repeater {
+                                model: parent.broadcastSegment.breakMarkers || []
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    x: Math.max(0, ((modelData.startMs - root.horizonStartMs)
+                                        / root.horizonSpanMs) * programArea.width - parent.x)
+                                    width: Math.max(2, Math.min(parent.width - x,
+                                        (modelData.endMs - modelData.startMs) / root.horizonSpanMs * programArea.width))
+                                    height: 5
+                                    anchors.bottom: parent.bottom
+                                    color: "#d99b36"
+                                    radius: 2
+                                }
+                            }
 
                             Column {
                                 anchors.left: parent.left

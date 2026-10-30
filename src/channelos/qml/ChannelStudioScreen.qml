@@ -112,6 +112,7 @@ Item {
     }
 
     property var hostWindow: null
+    property var adPlacementSnapshots: []
     property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
     property var mediaLibrary: draftData.media || []
     property var mediaByAssetId: ({})
@@ -299,7 +300,14 @@ Item {
             adTriggers: adTriggersField.text.split(";").map(function(value) {
                 return value.trim()
             }).filter(function(value) { return value.length > 0 }),
-            adTransitionBehavior: ["cut", "fade", "hold"][adTransitionBox.currentIndex]
+            adTransitionBehavior: ["cut", "fade", "hold"][adTransitionBox.currentIndex],
+            adTransitionSeconds: Number(adTransitionSecondsField.text),
+            adSlotSeconds: adSlotSecondsField.text.trim() ? Number(adSlotSecondsField.text) : null,
+            adSchedulePriority: ["program", "fixed", "advertising"][adSchedulePriorityBox.currentIndex],
+            adExpandSource: ["schedule_shift", "available_slot_time", "current_program", "next_event"][adExpandSourceBox.currentIndex],
+            adPlacements: adPlacementSnapshots,
+            adCollectionMembership: draftData.adCollectionMembership || "fixed",
+            adExcludedAssetIds: draftData.adExcludedAssetIds || []
         }
     }
 
@@ -487,6 +495,12 @@ Item {
         ]).join("; ")
         adTransitionBox.currentIndex = Math.max(0, ["cut", "fade", "hold"].indexOf(
             String(draftData.adTransitionBehavior || "cut")))
+
+        adTransitionSecondsField.text = String(draftData.adTransitionSeconds === undefined ? 0.5 : draftData.adTransitionSeconds)
+        adSlotSecondsField.text = String(draftData.adSlotSeconds || "")
+        adSchedulePriorityBox.currentIndex = Math.max(0, ["program", "fixed", "advertising"].indexOf(String(draftData.adSchedulePriority || "program")))
+        adExpandSourceBox.currentIndex = Math.max(0, ["schedule_shift", "available_slot_time", "current_program", "next_event"].indexOf(String(draftData.adExpandSource || "schedule_shift")))
+        adPlacementSnapshots = draftData.adPlacements || []
 
         draftSources.clear()
         var sources = draftData.sources || []
@@ -2968,7 +2982,11 @@ Item {
                 smoosh: adSmooshTrimField.text,
                 expand: adExpandField.text,
                 triggers: adTriggersField.text,
-                transition: adTransitionBox.currentIndex
+                transition: adTransitionBox.currentIndex,
+                transitionSeconds: adTransitionSecondsField.text,
+                slot: adSlotSecondsField.text,
+                schedulePriority: adSchedulePriorityBox.currentIndex,
+                expandSource: adExpandSourceBox.currentIndex
             }
         }
 
@@ -2985,6 +3003,10 @@ Item {
             adExpandField.text = String(values.expand || "0")
             adTriggersField.text = String(values.triggers || "")
             adTransitionBox.currentIndex = Number(values.transition || 0)
+            adTransitionSecondsField.text = String(values.transitionSeconds === undefined ? 0.5 : values.transitionSeconds)
+            adSlotSecondsField.text = String(values.slot || "")
+            adSchedulePriorityBox.currentIndex = Number(values.schedulePriority || 0)
+            adExpandSourceBox.currentIndex = Number(values.expandSource || 0)
         }
 
         onOpened: {
@@ -3146,8 +3168,42 @@ Item {
                 ChannelComboBox {
                     id: adTransitionBox
                     Layout.preferredWidth: 120
-                    model: ["Cut", "Fade (not available)", "Hold (not available)"]
+                    model: ["Cut", "Fade through black", "Hold last frame"]
                 }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: adTransitionSecondsField
+                    Layout.fillWidth: true
+                    text: "0.5"
+                    placeholderText: "Transition seconds"
+                }
+                ChannelTextField {
+                    id: adSlotSecondsField
+                    Layout.fillWidth: true
+                    placeholderText: "Fixed slot seconds: 900, 1800, 3600"
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelComboBox {
+                    id: adSchedulePriorityBox
+                    Layout.fillWidth: true
+                    model: ["Preserve program", "Keep timing fixed", "Prioritize ads"]
+                }
+                ChannelComboBox {
+                    id: adExpandSourceBox
+                    Layout.fillWidth: true
+                    model: ["Shift sequential programming", "Use available slot time", "Borrow current program", "Borrow next event"]
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "Calendar starts stay protected. Borrowing program content requires Prioritize ads."
+                color: studioRoot.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
             }
             ChannelTextField {
                 id: adTriggersField
@@ -3206,6 +3262,7 @@ Item {
         x: Math.max(20, (studioRoot.width - width) / 2)
         y: Math.max(20, (studioRoot.height - height) / 2)
         property var catalogData: ({})
+        property var placementRules: []
         property string catalogFeedback: ""
 
         function splitValues(value) {
@@ -3230,6 +3287,10 @@ Item {
         onOpened: {
             var response = channelOS.adCatalogSnapshot()
             catalogData = response || ({})
+            var saved = (catalogData.assignments || []).filter(function(item) {
+                return Number(item.channelNumber) === Number(channelNumberField.text)
+            })
+            placementRules = saved.length ? saved[0].placements || [] : []
             catalogFeedback = response && response.ok
                     ? "Catalog is ready. Save reusable items before assigning them."
                     : String(response && response.message || "Unable to open catalog")
@@ -3288,6 +3349,25 @@ Item {
                         model: ["Fixed", "Dynamic"]
                     }
                 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelComboBox {
+                        id: catalogMediaPicker
+                        Layout.fillWidth: true
+                        model: studioRoot.mediaLibrary
+                        textRole: "title"
+                    }
+                    StudioButton {
+                        text: "Add Media"
+                        onClicked: {
+                            var media = studioRoot.mediaLibrary[catalogMediaPicker.currentIndex]
+                            if (!media) return
+                            var ids = adCatalogDialog.splitValues(catalogCollectionAssets.text)
+                            if (ids.indexOf(media.assetId) < 0) ids.push(media.assetId)
+                            catalogCollectionAssets.text = ids.join("; ")
+                        }
+                    }
+                }
                 ChannelTextField {
                     id: catalogCollectionAssets
                     Layout.fillWidth: true
@@ -3336,8 +3416,32 @@ Item {
                         placeholderText: "Profile display name"
                     }
                 }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelComboBox {
+                        id: catalogProfileStrategy
+                        Layout.fillWidth: true
+                        model: ["Best fit", "Largest", "Smallest", "Sequential", "Least played", "Complete rotation"]
+                    }
+                    ChannelTextField {
+                        id: catalogProfileDuration
+                        Layout.fillWidth: true
+                        text: "120"
+                        placeholderText: "Break seconds"
+                    }
+                    ChannelTextField {
+                        id: catalogProfileInterval
+                        Layout.fillWidth: true
+                        placeholderText: "Interval seconds (optional)"
+                    }
+                }
+                ChannelCheckBox {
+                    id: catalogAdvancedProfile
+                    text: "Advanced profile settings"
+                }
                 ChannelTextField {
                     id: catalogProfileDefaults
+                    visible: catalogAdvancedProfile.checked
                     Layout.fillWidth: true
                     text: '{"enabled":true,"duration_seconds":120,"strategy":"best_fit","triggers":["breakpoint","interval","between_programs"]}'
                     placeholderText: "JSON policy defaults"
@@ -3346,7 +3450,16 @@ Item {
                     text: "Save Profile"
                     onClicked: {
                         try {
-                            var defaults = JSON.parse(catalogProfileDefaults.text)
+                            var defaults = catalogAdvancedProfile.checked
+                                ? JSON.parse(catalogProfileDefaults.text)
+                                : {enabled: true,
+                                   duration_seconds: Number(catalogProfileDuration.text),
+                                   interval_seconds: catalogProfileInterval.text.trim() ? Number(catalogProfileInterval.text) : null,
+                                   strategy: ["best_fit", "largest", "smallest", "sequential", "least_played", "complete_rotation"][catalogProfileStrategy.currentIndex],
+                                   breakpoints_seconds: studioRoot.editorObject().adBreakpointsSeconds.map(Number),
+                                   timing_policy: studioRoot.editorObject().adTimingPolicy,
+                                   transition_behavior: studioRoot.editorObject().adTransitionBehavior,
+                                   transition_seconds: Number(adTransitionSecondsField.text)}
                             adCatalogDialog.showResult(channelOS.saveAdBreakProfile({
                                 profileId: catalogProfileId.text.trim(),
                                 name: catalogProfileName.text.trim(),
@@ -3375,13 +3488,82 @@ Item {
                         placeholderText: "Saved profile ID"
                     }
                 }
+                Text {
+                    text: "Placement rules (optional)"
+                    color: studioRoot.textPrimary
+                    font.bold: true
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelComboBox {
+                        id: placementTrigger
+                        Layout.fillWidth: true
+                        model: ["Program breakpoints", "Program interval", "Between programs", "Calendar gap", "Fixed slot"]
+                    }
+                    ChannelComboBox {
+                        id: placementCollection
+                        Layout.fillWidth: true
+                        model: adCatalogDialog.catalogData.collections || []
+                        textRole: "name"
+                    }
+                    ChannelComboBox {
+                        id: placementProfile
+                        Layout.fillWidth: true
+                        model: adCatalogDialog.catalogData.profiles || []
+                        textRole: "name"
+                    }
+                }
+                StudioButton {
+                    id: addAdPlacementButton
+                    text: "Add Placement"
+                    onClicked: {
+                        var collections = adCatalogDialog.catalogData.collections || []
+                        var profiles = adCatalogDialog.catalogData.profiles || []
+                        if (!collections[placementCollection.currentIndex] || !profiles[placementProfile.currentIndex]) return
+                        var trigger = ["breakpoint", "interval", "between_programs", "calendar_boundary", "fixed_slot"][placementTrigger.currentIndex]
+                        var rules = adCatalogDialog.placementRules.slice()
+                        var identity = trigger + "-" + String(Date.now())
+                        rules.push({placement_id: identity, trigger: trigger,
+                                    collection_id: collections[placementCollection.currentIndex].collectionId,
+                                    profile_id: profiles[placementProfile.currentIndex].profileId,
+                                    overrides: trigger === "fixed_slot" ? {slot_seconds: Number(adSlotSecondsField.text || 1800)} : {}})
+                        adCatalogDialog.placementRules = rules
+                    }
+                }
+                Repeater {
+                    model: adCatalogDialog.placementRules
+                    delegate: RowLayout {
+                        required property var modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        Text {
+                            Layout.fillWidth: true
+                            text: modelData.trigger + " • " + modelData.collection_id + " • " + modelData.profile_id
+                            color: studioRoot.textSecondary
+                        }
+                        StudioButton {
+                            text: "Remove"
+                            onClicked: {
+                                var rules = adCatalogDialog.placementRules.slice()
+                                rules.splice(parent.index, 1)
+                                adCatalogDialog.placementRules = rules
+                            }
+                        }
+                    }
+                }
+                ChannelCheckBox {
+                    id: catalogAdvancedOverrides
+                    text: "Advanced channel overrides"
+                }
                 ChannelTextField {
                     id: catalogAssignOverrides
+                    visible: catalogAdvancedOverrides.checked
                     Layout.fillWidth: true
                     text: "{}"
                     placeholderText: "Per-channel overrides (JSON)"
                 }
                 StudioButton {
+                    id: saveAdAssignmentButton
                     text: "Save Assignment to Current Channel"
                     highlighted: true
                     onClicked: {
@@ -3391,12 +3573,14 @@ Item {
                                 channelNumber: Number(channelNumberField.text),
                                 collectionId: catalogAssignCollection.text.trim(),
                                 profileId: catalogAssignProfile.text.trim(),
-                                overrides: overrides
+                                overrides: overrides,
+                                placements: adCatalogDialog.placementRules
                             })
                             adCatalogDialog.showResult(result)
                             if (result && result.ok) {
                                 adCollectionField.text = catalogAssignCollection.text.trim()
                                 adProfileField.text = catalogAssignProfile.text.trim()
+                                adBreaksEnabledCheck.checked = true
                                 studioRoot.dirty = true
                             }
                         } catch (error) {

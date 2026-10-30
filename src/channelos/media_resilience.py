@@ -170,7 +170,7 @@ def _resolved_runtime(
 ) -> ChannelRuntime | None:
     """Resolve one channel against media that is usable for this launch."""
 
-    resolved = resolve_channel(definition, library)
+    resolved = resolve_channel(definition, library, allow_offline_ads=True)
     available = _transient_available_media(resolved, library)
     if not available:
         return None
@@ -202,25 +202,24 @@ def _resolved_runtime(
         )
 
 
-def _runtime_asset_sets(controller: Any) -> dict[int, set[str]]:
+def _runtime_asset_sets(controller: Any):
     return {
-        int(number): {
-            media.asset.asset_id
-            for media in runtime.channel.media
-        }
+        int(number): ({media.asset.asset_id for media in runtime.channel.media},
+                      {media.asset.asset_id for media in runtime.channel.ad_media})
         for number, runtime in controller._actions.runtime.channels.items()
     }
 
 
-def _desired_asset_sets(controller: Any) -> dict[int, set[str]]:
-    desired: dict[int, set[str]] = {}
+def _desired_asset_sets(controller: Any):
+    desired = {}
     for record in controller._broadcaster.records:
-        resolved = resolve_channel(record.definition, controller._library)
+        resolved = resolve_channel(record.definition, controller._library, allow_offline_ads=True)
         available = _transient_available_media(resolved, controller._library)
         if available:
-            desired[int(record.definition.channel)] = {
-                media.asset.asset_id for media in available
-            }
+            desired[int(record.definition.channel)] = (
+                {media.asset.asset_id for media in available},
+                {media.asset.asset_id for media in resolved.ad_media},
+            )
     return desired
 
 
@@ -246,6 +245,12 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
             self._media_recovery_active = False
             self._pending_on_demand_media: IndexedMedia | None = None
             self._temporarily_unavailable_roots: set[Path] = set()
+
+        @Slot(object)
+        def _on_library_scan_completed(self, summary) -> None:
+            super()._on_library_scan_completed(summary)
+            if _lineup_needs_refresh(self):
+                self._reload_resilient_lineup(restore_if_active=bool(self._playback.get("active")))
 
         def _missing_media_target(self) -> tuple[IndexedMedia, str] | None:
             pending = self._pending_on_demand_media

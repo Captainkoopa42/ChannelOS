@@ -165,41 +165,57 @@ def _resolve_preserved_sequence(
     return tuple(selected)
 
 
-def resolve_channel(channel: ChannelDefinition, library: MediaLibrary) -> ResolvedChannel:
+def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
+                    allow_offline_ads: bool = False) -> ResolvedChannel:
     source_keys = [normalize_path(source.path)[1] for source in channel.sources]
     ad_media: list[IndexedMedia] = []
+    policies = (channel.advertising,) + tuple(item.policy for item in channel.advertising.placements)
+    configured_ad_ids = {asset_id for policy in policies for asset_id in policy.asset_ids}
+    for policy in policies:
+        for source in policy.sources:
+            configured_ad_ids.update(item.asset.asset_id for item in library.list_online_media_for_source(source.path))
     if channel.advertising.enabled:
         seen_ad_assets: set[str] = set()
-        for source in channel.advertising.sources:
+        for source in (source for policy in policies for source in policy.sources):
             for item in library.list_online_media_for_source(source.path):
+                if allow_offline_ads and not item.location.path.is_file():
+                    continue
                 if item.asset.asset_id in seen_ad_assets:
                     continue
                 seen_ad_assets.add(item.asset.asset_id)
                 ad_media.append(item)
         ad_media.sort(key=lambda item: item.location.path_key)
-        if channel.advertising.asset_ids:
+        requested_ids = tuple(dict.fromkeys(asset_id for policy in policies for asset_id in policy.asset_ids))
+        if requested_ids:
             # The YAML carries a complete, portable snapshot of its collection.
             # Resolve by canonical identity, not by the Studio catalog database.
             indexed_ads: dict[str, IndexedMedia] = {}
             for item in library.list_online_media():
                 indexed_ads.setdefault(item.asset.asset_id, item)
             missing = [
-                asset_id for asset_id in channel.advertising.asset_ids
+                asset_id for asset_id in requested_ids
                 if asset_id not in indexed_ads
             ]
-            if missing:
+            if missing and not allow_offline_ads:
                 raise ChannelResolutionError(
                     "advertising references missing or offline assets: "
                     + ", ".join(missing)
                 )
-            for asset_id in channel.advertising.asset_ids:
+            for asset_id in requested_ids:
+                if asset_id not in indexed_ads or (allow_offline_ads and not indexed_ads[asset_id].location.path.is_file()):
+                    continue
                 if asset_id not in seen_ad_assets:
                     seen_ad_assets.add(asset_id)
                     ad_media.append(indexed_ads[asset_id])
+    if not channel.advertising.placements:
+        ad_media = [item for item in ad_media if item.asset.asset_id not in channel.advertising.excluded_asset_ids]
     indexed: list[IndexedMedia] = []
+    advertising_ids = configured_ad_ids | {item.asset.asset_id for item in ad_media}
     seen_locations: set[str] = set()
     for source in channel.sources:
         for item in library.list_online_media_for_source(source.path):
+            if item.asset.asset_id in advertising_ids:
+                continue
             if item.location.path_key in seen_locations:
                 continue
             seen_locations.add(item.location.path_key)

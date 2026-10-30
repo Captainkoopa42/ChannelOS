@@ -393,3 +393,64 @@ def test_channel_studio_component_loads_and_guards_an_unapplied_draft() -> None:
 
     item.deleteLater()
     app.processEvents()
+
+
+def test_ad_management_controls_edit_transition_placements_and_restore_cancelled_values():
+    from PySide6.QtQuick import QQuickWindow
+    app = QGuiApplication.instance() or QGuiApplication([])
+    class AdController(FakeStudioController):
+        saved = None
+
+        @Slot(result='QVariantMap')
+        def adCatalogSnapshot(self):
+            return {'ok': True, 'collections': [{'collectionId': 'ads', 'name': 'Commercials'}],
+                    'profiles': [{'profileId': 'standard', 'name': 'Standard'}], 'assignments': []}
+
+        @Slot('QVariantMap', result='QVariantMap')
+        def assignAdBreakProfile(self, value):
+            self.saved = value
+            return {'ok': True, 'message': 'Saved', **self.adCatalogSnapshot()}
+
+    controller, host = AdController(), FakeStudioHost()
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty('channelOS', controller)
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(
+        Path(channelos.__file__).resolve().parent / 'qml' / 'ChannelStudioScreen.qml')))
+    while component.isLoading():
+        app.processEvents()
+    assert component.isReady(), [error.toString() for error in component.errors()]
+    item = component.create()
+    window = QQuickWindow()
+    window.resize(1280, 900)
+    item.setParentItem(window.contentItem())
+    item.setProperty('hostWindow', host)
+    window.show()
+    app.processEvents()
+
+    def evaluate(code):
+        expression = QQmlExpression(engine.contextForObject(item), item, code)
+        result, undefined = expression.evaluate()
+        assert not expression.hasError(), expression.error().toString()
+        app.processEvents()
+        return result.toVariant() if hasattr(result, 'toVariant') else result
+
+    edited = evaluate('adBreakSettingsDialog.open(); adTransitionBox.currentIndex = 1; '
+                      'adTransitionSecondsField.text = "0.75"; adSlotSecondsField.text = "1800"; '
+                      'adBreakSettingsDialog.accept(); editorObject()')
+    assert edited['adTransitionBehavior'] == 'fade'
+    assert edited['adTransitionSeconds'] == .75
+    assert edited['adSlotSeconds'] == 1800
+    restored = evaluate('adBreakSettingsDialog.open(); adTransitionSecondsField.text = "4"; '
+                        'adBreakSettingsDialog.reject(); editorObject()')
+    assert restored['adTransitionSeconds'] == .75
+    evaluate('adCatalogDialog.open(); placementTrigger.currentIndex = 2; '
+             'addAdPlacementButton.clicked(); saveAdAssignmentButton.clicked()')
+    assert len(controller.saved['placements']) == 1
+    assert controller.saved['placements'][0]['trigger'] == 'between_programs'
+    assert controller.saved['placements'][0]['collection_id'] == 'ads'
+    evaluate('adCatalogDialog.close()')
+    window.close()
+    item.setParentItem(None)
+    item.deleteLater()
+    engine.deleteLater()
+    app.processEvents()

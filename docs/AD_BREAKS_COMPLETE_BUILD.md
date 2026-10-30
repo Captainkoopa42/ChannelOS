@@ -1,113 +1,166 @@
-# Advertisement Breaks — Complete Build Plan
+# ChannelOS broadcast advertising — implementation and acceptance
 
-This document defines the complete advertisement system built on top of the alpha implementation. It is an implementation contract, not a claim that every listed capability is already shipped.
+Updated October 30, 2026. This describes the ad feature on
+`feature/ad-breaks-complete`, targeting `agent/broadcaster-channel-builder`.
+The A–F letters below refer to the advertising roadmap, not the application's
+older numbered development phases. Release validation is separate from feature
+implementation: the checks below must pass on the commit being distributed.
 
-## Implementation checkpoint — October 30, 2026
+## Phase A — runtime architecture
 
-The feature branch now includes reusable SQLite ad catalogs with fixed or
-dynamic canonical Library membership; self-contained v0.5 channel exports;
-separate ad source resolution; sequential breakpoint and interval insertion;
-calendar gap plans committed before exposure; deterministic selection including
-bounded exact Best Fit, Least Played, and Complete Rotation; Smoosh and
-bounded sequential Expand; a dedicated completed-broadcast ledger and an
-independent verified-viewer ledger; Guide markers, the Live AD indicator, and
-Studio authoring, previews, and diagnostics. Python tests and Windows-package
-validation run in GitHub Actions. These are **implemented development slices**,
-not a full Phase A–E acceptance declaration.
+`ChannelRuntime` owns one broadcast timeline. `BroadcastSelection` retains the
+original program occurrence, while its `BroadcastEvent` describes the selected
+program, advertisement, filler or transition segment. `segment_id`, segment UTC
+boundaries and source offset boundaries identify precise decoder work without
+changing the parent program's identity. `events_between()` materializes that
+same timeline for diagnostics and Studio.
 
-**Still required to meet the entire master design:**
+Program schedule signatures and advertising signatures are independent. Ad
+policy edits retain the channel epoch, viewer clock, started breaks and
+history-bearing plans; unstarted future decisions can be invalidated.
+Disabling ads preserves already committed historical timing and finishes an
+active break. A changed sequential program schedule retires the old ad clock
+while retaining completed history.
 
-- True transition execution for the selectable `fade` and `hold` policies
-  through the playback backend, without corrupting volume controls or clock
-  authority.
-- Deterministic restart catch-up that generates *missed* program and ad
-  opportunities while the process was closed, in chronological order, with
-  bounded work and rotation parity against uninterrupted playback.
-- Richer placement-specific collections/profiles and complete schedule-priority
-  semantics for different Expand borrowing sources.
-- Dedicated per-viewer transition, pause/rewind, media-disappearance, offline
-  ad source, channel-switch, and full Windows Qt/native VLC smoke verification.
-- Explicit backward compatibility and regression evidence for the final
-  release candidate before marking all phases complete.
+SQLite stores immutable plans, their policy/transition snapshots, source
+locations, program clock mappings, catch-up checkpoints and separate airing and
+viewer ledgers. Plans are committed before they can be exposed to playback.
+Queries into the past reuse those decisions. Guide and viewer projections use
+`project_at()` and cannot record future content as aired.
 
-## Non-negotiable runtime invariants
+## Phase B — collections, profiles and portable channels
 
-1. `ChannelRuntime` remains the sole authority for what is airing at a broadcast timestamp. The Guide is a read-only projection of that timeline.
-2. Ads remain a separate media scope in the canonical Library. Adding an ad source must never add those assets to ordinary program or filler pools.
-3. Broadcast time is independent of viewer tune time. Tuning, seeking, pausing, or restarting a viewer must not move the channel schedule.
-4. An ad break is a scheduled interruption of a program occurrence. The interrupted program's original start/end and content offset remain recoverable; after the break, playback resumes at the exact content position implied by the broadcast clock.
-5. Break plans are deterministic and immutable once committed for an airing opportunity. A restart or a second viewer must not produce a different ad sequence for the same opportunity.
-6. A schedule edit may invalidate future plans, but must not silently rewrite an already-airing break.
-7. All timing arithmetic uses timezone-aware UTC instants and bounded durations. No policy may silently overrun a hard scheduled boundary.
+Studio manages collections over canonical Library asset IDs. Fixed collections
+pin explicit assets. Dynamic collections retain indexed folder selectors and
+exclusions as well as their applied asset snapshot. New indexed files become
+eligible after the Library scan refreshes the runtime. Already committed plans
+remain unchanged. Collection sources are excluded from program/filler pools,
+including when the channel's normal source is a parent of the ad folder.
 
-## Accepted product decisions
+Reusable profiles provide strategy, triggers, duration, trim/expansion limits and
+transition defaults. Assignments retain explicit channel overrides. Independent
+placement assignments can use different collections and profiles for in-program
+breaks, between-program breaks and slot/gap filling. Applied channels contain
+effective policy snapshots; playback does not require Studio's catalog database.
 
-- Per-channel scheduling priority.
-- Both explicitly configured breakpoints and automatic interval triggers.
-- Per-channel Expand policy.
-- Per-profile default ad-selection strategy.
-- One shared broadcast timeline, with Guide/HUD as projections of runtime state.
+Schema 0.4 advertising remains supported. Full portable snapshots use schema
+0.5, which was already introduced on this branch. Versions 0.1–0.5 continue to
+load; channels remain ad-disabled unless configured. Catalog migrations retain
+older JSON-list collections and assignments without placement columns.
 
-## Complete feature set
+## Phase C — calendar and gap scheduling
 
-### Scheduling
-- Fixed calendar-gap insertion (alpha).
-- Configured breakpoints within program occurrences.
-- Automatic interval breaks.
-- Break opportunities identify channel, program occurrence, trigger type, scheduled timestamp, and priority.
-- Overlapping opportunities are resolved deterministically using per-channel priority and stable tie-breaking.
+Calendar gaps use committed ad plans. Between-program and fixed-slot placements
+use the same selector as program interruptions. Strict Fit, Smoosh and legal
+Expand budgets are resolved before a plan is published. Calendar filler is
+clipped at the next protected fixed start. Sequential fixed slots reserve any
+unfilled remainder with explicitly typed, timed filler, so the next show cannot
+start early merely because no combination of ads fills the slot.
 
-### Collections and profiles
-- Reusable ad collections referencing canonical Library asset IDs.
-- Reusable break profiles defining default strategy, trigger defaults, transition defaults, and timing policy defaults.
-- Per-channel profile assignment and explicit per-channel overrides.
-- Channel definitions remain portable; profile/collection persistence must have stable IDs and validation.
+`slot_seconds` supports quarter-hour, half-hour, hour or custom slot sizes.
+Content duration and broadcast duration remain distinct. Fixed calendar starts
+are never silently shifted by advertising.
 
-### Selection and rotation
-- Best Fit, Largest, Smallest, Sequential, Least Played, and Complete Rotation.
-- Persistent play history keyed by stable asset ID and committed airing plan.
-- Deterministic tie-breaking and a clear behavior for unavailable/offline assets.
-- A committed plan is shared by all viewers and survives application restarts.
+## Phase D — interruptions and resume
 
-### Timing policies
-- Strict Fit: only complete ads that fit.
-- Smoosh: allow configured trimming to fit a bounded opportunity, with minimum-duration and trim-limit validation.
-- Expand: per-channel policy may borrow within configured limits from the following content boundary; it must never silently move a fixed calendar start.
-- If no legal plan exists, use the channel's configured fallback (filler or leave-gap) rather than breaking timeline invariants.
+Explicit source-content breakpoints and interval triggers share opportunity
+generation and deterministic overlap arbitration. Placement priority resolves
+collisions. Sequential, deterministic shuffle and fixed-calendar programs all
+produce program/ad/transition segments with exact content-resume mapping.
+Persistent program clock rows eliminate iterative estimates of accumulated ad
+time, including after long shutdowns. Watch from Beginning follows the program's
+scheduled source start, including an explicitly configured content borrow.
 
-### Playback and presentation
-- Mid-program ad insertion and exact content resumption.
-- Configurable fade/transition behavior with safe defaults and no accidental overlap in the authoritative clock.
-- Guide rows expose break markers while preserving the parent program occurrence.
-- Now/Next identifies an active advertisement as an ad break and retains the interrupted program context.
-- Playback HUD shows an ad-break indicator and, where available, break progress.
+## Phase E — selection, history and timing
 
-## Architecture
+Strategies include Best Fit, Largest, Smallest, Sequential, Least Played and
+Complete Rotation. Best Fit uses exact subset fitting for up to fourteen assets
+and a bounded deterministic fallback for larger pools. Individual ads do not
+repeat within a selection. Complete Rotation orders eligible candidates by
+rotation count, with stable ties and duration constraints; ads that cannot fit
+a particular opportunity remain eligible for a later one.
 
-- **BreakOpportunityScheduler**: derives explicit and interval opportunities from program occurrences and channel/profile policy.
-- **AdSelectionEngine**: selects assets from collections using strategy and history.
-- **BreakPlanStore**: persists immutable plans, plan segments, and play history in SQLite with schema migrations and transactional commits.
-- **ChannelRuntime**: resolves the authoritative event at a broadcast instant, including program, ad, and filler segments.
-- **TelevisionSession**: executes the selected segment and transitions without changing the broadcast clock.
-- **GuideService**: projects parent program occurrences and their break markers from runtime state; it does not schedule ads.
-- **Channel Studio**: edits collections, profiles, breakpoints, intervals, priority, policies, and previews validated plans.
+Rotation is channel-local and uses earlier committed reservations. It therefore
+does not depend on whether the Guide was opened first or another channel was
+watched. Completed aired counts are written only when a real broadcast-time
+observation reaches the segment end. Restart catch-up generates missing
+sequential/shuffle occurrences and calendar gaps in chronological order. Work is
+bounded to 10,000 occurrences per catch-up request, with a durable checkpoint.
 
-## Delivery phases
+Viewer history is independent. It records verified decoder progress, merges
+unique source-coverage ranges across rewind/restart, retains partial completion,
+and records a full viewing only after sufficient coverage. Seeking across an ad
+cannot count as watching it. Diagnostics expose aired counts, watched counts,
+last airing/viewing and viewer completion rate.
 
-1. **Timeline and persistence foundation** — introduce typed break policy/trigger/profile/collection definitions, stable occurrence IDs, SQLite migrations, immutable plan storage, and backwards-compatible schema migration.
-2. **Opportunity scheduling and playback** — configured and interval triggers, priority arbitration, mid-program insertion, and exact resume.
-3. **Selection and history** — all strategies, durable history, collection/profile assignment, deterministic multi-viewer/restart behavior.
-4. **Timing and transitions** — Smoosh/Expand rules, bounded timing validation, and fade/transition execution.
-5. **Studio, Guide, HUD, and release hardening** — complete editing UI, Guide markers, Now/Next/HUD states, migration tests, restart tests, and Windows packaging.
+Smoosh respects minimum duration and maximum trim. Expand is explicitly bounded:
 
-## Required verification
+| Source / priority | Behavior |
+| --- | --- |
+| `schedule_shift`, sequential/shuffle | Delay following programming within the extra-time allowance, preserving content. |
+| `available_slot_time`, calendar | Consume available slack without moving the next fixed start. |
+| `current_program`, advertising priority | Borrow only the permitted tail of the current program, with a persisted content cut. Calendar boundaries remain protected. |
+| `next_event`, advertising priority, sequential/shuffle | Borrow only permitted leading content from the next program, with a persisted source-start cut. |
+| `next_event` or `schedule_shift`, calendar | Use the permitted calendar slack; a protected fixed event is never borrowed or moved. |
+| Fixed priority | Do not expand past the requested break budget. |
 
-- Legacy schema 0.1–0.4 channels load unchanged and remain ad-disabled unless configured.
-- Same broadcast timestamp yields the same committed segment for every viewer and after restart.
-- Mid-program breaks resume the interrupted content at the exact expected source offset.
-- Configured and interval triggers are deterministic and priority arbitration is stable.
-- History commits exactly once per aired segment, including crash/restart boundaries.
-- Smoosh respects minimum-duration and trim limits; Expand respects channel policy and never shifts a fixed calendar start.
-- Guide output is a faithful projection of runtime segments and never mutates plans.
-- Offline/missing assets and invalid profiles fail validation safely.
-- Existing runtime, Guide, Studio, and Windows build tests remain green.
+Borrowing content requires the explicit **Prioritize ads** setting. The default
+preserves program content. Fixed-slot boundaries stay protected under every
+priority.
+
+## Phase F — broadcast presentation, playback and recovery
+
+Guide rows preserve parent shows and expose compact amber break markers,
+including within short-form visual groups. Now/Next recognizes an active break
+and its returning program. The Live HUD exposes the ad indicator, parent title,
+break boundaries and remaining time.
+
+Studio offers ordinary controls for profiles, placement assignments, transition
+duration, fixed slots, scheduling priority and expansion source. Advanced JSON
+overrides are optional. Preview resolves an isolated full event timeline and
+returns segment/source boundaries and diagnostics without writing live history.
+
+Playback implements:
+
+- **Cut**: load/seek the authoritative next segment.
+- **Fade through black**: apply independent video brightness and audio gain
+  envelopes within scheduled media time. User volume and mute remain independent.
+- **Hold last frame**: reserve a typed transition event in the plan, seek the
+  preceding ad's last frame, and hold it without moving the viewer or broadcast
+  clocks. Transition time is fitted together with media time.
+
+Fade through black uses the existing single decoder; this is not an overlapping
+two-decoder crossfade. Profiles identify the actual supported behavior.
+
+Pause, rewind, Go Live and channel changes keep their existing clock semantics.
+A failed ad decoder can recover at the following authoritative program boundary.
+Offline ad sources do not prevent the channel's program runtime from opening;
+Studio validation still reports missing/offline references. Failed viewer
+playback never counts as verified consumption.
+
+## Verification and distribution gates
+
+`tests/test_ad_broadcast_integration.py` exercises complete workflows rather than
+only individual helpers: Guide/look-ahead parity, long offline recovery,
+channel-local rotation, placement snapshots, dynamic membership, protected
+calendar boundaries, content borrowing, fixed-slot fallback, ad disabling,
+partial viewing/rewind, decoder failure, schema compatibility and schedule edits.
+The existing runtime, Guide, Studio, playback and migration suites remain part of
+the required run. `test_channel_studio_qml_runtime.py` also drives the actual ad
+settings and placement controls and checks cancellation/restoration.
+
+Required checks for each release candidate:
+
+1. Full pytest suite on Python 3.11, 3.12 and 3.13.
+2. Headless Couch/QML loading and interaction tests.
+3. Windows locked-environment tests, portable package build and package audit.
+4. `tools/windows/smoke_ad_playback.py`: native Qt HWND with the bundled libVLC,
+   generated AVI fixtures, real cut/fade/hold playback, transitions, native video
+   output and preservation of audio controls. CI uses GDI software output so it
+   does not depend on a physical GPU.
+5. Publish the Windows artifact only after the preceding Windows gates pass.
+
+The automated native check does not replace validation of D3D11 hardware decode,
+fullscreen/window transitions and physical audio output on the user's own PC.
+Those remain real-machine release checks; do not report them as performed by a
+headless or software-output runner.

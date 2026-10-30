@@ -41,6 +41,12 @@ hot-plug behavior and settings-driven control hints. Steam Input can expose
 other controllers through its normal gamepad/XInput emulation path; native
 SteamOS validation remains a separate gate.
 
+This feature branch also implements opt-in broadcast advertising: reusable ad
+collections and profiles, placement rules, persistent interruption/resume plans,
+calendar and fixed-slot filling, rotation/history, Studio previews and Guide/HUD
+indicators. See [advertising implementation and acceptance](docs/AD_BREAKS_COMPLETE_BUILD.md)
+for the A–F roadmap, timing policies and release checks.
+
 The key runtime rule remains:
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**
@@ -58,7 +64,7 @@ ChannelOS must never become the thing standing between a person and their media.
 - Channel definitions are human-readable and portable.
 - Runtime/index state is kept separate from media.
 - Export must become real migration, not an ecosystem trap.
-- ChannelOS does not inject advertising into local media playback.
+- ChannelOS never forces advertising. Optional broadcast ad breaks use only user-owned, indexed media and stay disabled until configured.
 - A distribution platform must never become an entitlement requirement for local use.
 
 If ChannelOS disappears, the library survives.

@@ -299,19 +299,21 @@ def test_studio_preview_is_isolated_and_reports_ad_events(tmp_path):
 
 
 @pytest.mark.parametrize("behavior", ["fade", "hold"])
-def test_unimplemented_transitions_are_rejected_before_apply(tmp_path, behavior):
-    from channelos.runtime import ChannelRuntimeError
+def test_transition_settings_are_portable_and_persisted_with_plans(tmp_path, behavior):
 
     library, root, ads = indexed(tmp_path)
     ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
     raw = channel_to_mapping(config(root, ids))
     raw["advertising"]["transition_behavior"] = behavior
     resolved = resolve_channel(ChannelDefinition.from_mapping(raw), library)
-    with pytest.raises(ChannelRuntimeError, match="not supported"):
-        ChannelRuntime.open(
-            resolved, RuntimeStore(tmp_path / "runtime.sqlite"),
-            now=datetime(2026, 10, 30, tzinfo=UTC),
-        )
+    runtime = ChannelRuntime.open(resolved, RuntimeStore(tmp_path / "runtime.sqlite"),
+                                  now=datetime(2026, 10, 30, tzinfo=UTC))
+    selection = runtime.broadcast_at(datetime(2026, 10, 30, tzinfo=UTC) + timedelta(seconds=21))
+    plan = runtime.break_store.load_plan(selection.break_id)
+    assert plan.transition_behavior == behavior
+    assert runtime.break_store.load_opportunity(plan.opportunity_id) == plan
+    assert ChannelDefinition.from_mapping(channel_to_mapping(resolved.definition)) == resolved.definition
+
 
 
 

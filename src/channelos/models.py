@@ -81,6 +81,37 @@ class AdvertisingDefinition:
     expand_max_seconds: float = 0.0
     triggers: tuple[str, ...] = ("breakpoint", "interval", "between_programs", "calendar_boundary")
     transition_behavior: str = "cut"
+    transition_seconds: float = 0.5
+    slot_seconds: float | None = None
+    schedule_priority: str = "program"
+    expand_source: str = "schedule_shift"
+    placements: tuple[AdPlacementDefinition, ...] = ()
+    collection_membership: str = "fixed"
+    excluded_asset_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AdPlacementDefinition:
+    placement_id: str
+    trigger: str
+    policy: AdvertisingDefinition
+
+
+def advertising_to_mapping(value: AdvertisingDefinition) -> dict[str, Any]:
+    """Serialize effective snapshots, including independently assigned placements."""
+    from dataclasses import fields
+    result = {field.name: getattr(value, field.name) for field in fields(value)
+              if field.name not in {"sources", "placements"}}
+    result["sources"] = [{"path": str(source.path)} for source in value.sources]
+    for key in ("asset_ids", "breakpoints_seconds", "triggers", "excluded_asset_ids"):
+        result[key] = list(result[key])
+    result["placements"] = [
+        {"id": item.placement_id, "trigger": item.trigger,
+         "policy": {key: setting for key, setting in advertising_to_mapping(item.policy).items()
+                    if key != "placements"}}
+        for item in value.placements
+    ]
+    return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +185,8 @@ class ChannelDefinition:
             "asset_ids", "collection_id", "profile_id", "timing_policy",
             "smoosh_minimum_seconds", "smoosh_max_trim_seconds",
             "expand_max_seconds", "triggers", "transition_behavior",
+            "transition_seconds", "slot_seconds", "schedule_priority", "expand_source", "placements",
+            "collection_membership", "excluded_asset_ids",
         }
         if version == "0.5":
             allowed_advertising.update(new_ad_keys)
@@ -221,9 +254,17 @@ class ChannelDefinition:
             for asset_id in raw_asset_ids
         ):
             raise ChannelValidationError("advertising.asset_ids must be a list of non-empty strings")
-        asset_ids = tuple(asset_id.strip() for asset_id in raw_asset_ids)
-        if len(set(asset_ids)) != len(asset_ids):
+        ad_asset_ids = tuple(asset_id.strip() for asset_id in raw_asset_ids)
+        if len(set(ad_asset_ids)) != len(ad_asset_ids):
             raise ChannelValidationError("advertising.asset_ids cannot contain duplicates")
+        collection_membership = raw_advertising.get("collection_membership", "fixed")
+        if collection_membership not in {"fixed", "dynamic"}:
+            raise ChannelValidationError("unsupported advertising collection membership")
+        excluded_ids = raw_advertising.get("excluded_asset_ids", [])
+        if not isinstance(excluded_ids, list) or any(not isinstance(value, str) or not value.strip() for value in excluded_ids):
+            raise ChannelValidationError("excluded_asset_ids must be a list of non-empty IDs")
+        if len(set(excluded_ids)) != len(excluded_ids):
+            raise ChannelValidationError("excluded_asset_ids cannot contain duplicates")
         collection_id = raw_advertising.get("collection_id")
         profile_id = raw_advertising.get("profile_id")
         for field_name, value in (("collection_id", collection_id), ("profile_id", profile_id)):
@@ -234,7 +275,7 @@ class ChannelDefinition:
         if not isinstance(triggers, list) or any(
             not isinstance(trigger, str) for trigger in triggers
         ) or len(set(triggers)) != len(triggers) or set(triggers) - {
-            "breakpoint", "interval", "between_programs", "calendar_boundary",
+            "breakpoint", "interval", "between_programs", "calendar_boundary", "fixed_slot",
         }:
             raise ChannelValidationError("advertising.triggers contains invalid or duplicate triggers")
         transition = raw_advertising.get("transition_behavior", "cut")
@@ -253,7 +294,51 @@ class ChannelDefinition:
             raise ChannelValidationError("advertising timing limits must be finite")
         if smoosh_min <= 0 or smoosh_trim < 0 or expand_max < 0:
             raise ChannelValidationError("advertising Smoosh/Expand limits are invalid")
-        if ad_enabled and not (ad_sources or asset_ids):
+        try:
+            transition_seconds = float(raw_advertising.get("transition_seconds", 0.5))
+            slot_seconds = raw_advertising.get("slot_seconds")
+            slot_seconds = None if slot_seconds is None else float(slot_seconds)
+        except (TypeError, ValueError) as exc:
+            raise ChannelValidationError("transition and slot durations must be numeric") from exc
+        if not math.isfinite(transition_seconds) or not 0 <= transition_seconds <= 10:
+            raise ChannelValidationError("transition_seconds must be from 0 through 10")
+        if slot_seconds is not None and (not math.isfinite(slot_seconds) or slot_seconds <= 0):
+            raise ChannelValidationError("slot_seconds must be finite and positive")
+        schedule_priority = raw_advertising.get("schedule_priority", "program")
+        if schedule_priority not in {"program", "advertising", "fixed"}:
+            raise ChannelValidationError("unsupported advertising.schedule_priority")
+        expand_source = raw_advertising.get("expand_source", "schedule_shift")
+        if expand_source not in {"schedule_shift", "available_slot_time", "current_program", "next_event"}:
+            raise ChannelValidationError("unsupported advertising.expand_source")
+        raw_placements = raw_advertising.get("placements", [])
+        if not isinstance(raw_placements, list):
+            raise ChannelValidationError("advertising.placements must be a list")
+        placements = []
+        placement_ids = set()
+        for item in raw_placements:
+            if not isinstance(item, dict) or set(item) - {"id", "trigger", "policy"}:
+                raise ChannelValidationError("placement requires id, trigger and a portable policy snapshot")
+            identity, trigger = item.get("id"), item.get("trigger")
+            if not isinstance(identity, str) or not identity.strip() or identity in placement_ids:
+                raise ChannelValidationError("placement IDs must be non-empty and unique")
+            if trigger not in {"breakpoint", "interval", "between_programs", "calendar_boundary", "fixed_slot"}:
+                raise ChannelValidationError("unsupported placement trigger")
+            overrides = item.get("policy", {})
+            if not isinstance(overrides, dict) or "placements" in overrides:
+                raise ChannelValidationError("placement policy must be a mapping without nested placements")
+            inherited = {key: value for key, value in raw_advertising.items() if key != "placements"}
+            inherited.update(overrides)
+            inherited["triggers"] = [trigger]
+            if "asset_ids" in overrides and "sources" not in overrides:
+                inherited["sources"] = []
+            snapshot = cls.from_mapping({**raw, "advertising": inherited}).advertising
+            if trigger == "fixed_slot" and snapshot.slot_seconds is None:
+                raise ChannelValidationError("fixed_slot placement requires slot_seconds")
+            placements.append(AdPlacementDefinition(identity, trigger, snapshot))
+            placement_ids.add(identity)
+        if "fixed_slot" in triggers and slot_seconds is None:
+            raise ChannelValidationError("fixed_slot trigger requires slot_seconds")
+        if ad_enabled and not (ad_sources or ad_asset_ids or placements):
             raise ChannelValidationError(
                 "advertising requires indexed sources or canonical asset_ids when enabled"
             )
@@ -456,13 +541,20 @@ class ChannelDefinition:
                 interval_seconds=interval_seconds,
                 break_duration_seconds=break_duration_seconds,
                 priority=priority,
-                asset_ids=asset_ids,
+                asset_ids=ad_asset_ids,
                 collection_id=collection_id,
                 profile_id=profile_id,
                 timing_policy=policy_name,
                 smoosh_minimum_seconds=smoosh_min,
                 smoosh_max_trim_seconds=smoosh_trim,
                 expand_max_seconds=expand_max,
+                transition_seconds=transition_seconds,
+                slot_seconds=slot_seconds,
+                schedule_priority=schedule_priority,
+                expand_source=expand_source,
+                placements=tuple(placements),
+                collection_membership=collection_membership,
+                excluded_asset_ids=tuple(excluded_ids),
                 triggers=tuple(triggers),
                 transition_behavior=transition,
             ),

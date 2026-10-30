@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 from bisect import bisect_right
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .ad_breaks import PlannedAd, plan_ad_break
+from .ad_breaks import PlannedAd
 from .ad_break_engine import (
-    AdCandidate, AdSelectionEngine, BreakOpportunityScheduler, BreakPlan,
-    BreakPlanStore, BreakPolicy, PlannedSegment, ProgramOccurrence,
+    BreakPlan, BreakPlanStore, PlannedSegment, ProgramOccurrence,
 )
+from .ad_scheduling import configured_policies, eligible_media, program_opportunities, snapshot_segments, select_segments, indexed_media_for_segment
 from .library import IndexedMedia
 from .models import AdvertisingDefinition, CalendarBlockDefinition
 from .resolve import ResolvedChannel
@@ -86,6 +87,8 @@ class BroadcastEvent:
     parent_program_ends_at: datetime | None = None
     program_occurrence_id: str | None = None
     break_occurrence_id: str | None = None
+    source_offset_end_seconds: float = 0.0
+    segment_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +106,9 @@ class BroadcastSelection:
     parent_program_ends_at: datetime | None = None
     program_occurrence_id: str | None = None
     break_occurrence_id: str | None = None
+    segment_started_at: datetime | None = None
+    segment_ends_at: datetime | None = None
+    segment_source_offset_seconds: float = 0.0
 
     @property
     def media(self) -> IndexedMedia:
@@ -110,7 +116,7 @@ class BroadcastSelection:
 
     @property
     def event(self) -> BroadcastEvent:
-        event_type = "advertisement" if self.origin == "advertisement" else (
+        event_type = self.origin if self.origin in {"advertisement", "transition"} else (
             "filler" if self.origin in {"filler", "show-filler"} else "program"
         )
         identity = hashlib.sha256("|".join((
@@ -127,9 +133,16 @@ class BroadcastSelection:
             event_id=identity,
             event_type=event_type,
             asset_id=self.media.asset.asset_id,
-            start_utc=self.program_started_at,
-            end_utc=self.program_ends_at,
-            source_offset_seconds=self.offset_seconds,
+            start_utc=self.segment_started_at or self.program_started_at,
+            end_utc=self.segment_ends_at or self.program_ends_at,
+            source_offset_seconds=self.segment_source_offset_seconds,
+            source_offset_end_seconds=self.segment_source_offset_seconds + (0.0 if event_type == "transition" else (
+                (self.segment_ends_at or self.program_ends_at) -
+                (self.segment_started_at or self.program_started_at)
+            ).total_seconds()),
+            segment_id=hashlib.sha256((identity + ":" + (
+                self.segment_started_at or self.program_started_at
+            ).isoformat()).encode()).hexdigest(),
             parent_program_id=self.parent_program_id,
             break_id=self.break_id,
             parent_program_asset_id=self.parent_program_asset_id,
@@ -314,132 +327,118 @@ class CalendarTimeline:
         self._starts = tuple(starts)
         self._ends = tuple(ends)
 
-    def _calendar_mid_plans(self, index: int) -> tuple[BreakPlan, ...]:
-        """Plan calendar mid-program breaks without borrowing protected time.
+    def _calendar_occurrence_id(self, index: int) -> str:
+        return hashlib.sha256(f"calendar:{self.channel_number}:{self.programs[index].media.asset.asset_id}:{self._starts[index].isoformat()}".encode()).hexdigest()
 
-        A calendar program can be paused only when its complete content and
-        inserted advertisements fit before the next fixed program start.
-        Unavailable slack suppresses breaks rather than truncating programs.
-        """
+    def _calendar_program_end(self, index: int, plans) -> datetime:
+        cuts = sum(self.break_store.content_cuts(self._calendar_occurrence_id(index))) if self.break_store else 0.0
+        return self._ends[index] + timedelta(seconds=sum(p.duration_seconds for p in plans) - cuts)
+
+    def _calendar_mid_plans(self, index: int) -> tuple[BreakPlan, ...]:
         if index in self._mid_plan_cache:
             return self._mid_plan_cache[index]
-        self._mid_plan_cache[index] = ()
-        advertising = self.advertising
-        if (
-            not advertising.enabled or not self.ad_media
-            or not ({"breakpoint", "interval"} & set(advertising.triggers))
-        ):
-            return ()
-        start = self._starts[index]
-        natural_end = self._ends[index]
+        start, natural_end = self._starts[index], self._ends[index]
         asset_id = self.programs[index].media.asset.asset_id
         occurrence_id = hashlib.sha256(
-            f"calendar:{self.channel_number}:{asset_id}:{start.isoformat()}".encode("utf-8")
+            f"calendar:{self.channel_number}:{asset_id}:{start.isoformat()}".encode()
         ).hexdigest()
-        policy = BreakPolicy(
-            enabled=True,
-            interval_seconds=(
-                advertising.interval_seconds if "interval" in advertising.triggers
-                else None
-            ),
-            breakpoints_seconds=(
-                advertising.breakpoints_seconds if "breakpoint" in advertising.triggers
-                else ()
-            ),
-            duration_seconds=advertising.break_duration_seconds,
-            priority=advertising.priority,
-            strategy=advertising.selection_strategy,
-            timing_policy=advertising.timing_policy,
-            smoosh_minimum_seconds=advertising.smoosh_minimum_seconds,
-            smoosh_max_trim_seconds=advertising.smoosh_max_trim_seconds,
-            expand_max_seconds=advertising.expand_max_seconds,
-        )
-        opportunities = BreakOpportunityScheduler.arbitrate(
-            BreakOpportunityScheduler.for_occurrence(
-                ProgramOccurrence(
-                    occurrence_id, self.channel_number, asset_id,
-                    start, natural_end,
-                ),
-                policy, revision=self.ad_revision,
-            )
-        )
-        next_start = (
-            self._starts[index + 1] if index + 1 < len(self._starts)
-            else None
-        )
-        slack_remaining = (
-            max(0.0, (next_start - natural_end).total_seconds())
-            if next_start is not None else float("inf")
-        )
-        candidates = tuple(
-            AdCandidate(item.asset.asset_id, float(item.asset.duration_seconds))
-            for item in self.ad_media
-        )
-        plans: list[BreakPlan] = []
+        existing = list(self.break_store.plans_for_occurrence(occurrence_id)) if self.break_store else []
+        next_start = self._starts[index + 1] if index + 1 < len(self._starts) else None
+        slack = max(0.0, (next_start - natural_end).total_seconds()) if next_start else float("inf")
         inserted = 0.0
-        for opportunity in opportunities:
-            if slack_remaining <= 0.001:
-                break
-            budget = policy.duration_seconds
-            if policy.timing_policy == "expand":
-                budget += policy.expand_max_seconds
-            budget = min(budget, slack_remaining)
-            expected_at = opportunity.scheduled_at + timedelta(seconds=inserted)
-            stored = (
-                self.break_store.load_opportunity(opportunity.opportunity_id)
-                if self.break_store is not None else None
+        opportunities = program_opportunities(self.advertising, ProgramOccurrence(
+            occurrence_id, self.channel_number, asset_id, start, natural_end,
+        ), self.ad_revision)
+        for opportunity, settings in opportunities:
+            if opportunity.trigger not in {"breakpoint", "interval"}:
+                continue
+            expected = opportunity.scheduled_at + timedelta(seconds=inserted)
+            previous = next((p for p in existing if abs((p.scheduled_at - expected).total_seconds()) < .001), None)
+            if previous is not None:
+                inserted += previous.duration_seconds
+                continue
+            activation = self.break_store.policy_activation(self.channel_number) if self.break_store else None
+            if activation is not None and expected < activation:
+                continue
+            cuts = sum(self.break_store.content_cuts(occurrence_id)) if self.break_store else sum(p.content_cut_seconds for p in existing)
+            source_position = (opportunity.scheduled_at - start).total_seconds()
+            available_content = (natural_end - start).total_seconds() - source_position - cuts - .001
+            if available_content <= 0:
+                continue
+            budget = min(opportunity.duration_seconds, max(0.0, slack - inserted + cuts))
+            extra = 0.0
+            if settings.timing_policy == "expand" and settings.schedule_priority != "fixed":
+                if settings.expand_source == "current_program" and settings.schedule_priority == "advertising":
+                    extra = min(settings.expand_max_seconds, available_content)
+                else:
+                    budget = min(opportunity.duration_seconds + settings.expand_max_seconds,
+                                 max(0.0, slack - inserted + cuts))
+            if budget <= .001 and extra <= .001:
+                continue
+            media = eligible_media(self.ad_media, settings)
+            effective_timing = "expand" if extra > 0 else ("smoosh" if settings.timing_policy == "smoosh" else "strict_fit")
+            segments = select_segments(media, budget, replace(settings, timing_policy=effective_timing),
+                expand_max_seconds=extra, seed=opportunity.opportunity_id,
+                counts=self.break_store.rotation_counts(self.channel_number, before=expected) if self.break_store else None,
             )
-            if stored is None and self.break_store is not None:
-                for old_plan in self.break_store.plans_for_occurrence(occurrence_id):
-                    if abs((old_plan.scheduled_at - expected_at).total_seconds()) < 0.01:
-                        stored = old_plan
-                        break
-            if stored is None:
-                segments = AdSelectionEngine().select(
-                    candidates, budget, strategy=policy.strategy,
-                    seed=opportunity.opportunity_id,
-                    play_counts=(
-                        self.break_store.play_counts()
-                        if self.break_store is not None else None
-                    ),
-                    timing_policy=(
-                        "smoosh" if policy.timing_policy == "smoosh"
-                        else "strict_fit"
-                    ),
-                    smoosh_minimum_seconds=policy.smoosh_minimum_seconds,
-                    smoosh_max_trim_seconds=policy.smoosh_max_trim_seconds,
-                )
-                stored = BreakPlan(
-                    plan_id=hashlib.sha256(opportunity.opportunity_id.encode("utf-8")).hexdigest(),
-                    opportunity_id=opportunity.opportunity_id,
-                    occurrence_id=occurrence_id,
-                    channel_number=self.channel_number,
-                    scheduled_at=expected_at,
-                    reserved_seconds=max(budget, 0.001),
-                    segments=segments,
-                    strategy=policy.strategy,
-                    timing_policy=(
-                        "smoosh" if policy.timing_policy == "smoosh"
-                        else "strict_fit"
-                    ),
-                )
-                if self.break_store is not None:
-                    stored = self.break_store.commit(stored)
-            duration = stored.duration_seconds
-            if duration > slack_remaining + 0.001:
-                raise ChannelRuntimeError(
-                    "persisted calendar break would cross a protected program start"
-                )
-            plans.append(stored)
-            inserted += duration
-            slack_remaining -= duration
-        result = tuple(plans)
+            actual = max((part.start_offset_seconds + part.duration_seconds for part in segments), default=0.0)
+            cut = max(0.0, actual - budget) if extra else 0.0
+            plan = BreakPlan(
+                hashlib.sha256(opportunity.opportunity_id.encode()).hexdigest(),
+                opportunity.opportunity_id, occurrence_id, self.channel_number,
+                expected, max(budget, actual, .001), segments, settings.selection_strategy, effective_timing,
+                content_cut_seconds=cut, cut_target_occurrence_id=occurrence_id if cut else "",
+                cut_source="current_program" if cut else "none",
+                transition_behavior=settings.transition_behavior, transition_seconds=settings.transition_seconds,
+                trigger=opportunity.trigger, profile_id=settings.profile_id, policy_revision=self.ad_revision,
+            )
+            if self.break_store:
+                plan = self.break_store.commit(plan)
+            existing.append(plan)
+            inserted += plan.duration_seconds
+        result = tuple(sorted(existing, key=lambda p: p.scheduled_at))
+        if sum(p.duration_seconds - p.content_cut_seconds for p in result) > slack + .001:
+            raise ChannelRuntimeError("persisted calendar break crosses a protected program start")
         self._mid_plan_cache[index] = result
         return result
 
+    def catch_up_through(self, epoch: datetime, instant: datetime) -> None:
+        """Generate calendar decisions in airing order, including untuned gaps."""
+        if self.break_store is None:
+            return
+        activation = self.break_store.policy_activation(self.channel_number) or epoch
+        cursor = self.break_store.catchup_cursor(self.channel_number) or activation
+        first = max(0, bisect_right(self._starts, cursor) - 1)
+        last = min(len(self._starts), bisect_right(self._starts, instant))
+        if last - first > 10000:
+            raise ChannelRuntimeError("calendar catch-up exceeds 10000 occurrences")
+        for index in range(first, last):
+            plans = self._calendar_mid_plans(index)
+            end = self._calendar_program_end(index, plans)
+            if index + 1 < len(self._starts) and end < self._starts[index + 1] and end <= instant:
+                key = (end, self._starts[index + 1])
+                if key not in self._ad_plan_cache and self._gap_settings() is not None:
+                    self._ad_plan_cache[key] = self._calendar_ad_plan(*key)
+            if index + 1 < len(self._starts) and self._starts[index + 1] <= instant:
+                self.break_store.advance_catchup_cursor(self.channel_number, self._starts[index + 1])
+
+    def _gap_settings(self):
+        candidates = [(identity, trigger, settings) for identity, trigger, settings in configured_policies(self.advertising)
+                      if trigger in {"between_programs", "calendar_boundary", "fixed_slot"}
+                      and settings.enabled and self.advertising.enabled]
+        return min(candidates, key=lambda item: (-item[2].priority, item[0], item[1])) if candidates else None
+
     def _calendar_ad_plan(self, gap_anchor: datetime, next_start: datetime) -> tuple[PlannedAd, ...]:
         """Persist fixed-gap decisions before projecting them onto the broadcast clock."""
+        gap_settings = self._gap_settings() or ("default", "calendar_boundary", self.advertising)
+        identity, trigger, settings = gap_settings
         budget = (next_start - gap_anchor).total_seconds()
+        if self.advertising.placements and trigger == "between_programs":
+            budget = min(budget, settings.break_duration_seconds)
+        if trigger == "fixed_slot" and settings.slot_seconds:
+            import math
+            edge = math.ceil((gap_anchor.timestamp() + 1e-6) / settings.slot_seconds) * settings.slot_seconds
+            budget = min(budget, edge - gap_anchor.timestamp())
         seed = (
             f"channel:{self.channel_number}:"
             f"{gap_anchor.isoformat(timespec='microseconds')}:"
@@ -461,23 +460,16 @@ class CalendarTimeline:
                     stored = previous
                     break
         if stored is None:
-            settings = self.advertising
-            selected = AdSelectionEngine().select(
-                tuple(AdCandidate(item.asset.asset_id, float(item.asset.duration_seconds))
-                      for item in self.ad_media),
-                budget,
-                strategy=settings.selection_strategy,
+            if not self.advertising.enabled:
+                return ()
+            activation = self.break_store.policy_activation(self.channel_number) if self.break_store else None
+            if activation is not None and gap_anchor < activation:
+                return ()
+            media = eligible_media(self.ad_media, settings)
+            selected = select_segments(media, budget, replace(settings,
+                timing_policy="smoosh" if settings.timing_policy == "smoosh" else "strict_fit"),
                 seed=seed,
-                play_counts=(
-                    self.break_store.play_counts()
-                    if self.break_store is not None else None
-                ),
-                timing_policy=(
-                    "smoosh" if settings.timing_policy == "smoosh"
-                    else "strict_fit"  # Never expand across a fixed start.
-                ),
-                smoosh_minimum_seconds=settings.smoosh_minimum_seconds,
-                smoosh_max_trim_seconds=settings.smoosh_max_trim_seconds,
+                counts=self.break_store.rotation_counts(self.channel_number, before=gap_anchor) if self.break_store else None,
             )
             if self.break_store is None:
                 segments = selected
@@ -489,7 +481,9 @@ class CalendarTimeline:
                     channel_number=self.channel_number,
                     scheduled_at=gap_anchor,
                     reserved_seconds=budget,
-                    segments=tuple(selected),
+                    segments=selected,
+                    transition_behavior=settings.transition_behavior, transition_seconds=settings.transition_seconds,
+                    trigger=trigger, profile_id=settings.profile_id, policy_revision=self.ad_revision,
                     strategy=settings.selection_strategy,
                     timing_policy=(
                         "smoosh" if settings.timing_policy == "smoosh"
@@ -502,12 +496,12 @@ class CalendarTimeline:
         self._ad_plan_ids[(gap_anchor, next_start)] = (
             stored.plan_id if stored is not None else opportunity_id
         )
-        by_asset = {item.asset.asset_id: item for item in self.ad_media}
         return tuple(
             PlannedAd(
-                media=by_asset[segment.asset_id],
+                media=indexed_media_for_segment(segment, self.ad_media),
                 start_offset_seconds=segment.start_offset_seconds,
                 duration_seconds=segment.duration_seconds,
+                event_type=segment.event_type, source_offset_seconds=segment.source_offset_seconds,
             )
             for segment in segments
         )
@@ -522,9 +516,8 @@ class CalendarTimeline:
             self._calendar_mid_plans(previous_index)
             if previous_index >= 0 else ()
         )
-        inserted_duration = sum(plan.duration_seconds for plan in mid_plans)
         calendar_end = (
-            self._ends[previous_index] + timedelta(seconds=inserted_duration)
+            self._calendar_program_end(previous_index, mid_plans)
             if previous_index >= 0 else epoch_utc
         )
         if previous_index >= 0 and at_utc < calendar_end:
@@ -542,10 +535,7 @@ class CalendarTimeline:
                     ), None)
                     if segment_index is not None:
                         segment = plan.segments[segment_index]
-                        item = next(
-                            media for media in self.ad_media
-                            if media.asset.asset_id == segment.asset_id
-                        )
+                        item = indexed_media_for_segment(segment, self.ad_media)
                         segment_start = plan.scheduled_at + timedelta(
                             seconds=segment.start_offset_seconds
                         )
@@ -554,18 +544,23 @@ class CalendarTimeline:
                                 media=item, index=len(self.programs) + segment_index,
                                 duration_seconds=segment.duration_seconds,
                             ),
-                            offset_seconds=(at_utc - segment_start).total_seconds(),
+                            offset_seconds=(segment.source_offset_seconds if segment.event_type == "transition" else (at_utc - segment_start).total_seconds()),
                             program_started_at=segment_start,
                             program_ends_at=segment_start + timedelta(
                                 seconds=segment.duration_seconds
                             ),
                             cycle_index=previous_index,
-                            origin="advertisement",
+                            origin=segment.event_type,
+                            segment_source_offset_seconds=segment.source_offset_seconds,
                             break_id=plan.plan_id,
                             parent_program_asset_id=program.media.asset.asset_id,
                             parent_program_started_at=start,
                             parent_program_ends_at=calendar_end,
                             program_occurrence_id=plan.occurrence_id,
+                            parent_program_id=BroadcastSelection(
+                                program, 0, start, calendar_end, previous_index,
+                                program_occurrence_id=plan.occurrence_id,
+                            ).event.event_id,
                         )
                 if plan_end <= at_utc:
                     elapsed_in_breaks += plan.duration_seconds
@@ -576,6 +571,17 @@ class CalendarTimeline:
                 program_ends_at=calendar_end,
                 cycle_index=previous_index,
                 origin="calendar",
+                program_occurrence_id=hashlib.sha256(
+                    f"calendar:{self.channel_number}:{program.media.asset.asset_id}:{start.isoformat()}".encode()
+                ).hexdigest(),
+                segment_started_at=max((p.scheduled_at + timedelta(seconds=p.duration_seconds)
+                                        for p in mid_plans if p.scheduled_at + timedelta(seconds=p.duration_seconds) <= at_utc), default=start),
+                segment_ends_at=min((p.scheduled_at for p in mid_plans if p.scheduled_at > at_utc and p.duration_seconds > 0), default=calendar_end),
+                segment_source_offset_seconds=max((
+                    (p.scheduled_at - start).total_seconds() - sum(
+                        previous.duration_seconds for previous in mid_plans if previous.scheduled_at < p.scheduled_at
+                    ) for p in mid_plans if p.scheduled_at + timedelta(seconds=p.duration_seconds) <= at_utc
+                ), default=0.0),
             )
 
         gap_anchor = calendar_end
@@ -590,13 +596,11 @@ class CalendarTimeline:
         # remains the fallback for any time the ad pool cannot cover.
         filler_anchor = gap_anchor
         if (
-            self.advertising.enabled
-            and self.ad_media
+            (self.advertising.enabled or self.break_store is not None)
             and next_start is not None
             and next_start > gap_anchor
             and (
-                "between_programs" in self.advertising.triggers
-                or "calendar_boundary" in self.advertising.triggers
+                self._gap_settings() is not None or self.break_store is not None
             )
         ):
             cache_key = (gap_anchor, next_start)
@@ -618,12 +622,20 @@ class CalendarTimeline:
                     )
                     return BroadcastSelection(
                         program=ad_program,
-                        offset_seconds=(at_utc - segment_start).total_seconds(),
+                        offset_seconds=(segment.source_offset_seconds if segment.event_type == "transition" else (at_utc - segment_start).total_seconds()),
                         program_started_at=segment_start,
                         program_ends_at=segment_end,
                         cycle_index=previous_index,
-                        origin="advertisement",
+                        origin=segment.event_type,
+                        segment_source_offset_seconds=segment.source_offset_seconds,
                         break_id=self._ad_plan_ids.get(cache_key),
+                        parent_program_id=(BroadcastSelection(
+                            self.programs[previous_index], 0, self._starts[previous_index],
+                            calendar_end, previous_index,
+                            program_occurrence_id=hashlib.sha256(
+                                f"calendar:{self.channel_number}:{self.programs[previous_index].media.asset.asset_id}:{self._starts[previous_index].isoformat()}".encode()
+                            ).hexdigest(),
+                        ).event.event_id if previous_index >= 0 else None),
                         parent_program_asset_id=(
                             self.programs[previous_index].media.asset.asset_id
                             if previous_index >= 0 else None
@@ -802,22 +814,9 @@ def advertising_signature(channel: ResolvedChannel) -> str:
     becoming part of RuntimeStore's program-schedule signature.
     """
     advertising = channel.definition.advertising
-    payload = {
-        "enabled": advertising.enabled,
-        "sources": [str(source.path) for source in advertising.sources],
-        "strategy": advertising.selection_strategy,
-        "breakpoints_seconds": list(advertising.breakpoints_seconds),
-        "interval_seconds": advertising.interval_seconds,
-        "break_duration_seconds": advertising.break_duration_seconds,
-        "priority": advertising.priority,
-        "timing_policy": advertising.timing_policy,
-        "smoosh_minimum_seconds": advertising.smoosh_minimum_seconds,
-        "smoosh_max_trim_seconds": advertising.smoosh_max_trim_seconds,
-        "expand_max_seconds": advertising.expand_max_seconds,
-        "triggers": list(advertising.triggers),
-        "transition_behavior": advertising.transition_behavior,
-        "ad_assets": sorted(item.asset.asset_id for item in channel.ad_media),
-    }
+    from .models import advertising_to_mapping
+    payload = advertising_to_mapping(advertising)
+    payload["ad_assets"] = sorted(item.asset.asset_id for item in channel.ad_media)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
@@ -1337,15 +1336,11 @@ class ChannelRuntime:
         transient: bool = False,
     ) -> "ChannelRuntime":
         programming = channel.definition.programming
-        if (
-            channel.definition.advertising.enabled
-            and channel.definition.advertising.transition_behavior != "cut"
+        if channel.definition.advertising.enabled and any(
+            item.asset.duration_seconds is None or not math.isfinite(float(item.asset.duration_seconds))
+            or item.asset.duration_seconds <= 0 for item in channel.ad_media
         ):
-            raise ChannelRuntimeError(
-                "fade/hold ad transitions are not supported by the active "
-                "single-decoder player yet; choose 'cut' to avoid silently "
-                "misrepresenting the broadcast policy"
-            )
+            raise ChannelRuntimeError("advertising requires finite positive indexed media durations; re-scan its Library source")
         if programming.mode == "sequential":
             ordered_media = channel.media
         elif programming.mode == "shuffle":
@@ -1383,6 +1378,7 @@ class ChannelRuntime:
                 )
 
         signature = schedule_signature(channel)
+        previous_clock = store.load_channel(channel.definition.channel)
         persisted = (
             store.load_channel(channel.definition.channel)
             if transient
@@ -1398,11 +1394,14 @@ class ChannelRuntime:
                 # viewer's paused/behind-live position.
                 preserve_clock_on_change=(programming.mode == "calendar"),
             )
-        break_store = (
-            BreakPlanStore(store.database_path)
-            if channel.definition.advertising.enabled
-            else None
-        )
+        break_store = BreakPlanStore(store.database_path)
+        if not channel.definition.advertising.enabled and not break_store.connection.execute(
+            "SELECT 1 FROM ad_break_plans WHERE channel_number = ? LIMIT 1", (channel.definition.channel,)
+        ).fetchone():
+            break_store.close()
+            break_store = None
+        if break_store is not None and not transient and previous_clock is not None and previous_clock.schedule_signature != signature and programming.mode != "calendar":
+            break_store.reset_program_clock(channel.definition.channel, at=require_aware_utc(now or utc_now()))
         if programming.mode == "calendar":
             timeline.break_store = break_store
             timeline.ad_revision = advertising_signature(channel)
@@ -1421,15 +1420,17 @@ class ChannelRuntime:
                     start=persisted.epoch_utc,
                     end=revision_time + timedelta(microseconds=1),
                 )
+                previously_committed = tuple(plan for plan in previously_committed if plan.scheduled_at >= persisted.epoch_utc)
                 completed_duration = sum(
                     plan.duration_seconds for plan in previously_committed
                     if plan.scheduled_at + timedelta(
                         seconds=plan.duration_seconds
                     ) <= revision_time
                 )
-                content_now = revision_time - timedelta(
-                    seconds=completed_duration
-                )
+                partial = sum(max(0.0, (revision_time - p.scheduled_at).total_seconds())
+                              for p in previously_committed
+                              if p.scheduled_at <= revision_time < p.scheduled_at + timedelta(seconds=p.duration_seconds))
+                content_now = revision_time - timedelta(seconds=completed_duration + partial)
                 # A newly enabled ad policy begins at the program currently
                 # airing, not months before it was enabled. A matching
                 # revision recovers its prior durable checkpoint on restart.
@@ -1441,6 +1442,11 @@ class ChannelRuntime:
                     advertising_signature(channel),
                     start_at=initial,
                     activated_at=revision_time,
+                )
+            if programming.mode == "calendar":
+                break_store.ensure_catchup_cursor(
+                    channel.definition.channel, advertising_signature(channel),
+                    start_at=revision_time, activated_at=revision_time,
                 )
         return cls(
             channel=channel,
@@ -1454,21 +1460,6 @@ class ChannelRuntime:
     @property
     def channel_number(self) -> int:
         return self.channel.definition.channel
-
-    def _ad_policy(self) -> BreakPolicy:
-        definition = self.channel.definition.advertising
-        return BreakPolicy(
-            enabled=definition.enabled,
-            interval_seconds=definition.interval_seconds,
-            breakpoints_seconds=definition.breakpoints_seconds,
-            duration_seconds=definition.break_duration_seconds,
-            priority=definition.priority,
-            strategy=definition.selection_strategy,
-            timing_policy=definition.timing_policy,
-            smoosh_minimum_seconds=definition.smoosh_minimum_seconds,
-            smoosh_max_trim_seconds=definition.smoosh_max_trim_seconds,
-            expand_max_seconds=definition.expand_max_seconds,
-        )
 
     @staticmethod
     def _plan_duration(plan: BreakPlan) -> float:
@@ -1492,78 +1483,100 @@ class ChannelRuntime:
     def _ensure_occurrence_plans(
         self, selection: BroadcastSelection, at: datetime
     ) -> tuple[BreakPlan, ...]:
-        if self.break_store is None or not self.channel.ad_media:
+        if self.break_store is None:
             return ()
-        policy = self._ad_policy()
         occurrence_id = self._program_occurrence_id(selection)
         policy_revision = advertising_signature(self.channel)
         occurrence = ProgramOccurrence(
             occurrence_id, self.channel_number, selection.media.asset.asset_id,
             selection.program_started_at, selection.program_ends_at,
         )
-        opportunities = tuple(
-            opportunity for opportunity in BreakOpportunityScheduler.for_occurrence(
-                occurrence, policy, revision=policy_revision
-            ) if opportunity.trigger in self.channel.definition.advertising.triggers
+        opportunities = program_opportunities(self.channel.definition.advertising, occurrence, policy_revision)
+        clock = self.break_store.program_clock(occurrence_id)
+        previous_end = self.break_store.preceding_program_end(
+            self.channel_number, selection.program_started_at
         )
-        opportunities = BreakOpportunityScheduler.arbitrate(opportunities)
-        earlier_plans = self.break_store.plans_for_channel(
-            self.channel_number, start=self.epoch_utc,
-            end=at + timedelta(microseconds=1),
-        )
-        prior_occurrence_duration = sum(
-            self._plan_duration(plan)
-            for plan in earlier_plans
-            if plan.occurrence_id != occurrence_id
-            and plan.scheduled_at < at
-        )
+        actual_start = clock[0] if clock else (previous_end or selection.program_started_at)
+        prior_occurrence_duration = (actual_start - selection.program_started_at).total_seconds()
         occurrence_plans = list(
             self.break_store.plans_for_occurrence(occurrence_id)
         )
-        candidates = tuple(
-            AdCandidate(item.asset.asset_id, float(item.asset.duration_seconds))
-            for item in self.channel.ad_media
-            if item.asset.duration_seconds is not None
-            and float(item.asset.duration_seconds) > 0
-        )
-        engine = AdSelectionEngine()
         committed: list[BreakPlan] = []
-        counts = self.break_store.play_counts()
-        for opportunity in opportunities:
+        for opportunity, settings in opportunities:
+            head_cut, tail_cut = self.break_store.content_cuts(occurrence_id)
+            source_offset = (opportunity.scheduled_at - selection.program_started_at).total_seconds()
+            if source_offset < head_cut or (opportunity.trigger in {"breakpoint", "interval"}
+                                           and source_offset >= selection.program.duration_seconds - tail_cut):
+                continue
             existing = self.break_store.load_opportunity(opportunity.opportunity_id)
             if existing is not None:
                 plan = existing
             else:
-                # A policy edit must not replay a trigger whose program-content
-                # position has already passed. The current airing plan, if any,
-                # remains under its old immutable opportunity identity.
                 opportunity_offset = (
                     opportunity.scheduled_at - occurrence.starts_at
                 ).total_seconds()
-                if (
-                    self.policy_revision_changed_at is not None
-                    and opportunity_offset <= selection.offset_seconds + 1e-6
-                ):
+                if opportunity.trigger in {"between_programs", "fixed_slot"}:
+                    opportunity_offset -= tail_cut
+                elapsed_in_prior = 0.0
+                prior_duration = 0.0
+                old = None
+                for previous in sorted(occurrence_plans, key=lambda p: p.scheduled_at):
+                    content_offset = (previous.scheduled_at - actual_start).total_seconds() - elapsed_in_prior + head_cut
+                    if content_offset < opportunity_offset - 0.001:
+                        prior_duration += previous.duration_seconds
+                    elif abs(content_offset - opportunity_offset) < 0.001:
+                        old = previous
+                    elapsed_in_prior += previous.duration_seconds
+                expected_at = actual_start + timedelta(seconds=opportunity_offset - head_cut + prior_duration)
+                if old is not None:
+                    committed.append(old)
                     continue
-                prior_duration = sum(
-                    self._plan_duration(previous)
-                    for previous in occurrence_plans
-                    if previous.scheduled_at < (
-                        opportunity.scheduled_at
-                        + timedelta(seconds=prior_occurrence_duration)
-                    )
+                activation = self.break_store.policy_activation(self.channel_number)
+                if activation is not None and expected_at < activation:
+                    continue
+                counts = self.break_store.rotation_counts(self.channel_number, before=expected_at)
+                budget = opportunity.duration_seconds
+                if opportunity.trigger == "fixed_slot" and settings.slot_seconds:
+                    import math
+                    edge = math.ceil((expected_at.timestamp() - 1e-6) / settings.slot_seconds) * settings.slot_seconds
+                    budget = max(0.0, edge - expected_at.timestamp())
+                target_occurrence_id = ""
+                cut_source = "none"
+                extra = 0.0
+                if settings.timing_policy == "expand" and settings.schedule_priority != "fixed":
+                    if settings.expand_source == "schedule_shift":
+                        extra = settings.expand_max_seconds
+                    elif settings.schedule_priority == "advertising" and settings.expand_source in {"current_program", "next_event"}:
+                        target = selection
+                        if settings.expand_source == "next_event":
+                            target = self.timeline.selection_at(self.epoch_utc, selection.program_ends_at + timedelta(microseconds=1))
+                        target_occurrence_id = self._program_occurrence_id(target)
+                        head, tail = self.break_store.content_cuts(target_occurrence_id)
+                        available = target.program.duration_seconds - head - tail - .001
+                        if settings.expand_source == "current_program":
+                            available -= opportunity_offset
+                        extra = min(settings.expand_max_seconds, max(0.0, available))
+                        cut_source = settings.expand_source
+                if opportunity.trigger == "fixed_slot":
+                    extra = 0.0
+                planned = select_segments(
+                    eligible_media(self.channel.ad_media, settings), budget, settings,
+                    seed=opportunity.opportunity_id, counts=counts, expand_max_seconds=extra,
                 )
-                planned = engine.select(
-                    candidates,
-                    opportunity.duration_seconds,
-                    strategy=policy.strategy,
-                    seed=opportunity.opportunity_id,
-                    play_counts=counts,
-                    timing_policy=policy.timing_policy,
-                    smoosh_minimum_seconds=policy.smoosh_minimum_seconds,
-                    smoosh_max_trim_seconds=policy.smoosh_max_trim_seconds,
-                    expand_max_seconds=policy.expand_max_seconds,
-                )
+                actual_duration = max((part.start_offset_seconds + part.duration_seconds for part in planned), default=0.0)
+                if opportunity.trigger == "fixed_slot" and actual_duration < budget - .001:
+                    filler = self.timeline.programs[0].media
+                    parts = list(planned)
+                    while actual_duration < budget - .001:
+                        duration = min(float(filler.asset.duration_seconds), budget - actual_duration)
+                        parts.append(PlannedSegment(
+                            filler.asset.asset_id, actual_duration, 0.0, duration,
+                            media_path=str(filler.location.path), original_duration_seconds=filler.asset.duration_seconds,
+                            event_type="filler",
+                        ))
+                        actual_duration += duration
+                    planned = tuple(parts)
+                cut = max(0.0, actual_duration - budget) if cut_source != "none" else 0.0
                 plan_id = hashlib.sha256(
                     opportunity.opportunity_id.encode("utf-8")
                 ).hexdigest()
@@ -1575,23 +1588,37 @@ class ChannelRuntime:
                     scheduled_at=(
                         selection.program_started_at
                         + timedelta(seconds=(
-                            opportunity_offset + prior_occurrence_duration + prior_duration
+                            opportunity_offset - head_cut + prior_occurrence_duration + prior_duration
                         ))
                     ),
                     reserved_seconds=max(
-                        opportunity.duration_seconds,
+                        max(budget, .001),
                         max((segment.start_offset_seconds + segment.duration_seconds
                              for segment in planned), default=0.0),
                     ),
-                    segments=tuple(planned),
-                    strategy=policy.strategy,
-                    timing_policy=policy.timing_policy,
+                    segments=planned,
+                    transition_behavior=settings.transition_behavior,
+                    transition_seconds=settings.transition_seconds,
+                    trigger=opportunity.trigger, profile_id=settings.profile_id,
+                    policy_revision=policy_revision,
+                    content_cut_seconds=cut, cut_target_occurrence_id=target_occurrence_id, cut_source=cut_source,
+                    strategy=settings.selection_strategy,
+                    timing_policy=settings.timing_policy,
                 )
                 # The immutable plan is durable before runtime can expose its first ad.
                 plan = self.break_store.commit(plan)
                 occurrence_plans.append(plan)
             committed.append(plan)
-        return tuple(committed)
+        self.break_store.save_program_clock(
+            occurrence_id, self.channel_number,
+            content_start=selection.program_started_at, content_end=selection.program_ends_at,
+            broadcast_start=actual_start,
+            broadcast_end=actual_start + timedelta(seconds=(
+                selection.program.duration_seconds - sum(self.break_store.content_cuts(occurrence_id))
+                + sum(p.duration_seconds for p in occurrence_plans)
+            )),
+        )
+        return self.break_store.plans_for_occurrence(occurrence_id)
 
     def _catch_up_sequential(self, instant: datetime) -> None:
         """Reconcile missed logical program occurrences before tuning.
@@ -1618,25 +1645,11 @@ class ChannelRuntime:
             if base.program_started_at > instant:
                 return
             occurrence_id = self._program_occurrence_id(base)
-            existing = self.break_store.plans_for_channel(
-                self.channel_number,
-                start=self.epoch_utc,
-                end=instant + timedelta(microseconds=1),
-            )
-            previous_breaks = sum(
-                plan.duration_seconds for plan in existing
-                if plan.occurrence_id != occurrence_id
-                and plan.scheduled_at <= instant
-            )
-            actual_start = base.program_started_at + timedelta(
-                seconds=previous_breaks
-            )
+            previous_end = self.break_store.preceding_program_end(self.channel_number, base.program_started_at)
+            actual_start = previous_end or base.program_started_at
             if actual_start > instant:
                 return
             self._ensure_occurrence_plans(base, instant)
-            self.break_store.reconcile_completed(
-                self.channel_number, through=instant
-            )
             if base.program_ends_at <= cursor:
                 raise ChannelRuntimeError(
                     "ad catch-up did not advance the program-content cursor"
@@ -1652,145 +1665,91 @@ class ChannelRuntime:
             "occurrences; repeat the operation to advance its saved checkpoint"
         )
 
-    def _selection_at(self, at: datetime) -> BroadcastSelection:
+    def _selection_at(self, at: datetime, *, record_airings: bool = True) -> BroadcastSelection:
         instant = require_aware_utc(at)
-        if self.break_store is not None:
-            if self.channel.definition.programming.mode != "calendar":
-                self._catch_up_sequential(instant)
-            self.break_store.reconcile_completed(self.channel_number, through=instant)
-        if (
-            self.break_store is None
-            or not self.channel.definition.advertising.enabled
-            or self.channel.definition.programming.mode == "calendar"
-        ):
-            # Fixed calendar starts are authoritative; the calendar timeline
-            # already projects its persisted gap ads.
+        if self.break_store is None:
             return self.timeline.selection_at(self.epoch_utc, instant)
-
-        # First project using the program clock, then remove the broadcast time
-        # consumed by previously committed breaks. Repeating this projection
-        # handles a break that pushes the next program across its original boundary.
-        content_time = instant
-        elapsed_before = 0.0
-        for _ in range(4):
-            base = self.timeline.selection_at(self.epoch_utc, content_time)
-            plans = self._ensure_occurrence_plans(base, instant)
-            prior = self.break_store.plans_for_channel(
-                self.channel_number, start=self.epoch_utc,
-                end=instant + timedelta(microseconds=1),
-            )
-            active = None
-            elapsed_before = 0.0
-            for plan in prior:
-                duration = self._plan_duration(plan)
-                plan_end = plan.scheduled_at + timedelta(seconds=duration)
-                if plan.scheduled_at <= instant < plan_end:
-                    active = plan
-                    break
-                if plan_end <= instant:
-                    elapsed_before += duration
-            if active is not None:
-                offset = (instant - active.scheduled_at).total_seconds()
-                segment_index = next((
-                    index for index, segment in enumerate(active.segments)
-                    if segment.start_offset_seconds <= offset
-                    < segment.start_offset_seconds + segment.duration_seconds
-                ), None)
-                if segment_index is not None:
-                    segment = active.segments[segment_index]
-                    media = next((
-                        item for item in self.channel.ad_media
-                        if item.asset.asset_id == segment.asset_id
-                    ), None)
-                    if media is not None:
-                        ad_program = ScheduledProgram(
-                            media=media,
-                            index=len(self.timeline.programs) + segment_index,
-                            duration_seconds=segment.duration_seconds,
-                        )
-                        segment_start = active.scheduled_at + timedelta(
-                            seconds=segment.start_offset_seconds
-                        )
-                        segment_end = segment_start + timedelta(
-                            seconds=segment.duration_seconds
-                        )
-                        program_occurrence_id = self._program_occurrence_id(base)
-                        occurrence_id = self._break_occurrence_id(base)
-                        prior_program_duration = sum(
-                            self._plan_duration(plan)
-                            for plan in prior
-                            if plan.scheduled_at <= base.program_started_at
-                            and plan.scheduled_at + timedelta(
-                                seconds=self._plan_duration(plan)
-                            ) <= active.scheduled_at
-                        )
-                        parent_start = base.program_started_at + timedelta(
-                            seconds=prior_program_duration
-                        )
-                        parent_end = base.program_ends_at + timedelta(
-                            seconds=prior_program_duration
-                        )
-                        parent_selection = BroadcastSelection(
-                            base.program, base.offset_seconds, parent_start,
-                            parent_end, base.cycle_index,
-                            program_occurrence_id=program_occurrence_id,
-                            break_occurrence_id=occurrence_id,
-                        )
-                        return BroadcastSelection(
-                            ad_program,
-                            (instant - segment_start).total_seconds(),
-                            segment_start,
-                            segment_end,
-                            base.cycle_index,
-                            origin="advertisement",
-                            parent_program_id=parent_selection.event.event_id,
-                            break_id=active.plan_id,
-                            parent_program_asset_id=base.media.asset.asset_id,
-                            parent_program_started_at=parent_start,
-                            parent_program_ends_at=parent_end,
-                            program_occurrence_id=program_occurrence_id,
-                            break_occurrence_id=occurrence_id,
-                        )
-            next_content_time = instant - timedelta(seconds=elapsed_before)
-            if next_content_time == content_time:
-                break
-            content_time = next_content_time
-
-        selection = self.timeline.selection_at(self.epoch_utc, content_time)
-        program_occurrence_id = self._program_occurrence_id(selection)
-        break_occurrence_id = self._break_occurrence_id(selection)
-        if elapsed_before:
-            persisted = self.break_store.plans_for_channel(
-                self.channel_number, start=self.epoch_utc,
-                end=instant + timedelta(microseconds=1),
-            )
-            start_shift = sum(
-                self._plan_duration(plan)
-                for plan in persisted
-                if plan.scheduled_at <= selection.program_started_at
-                and plan.scheduled_at + timedelta(
-                    seconds=self._plan_duration(plan)
-                ) <= instant
-            )
-            selection = BroadcastSelection(
-                selection.program,
-                selection.offset_seconds,
-                selection.program_started_at + timedelta(seconds=start_shift),
-                selection.program_ends_at + timedelta(seconds=elapsed_before),
-                selection.cycle_index,
-                selection.origin,
-                program_occurrence_id=program_occurrence_id,
-                break_occurrence_id=break_occurrence_id,
-            )
+        if isinstance(self.timeline, CalendarTimeline):
+            self.timeline.catch_up_through(self.epoch_utc, instant)
+            selection = self.timeline.selection_at(self.epoch_utc, instant)
         else:
-            selection = BroadcastSelection(
-                selection.program, selection.offset_seconds,
-                selection.program_started_at, selection.program_ends_at,
-                selection.cycle_index, selection.origin,
-                program_occurrence_id=program_occurrence_id,
-                break_occurrence_id=break_occurrence_id,
+            self._catch_up_sequential(instant)
+            clock_row = self.break_store.clock_at(self.channel_number, instant)
+            if clock_row is None:
+                base = self.timeline.selection_at(self.epoch_utc, instant)
+                self._ensure_occurrence_plans(base, instant)
+                clock_row = self.break_store.clock_at(self.channel_number, instant)
+            if clock_row is None:
+                return self.timeline.selection_at(self.epoch_utc, instant)
+            occurrence_id, content_start, content_end, parent_start, parent_end = clock_row
+            base = self.timeline.selection_at(self.epoch_utc, content_start + timedelta(microseconds=1))
+            occurrence_plans = self._ensure_occurrence_plans(base, instant)
+            parent_start, parent_end = self.break_store.program_clock(occurrence_id)
+            head_cut, tail_cut = self.break_store.content_cuts(occurrence_id)
+            elapsed = 0.0
+            active = None
+            for plan in occurrence_plans:
+                if plan.scheduled_at <= instant < plan.scheduled_at + timedelta(seconds=plan.duration_seconds):
+                    active = plan
+                    elapsed += (instant - plan.scheduled_at).total_seconds()
+                    break
+                if plan.scheduled_at + timedelta(seconds=plan.duration_seconds) <= instant:
+                    elapsed += plan.duration_seconds
+            offset = (instant - parent_start).total_seconds() - elapsed + head_cut
+            selection = replace(
+                base, offset_seconds=offset, program_started_at=parent_start, program_ends_at=parent_end,
+                program_occurrence_id=occurrence_id, break_occurrence_id=self._break_occurrence_id(base),
             )
+            if active is None:
+                earlier = [p for p in occurrence_plans if p.scheduled_at + timedelta(seconds=p.duration_seconds) <= instant]
+                later = [p for p in occurrence_plans if p.scheduled_at > instant and p.duration_seconds > 0]
+                segment_start = max((p.scheduled_at + timedelta(seconds=p.duration_seconds) for p in earlier), default=parent_start)
+                segment_end = min((p.scheduled_at for p in later), default=parent_end)
+                selection = replace(selection, segment_started_at=segment_start, segment_ends_at=segment_end,
+                                    segment_source_offset_seconds=offset - (instant - segment_start).total_seconds())
+            if active is not None:
+                position = (instant - active.scheduled_at).total_seconds()
+                for index, segment in enumerate(active.segments):
+                    if segment.start_offset_seconds <= position < segment.start_offset_seconds + segment.duration_seconds:
+                        media = self._media_for_segment(segment)
+                        start = active.scheduled_at + timedelta(seconds=segment.start_offset_seconds)
+                        selection = BroadcastSelection(
+                            ScheduledProgram(media, len(self.timeline.programs) + index, segment.duration_seconds),
+                            (segment.source_offset_seconds if segment.event_type == "transition" else (instant - start).total_seconds() + segment.source_offset_seconds),
+                            start, start + timedelta(seconds=segment.duration_seconds), base.cycle_index,
+                            origin=segment.event_type, parent_program_id=selection.event.event_id,
+                            break_id=active.plan_id, parent_program_asset_id=base.media.asset.asset_id,
+                            parent_program_started_at=parent_start, parent_program_ends_at=parent_end,
+                            program_occurrence_id=occurrence_id,
+                            segment_source_offset_seconds=segment.source_offset_seconds,
+                        )
+                        break
+        if record_airings:
+            self.break_store.reconcile_completed(self.channel_number, through=instant)
         return selection
+
+    def _media_for_segment(self, segment: PlannedSegment) -> IndexedMedia:
+        return indexed_media_for_segment(segment, self.channel.ad_media)
+
+    def project_at(self, at: datetime) -> BroadcastSelection:
+        """Resolve a schedule projection without claiming future content aired."""
+        return self._selection_at(at, record_airings=False)
+
+    def events_between(self, start: datetime, end: datetime) -> tuple[BroadcastEvent, ...]:
+        """Materialize the same bounded segment timeline used by playback."""
+        cursor, until = require_aware_utc(start), require_aware_utc(end)
+        if until <= cursor:
+            raise ValueError("event horizon end must follow start")
+        result = []
+        for _ in range(10000):
+            event = self.project_at(cursor).event
+            if event.end_utc <= cursor:
+                raise ChannelRuntimeError("broadcast event timeline did not advance")
+            result.append(event)
+            if event.end_utc >= until:
+                return tuple(result)
+            cursor = event.end_utc
+        raise ChannelRuntimeError("event horizon exceeds 10000 segments")
 
     def break_plans_for_event(
         self, selection: BroadcastSelection, *, at: datetime | None = None
@@ -1804,6 +1763,19 @@ class ChannelRuntime:
             return ()
         event = selection.event
         occurrence_id = event.program_occurrence_id
+        if isinstance(self.timeline, CalendarTimeline):
+            parent_start = event.parent_program_started_at or selection.program_started_at
+            if parent_start in self.timeline._starts:
+                index = self.timeline._starts.index(parent_start)
+                plans = list(self.timeline._calendar_mid_plans(index))
+                end = self.timeline._calendar_program_end(index, plans)
+                if index + 1 < len(self.timeline._starts):
+                    for plan in self.break_store.plans_for_channel(
+                        self.channel_number, start=end, end=self.timeline._starts[index + 1]
+                    ):
+                        if plan.scheduled_at >= end and plan not in plans:
+                            plans.append(plan)
+                return tuple(plans)
         if not occurrence_id:
             return ()
         return self.break_store.plans_for_occurrence(occurrence_id)
@@ -1812,7 +1784,7 @@ class ChannelRuntime:
         return self._selection_at(at or utc_now())
 
     def selection_for_viewer_time(self, viewer_time: datetime) -> BroadcastSelection:
-        return self._selection_at(viewer_time)
+        return self.project_at(viewer_time)
 
 
 @dataclass(frozen=True, slots=True)

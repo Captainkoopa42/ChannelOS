@@ -12,7 +12,7 @@ from typing import Any, Callable, Iterable
 import yaml
 
 from .ad_catalog import (
-    AdCatalogStore, AdCollection, BreakProfile, ChannelAdAssignment,
+    AdCatalogStore, AdCollection, AdPlacementAssignment, BreakProfile, ChannelAdAssignment,
     export_portable_channel,
 )
 from .library import MediaLibrary
@@ -21,6 +21,7 @@ from .models import (
     CalendarBlockDefinition,
     ChannelDefinition,
     ChannelValidationError,
+    advertising_to_mapping,
 )
 from .resolve import ResolvedChannel, resolve_channel
 from .runtime import (
@@ -111,7 +112,8 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
         definition.schema_version in {"0.4", "0.5"}
         and (definition.advertising.enabled
              or definition.advertising.sources
-             or definition.advertising.asset_ids)
+             or definition.advertising.asset_ids or definition.advertising.placements
+             or definition.advertising.profile_id or definition.advertising.collection_id)
     ):
         mapping["advertising"] = {
             "enabled": definition.advertising.enabled,
@@ -137,6 +139,7 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
                 "triggers": list(definition.advertising.triggers),
                 "transition_behavior": definition.advertising.transition_behavior,
             })
+            mapping["advertising"] = advertising_to_mapping(definition.advertising)
     mapping["presentation"] = {
         "number_width": definition.presentation.number_width,
     }
@@ -243,10 +246,10 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
         or ad_asset_ids or ad_collection_id or ad_profile_id
         or raw.get("adBreakpointsSeconds")
         or raw.get("adIntervalSeconds")
-        or raw.get("adTimingPolicy")
+        or raw.get("adTimingPolicy") or raw.get("adPlacements")
     )
     has_advertising = ad_enabled or bool(ad_sources) or bool(ad_asset_ids) or bool(
-        ad_collection_id or ad_profile_id
+        ad_collection_id or ad_profile_id or raw.get("adPlacements")
     )
 
     mapping = {
@@ -317,6 +320,13 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
                     "breakpoint", "interval", "between_programs", "calendar_boundary",
                 ],
                 "transition_behavior": raw.get("adTransitionBehavior", "cut"),
+                "transition_seconds": raw.get("adTransitionSeconds", 0.5),
+                "slot_seconds": raw.get("adSlotSeconds") or None,
+                "schedule_priority": raw.get("adSchedulePriority", "program"),
+                "expand_source": raw.get("adExpandSource", "schedule_shift"),
+                "placements": raw.get("adPlacements", []),
+                "collection_membership": raw.get("adCollectionMembership", "fixed"),
+                "excluded_asset_ids": raw.get("adExcludedAssetIds", []),
             })
     return ChannelDefinition.from_mapping(mapping)
 
@@ -718,7 +728,12 @@ class BroadcasterService:
                 {"channelNumber": item.channel_number,
                  "collectionId": item.collection_id or "",
                  "profileId": item.profile_id or "",
-                 "overrides": dict(item.overrides)}
+                 "overrides": dict(item.overrides),
+                 "placements": [
+                     {"placement_id": p.placement_id, "trigger": p.trigger,
+                      "collection_id": p.collection_id, "profile_id": p.profile_id,
+                      "overrides": dict(p.overrides)} for p in item.placements
+                 ]}
                 for item in self.ad_catalog.list_assignments()
             ],
         }
@@ -750,12 +765,26 @@ class BroadcasterService:
             str(payload.get("collectionId") or "").strip() or None,
             str(payload.get("profileId") or "").strip() or None,
             dict(payload.get("overrides", {})),
+            tuple(AdPlacementAssignment(**item) for item in payload.get("placements", [])),
         )
         self.ad_catalog.assign_channel(assignment)
         return self.ad_catalog_snapshot()
 
     def _apply_ad_catalog(self, definition: ChannelDefinition) -> ChannelDefinition:
-        return export_portable_channel(definition, self.ad_catalog, self.library)
+        return export_portable_channel(definition, self.ad_catalog, self.library,
+            enabled_override=(definition.advertising.enabled if definition.schema_version in {"0.4", "0.5"} else None))
+
+    def _configured_definition(self, raw: dict[str, Any]) -> ChannelDefinition:
+        """Resolve authoring references before validating an enabled snapshot."""
+        editor = dict(raw)
+        assignment = self.ad_catalog.get_assignment(int(editor.get("channel", 0)))
+        if assignment is not None and editor.get("adBreaksEnabled") and not (
+            editor.get("adSources") or editor.get("adAssetIds") or editor.get("adPlacements")
+        ):
+            editor["adBreaksEnabled"] = False
+            base = definition_from_editor(editor)
+            return export_portable_channel(base, self.ad_catalog, self.library, enabled_override=True)
+        return self._apply_ad_catalog(definition_from_editor(editor))
 
     def studio_draft(self, channel_number: int = 0) -> dict[str, Any]:
         """Build a detached Studio draft; opening it never alters live TV."""
@@ -883,6 +912,13 @@ class BroadcasterService:
             "adPriority": definition.advertising.priority,
             "adTriggers": list(definition.advertising.triggers),
             "adTransitionBehavior": definition.advertising.transition_behavior,
+            "adTransitionSeconds": definition.advertising.transition_seconds,
+            "adSlotSeconds": definition.advertising.slot_seconds,
+            "adSchedulePriority": definition.advertising.schedule_priority,
+            "adExpandSource": definition.advertising.expand_source,
+            "adPlacements": advertising_to_mapping(definition.advertising)["placements"],
+            "adCollectionMembership": definition.advertising.collection_membership,
+            "adExcludedAssetIds": list(definition.advertising.excluded_asset_ids),
             "sources": [str(source.path) for source in definition.sources],
             "calendarBlocks": blocks,
             "media": list(media_by_id.values()),
@@ -1120,7 +1156,7 @@ class BroadcasterService:
         return resolved
 
     def preview(self, raw: dict[str, Any], limit: int = 8) -> dict[str, Any]:
-        definition = self._apply_ad_catalog(definition_from_editor(raw))
+        definition = self._configured_definition(raw)
         resolved = self._resolve_and_validate(definition)
 
         if definition.programming.mode == "shuffle":
@@ -1160,6 +1196,8 @@ class BroadcasterService:
             items.append(item)
 
         ad_preview: list[dict[str, Any]] = []
+        broadcast_preview: list[dict[str, Any]] = []
+        preview_diagnostics: dict[str, Any] = {}
         if definition.advertising.enabled and resolved.ad_media:
             with tempfile.TemporaryDirectory(
                 prefix="channelos-ad-preview-"
@@ -1172,39 +1210,28 @@ class BroadcasterService:
                 )
                 runtime = ChannelRuntime.open(
                     resolved, RuntimeStore(Path(temporary) / "runtime.sqlite"),
-                    now=first_at, transient=True,
+                    now=first_at,
                 )
                 try:
-                    samples: list[datetime] = []
-                    if definition.programming.mode == "calendar":
-                        blocks = definition.programming.calendar
-                        for index, block in enumerate(blocks[:-1]):
-                            duration = next(
-                                item.asset.duration_seconds for item in resolved.media
-                                if item.asset.asset_id == block.asset_id
-                            )
-                            after = block.start_utc + timedelta(seconds=float(duration))
-                            before = blocks[index + 1].start_utc
-                            if before > after:
-                                samples.append(after + timedelta(seconds=min(1.0,
-                                    (before - after).total_seconds() / 2)))
-                    else:
-                        triggers = list(definition.advertising.breakpoints_seconds)
-                        if definition.advertising.interval_seconds is not None:
-                            triggers.append(definition.advertising.interval_seconds)
-                        if triggers:
-                            samples.append(first_at + timedelta(seconds=min(triggers) + 1.0))
-                    for sample in samples[:max(1, min(int(limit), 8))]:
-                        selected = runtime.broadcast_at(sample)
-                        event = selected.event
-                        ad_preview.append({
-                            "eventType": event.event_type,
-                            "assetId": event.asset_id,
-                            "title": selected.media.location.path.stem,
-                            "startUtc": event.start_utc.isoformat(),
-                            "endUtc": event.end_utc.isoformat(),
-                            "breakId": event.break_id or "",
-                        })
+                    horizon = first_at + timedelta(seconds=min(7200.0, max(300.0,
+                        sum(float(item.asset.duration_seconds or 0) for item in resolved.media[:max(1, int(limit))])
+                        + definition.advertising.break_duration_seconds * max(1, int(limit)))))
+                    media_by_id = {item.asset.asset_id: item for item in (*resolved.media, *resolved.ad_media)}
+                    broadcast_preview = []
+                    for event in runtime.events_between(first_at, horizon):
+                        item = media_by_id.get(event.asset_id)
+                        projection = {
+                            "eventType": event.event_type, "assetId": event.asset_id,
+                            "title": item.location.path.stem if item else "Transition",
+                            "startUtc": event.start_utc.isoformat(), "endUtc": event.end_utc.isoformat(),
+                            "sourceOffsetStart": event.source_offset_seconds,
+                            "sourceOffsetEnd": event.source_offset_end_seconds,
+                            "breakId": event.break_id or "", "parentProgramId": event.parent_program_id or "",
+                        }
+                        broadcast_preview.append(projection)
+                        if event.event_type in {"advertisement", "transition"}:
+                            ad_preview.append(projection)
+                    preview_diagnostics = runtime.break_store.diagnostics(definition.channel) if runtime.break_store else {}
                 finally:
                     if runtime.break_store is not None:
                         runtime.break_store.close()
@@ -1218,6 +1245,8 @@ class BroadcasterService:
             "resolvedCount": len(resolved.media),
             "items": items,
             "adPreview": ad_preview,
+            "broadcastPreview": broadcast_preview,
+            "adDiagnostics": preview_diagnostics,
         }
 
     def _managed_path_for(
@@ -1257,7 +1286,7 @@ class BroadcasterService:
                 raise
 
     def create(self, raw: dict[str, Any]) -> ChannelSaveResult:
-        definition = self._apply_ad_catalog(definition_from_editor(raw))
+        definition = self._configured_definition(raw)
         if definition.channel in self._records:
             existing = self._records[definition.channel]
             raise ChannelConflictError(
@@ -1293,7 +1322,7 @@ class BroadcasterService:
                 f"channel {original_number} is no longer in the active lineup"
             ) from exc
 
-        definition = self._apply_ad_catalog(definition_from_editor(raw))
+        definition = self._configured_definition(raw)
 
         # Renumbering is intentionally not an in-place edit. It changes
         # television identity/continuity and will get its own explicit flow.

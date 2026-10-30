@@ -40,6 +40,10 @@ def _program_view(program: GuideProgram) -> dict[str, object]:
         "isPast": bool(program.is_past),
         "isFuture": bool(program.is_future),
         "isUnassigned": False,
+        "breakMarkers": [{"breakId": marker.break_id,
+                          "startMs": _epoch_milliseconds(marker.start_utc),
+                          "endMs": _epoch_milliseconds(marker.end_utc)}
+                         for marker in program.break_markers],
     }
 
 
@@ -115,6 +119,7 @@ def _display_segments(programs: tuple[GuideProgram, ...]) -> list[dict[str, obje
                     "lastProgramIndex": index,
                     "isCluster": False,
                     "isCurrent": bool(first.is_current),
+                    "breakMarkers": _program_view(first)["breakMarkers"],
                 }
             )
             index += 1
@@ -169,6 +174,8 @@ def _display_segments(programs: tuple[GuideProgram, ...]) -> list[dict[str, obje
                 "lastProgramIndex": last_index,
                 "isCluster": is_cluster,
                 "isCurrent": contains_current,
+                "breakMarkers": [marker for program in programs[first_index:last_index + 1]
+                                 for marker in _program_view(program)["breakMarkers"]],
             }
         )
 

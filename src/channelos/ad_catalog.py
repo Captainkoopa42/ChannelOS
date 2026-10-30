@@ -71,6 +71,7 @@ class BreakProfile:
             "priority", "strategy", "timing_policy", "smoosh_minimum_seconds",
             "smoosh_max_trim_seconds", "expand_max_seconds", "transition_behavior",
             "triggers",
+            "transition_seconds", "slot_seconds", "schedule_priority", "expand_source",
         }
         unknown = set(self.defaults) - allowed
         if unknown:
@@ -85,13 +86,42 @@ class BreakProfile:
         except (TypeError, ValueError) as exc:
             raise AdCatalogValidationError(f"invalid break profile: {exc}") from exc
         triggers = self.defaults.get("triggers")
-        valid_triggers = {"breakpoint", "interval", "between_programs", "calendar_boundary"}
+        valid_triggers = {"breakpoint", "interval", "between_programs", "calendar_boundary", "fixed_slot"}
         if triggers is not None and (
             not isinstance(triggers, (list, tuple)) or not set(triggers) <= valid_triggers
         ):
             raise AdCatalogValidationError("profile contains an unsupported trigger")
         if self.defaults.get("transition_behavior", "cut") not in {"cut", "fade", "hold"}:
             raise AdCatalogValidationError("unsupported transition behavior")
+        # Use the channel schema to validate every effective portable field.
+        normalized = dict(self.defaults)
+        normalized["selection_strategy"] = normalized.pop("strategy", "best_fit")
+        normalized["break_duration_seconds"] = normalized.pop("duration_seconds", 120)
+        normalized["sources"] = [{"path": "."}]
+        try:
+            ChannelDefinition.from_mapping({
+                "schema_version": "0.5", "channel": 1, "name": "Validation",
+                "sources": [{"path": "."}], "programming": {"mode": "sequential"},
+                "advertising": normalized,
+            })
+        except ValueError as exc:
+            raise AdCatalogValidationError(str(exc)) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class AdPlacementAssignment:
+    placement_id: str
+    trigger: str
+    collection_id: str | None = None
+    profile_id: str | None = None
+    overrides: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if not self.placement_id.strip() or self.trigger not in {
+            "breakpoint", "interval", "between_programs", "calendar_boundary", "fixed_slot"
+        }:
+            raise AdCatalogValidationError("placement requires an ID and supported trigger")
+        BreakProfile("validation", "Validation", self.overrides)
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +130,7 @@ class ChannelAdAssignment:
     collection_id: str | None = None
     profile_id: str | None = None
     overrides: Mapping[str, Any] = field(default_factory=dict)
+    placements: tuple[AdPlacementAssignment, ...] = ()
 
     def __post_init__(self) -> None:
         if self.channel_number < 1:
@@ -109,10 +140,13 @@ class ChannelAdAssignment:
             "priority", "strategy", "timing_policy", "smoosh_minimum_seconds",
             "smoosh_max_trim_seconds", "expand_max_seconds", "transition_behavior",
             "triggers",
+            "transition_seconds", "slot_seconds", "schedule_priority", "expand_source",
         }
         unknown = set(self.overrides) - allowed
         if unknown:
             raise AdCatalogValidationError("unknown channel overrides: " + ", ".join(sorted(unknown)))
+        if len({item.placement_id for item in self.placements}) != len(self.placements):
+            raise AdCatalogValidationError("duplicate placement IDs")
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +177,9 @@ class AdCatalogStore:
                     overrides_json TEXT NOT NULL DEFAULT '{}'
                 );
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(channel_ad_assignments)")}
+            if "placements_json" not in columns:
+                db.execute("ALTER TABLE channel_ad_assignments ADD COLUMN placements_json TEXT NOT NULL DEFAULT '[]'")
 
     def _connect(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.database)
@@ -227,24 +264,34 @@ class AdCatalogStore:
         )
 
     def assign_channel(self, item: ChannelAdAssignment) -> None:
+        from dataclasses import asdict
         with self._connect() as db:
-            for table, key, value in (
+            references = [
                 ("ad_collections", "collection_id", item.collection_id),
                 ("ad_break_profiles", "profile_id", item.profile_id),
-            ):
+            ]
+            for placement in item.placements:
+                references.extend([
+                    ("ad_collections", "collection_id", placement.collection_id),
+                    ("ad_break_profiles", "profile_id", placement.profile_id),
+                ])
+            for table, key, value in references:
                 if value and not db.execute(f"SELECT 1 FROM {table} WHERE {key}=?", (value,)).fetchone():
                     raise AdCatalogValidationError(f"unknown {key.replace('_', ' ')}: {value}")
-            db.execute("""INSERT INTO channel_ad_assignments VALUES (?, ?, ?, ?)
+            db.execute("""INSERT INTO channel_ad_assignments VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(channel_number) DO UPDATE SET
                 collection_id=excluded.collection_id, profile_id=excluded.profile_id,
-                overrides_json=excluded.overrides_json""",
-                (item.channel_number, item.collection_id, item.profile_id, json.dumps(dict(item.overrides), sort_keys=True)))
+                overrides_json=excluded.overrides_json, placements_json=excluded.placements_json""",
+                (item.channel_number, item.collection_id, item.profile_id,
+                 json.dumps(dict(item.overrides), sort_keys=True),
+                 json.dumps([asdict(p) for p in item.placements], sort_keys=True)))
 
     def get_assignment(self, channel_number: int) -> ChannelAdAssignment | None:
         with self._connect() as db:
             row = db.execute("SELECT * FROM channel_ad_assignments WHERE channel_number=?", (channel_number,)).fetchone()
         return None if row is None else ChannelAdAssignment(
-            row["channel_number"], row["collection_id"], row["profile_id"], json.loads(row["overrides_json"]))
+            row["channel_number"], row["collection_id"], row["profile_id"], json.loads(row["overrides_json"]),
+            tuple(AdPlacementAssignment(**item) for item in json.loads(row["placements_json"])))
 
     def resolve_channel(self, channel_number: int, library: AssetLibrary, *,
                         legacy_settings: Mapping[str, Any] | None = None,
@@ -252,6 +299,11 @@ class AdCatalogStore:
         assignment = self.get_assignment(channel_number)
         if assignment is None:
             return ResolvedAdAssignment(None, None, dict(legacy_settings or {"enabled": False}), ())
+        return self.resolve_assignment(assignment, library, explicitly_enabled=explicitly_enabled)
+
+    def resolve_assignment(self, assignment: ChannelAdAssignment, library: AssetLibrary, *,
+                           explicitly_enabled: bool = False) -> ResolvedAdAssignment:
+        channel_number = assignment.channel_number
         collection = self.get_collection(assignment.collection_id) if assignment.collection_id else None
         profile = self.get_profile(assignment.profile_id) if assignment.profile_id else None
         if assignment.collection_id and collection is None:
@@ -317,6 +369,7 @@ def export_portable_channel(
     channel: ChannelDefinition,
     store: AdCatalogStore,
     library: MediaLibrary,
+    *, enabled_override: bool | None = None,
 ) -> ChannelDefinition:
     """Embed the assigned catalog and effective profile into a portable v0.5 YAML.
 
@@ -327,16 +380,18 @@ def export_portable_channel(
     assignment = store.get_assignment(channel.channel)
     if assignment is None:
         return channel
-    resolved = store.resolve_channel(
-        channel.channel, library,
-        explicitly_enabled=channel.advertising.enabled,
+    effective_assignment = replace(assignment, overrides={**assignment.overrides, "enabled": enabled_override}) if enabled_override is not None else assignment
+    resolved = store.resolve_assignment(
+        effective_assignment, library, explicitly_enabled=channel.advertising.enabled,
     )
-    settings = resolved.settings
+    settings = dict(resolved.settings)
+    if enabled_override is not None:
+        settings["enabled"] = enabled_override
     enabled = settings.get("enabled", False)
     if not isinstance(enabled, bool):
         raise AdCatalogValidationError("advertising.enabled must be boolean")
     collection = resolved.collection
-    if enabled and collection is None and not channel.advertising.sources:
+    if enabled and collection is None and not channel.advertising.sources and not assignment.placements:
         raise AdCatalogValidationError(
             "an enabled catalog assignment needs a collection or legacy ad source"
         )
@@ -344,7 +399,7 @@ def export_portable_channel(
         "enabled": enabled,
         "asset_ids": (
             tuple(location.asset_id for location in resolved.ad_media)
-            if collection and enabled else ()
+            if collection and enabled else (channel.advertising.asset_ids or (collection.asset_ids if collection else ()))
         ),
         "collection_id": assignment.collection_id,
         "profile_id": assignment.profile_id,
@@ -361,7 +416,50 @@ def export_portable_channel(
         "triggers": tuple(settings.get(
             "triggers", ("breakpoint", "interval", "between_programs", "calendar_boundary"))),
         "transition_behavior": settings.get("transition_behavior", "cut"),
+        "transition_seconds": settings.get("transition_seconds", 0.5),
+        "slot_seconds": settings.get("slot_seconds"),
+        "schedule_priority": settings.get("schedule_priority", "program"),
+        "expand_source": settings.get("expand_source", "schedule_shift"),
     }
+    from .models import AdPlacementDefinition, SourceDefinition
+    if collection:
+        options.update(
+            sources=tuple(SourceDefinition(Path(path)) for path in collection.source_paths),
+            collection_membership=collection.membership,
+            excluded_asset_ids=collection.excluded_asset_ids,
+        )
+    placements = []
+    for item in assignment.placements:
+        defaults = dict(settings)
+        if item.profile_id:
+            profile = store.get_profile(item.profile_id)
+            if profile is None:
+                raise AdCatalogValidationError(f"missing profile {item.profile_id}")
+            defaults.update(profile.defaults)
+        defaults.update(item.overrides)
+        defaults["enabled"] = enabled
+        defaults["triggers"] = [item.trigger]
+        effective = store.resolve_assignment(ChannelAdAssignment(
+            channel.channel, item.collection_id or assignment.collection_id,
+            None, defaults,
+        ), library, explicitly_enabled=enabled)
+        leaf = dict(options)
+        aliases = {"strategy": "selection_strategy", "duration_seconds": "break_duration_seconds"}
+        leaf.update({aliases.get(key, key): value for key, value in defaults.items()})
+        leaf.update(
+            asset_ids=tuple(location.asset_id for location in effective.ad_media),
+            collection_id=item.collection_id or assignment.collection_id,
+            profile_id=item.profile_id or assignment.profile_id,
+            sources=(), placements=(), triggers=(item.trigger,),
+            collection_membership=effective.collection.membership if effective.collection else "fixed",
+            excluded_asset_ids=effective.collection.excluded_asset_ids if effective.collection else (),
+            breakpoints_seconds=tuple(defaults.get("breakpoints_seconds", ())),
+        )
+        if effective.collection and effective.collection.membership == "dynamic":
+            leaf["sources"] = tuple(SourceDefinition(Path(path)) for path in effective.collection.source_paths)
+        placements.append(AdPlacementDefinition(item.placement_id, item.trigger,
+                                               replace(channel.advertising, **leaf)))
+    options["placements"] = tuple(placements)
     return replace(
         channel,
         schema_version="0.5",

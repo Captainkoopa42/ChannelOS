@@ -784,8 +784,12 @@ def test_policy_edit_keeps_current_break_and_only_replans_future_content_positio
     )
 
     assert second.broadcast_at(epoch + timedelta(seconds=12)).origin == "advertisement"
-    assert second.broadcast_at(epoch + timedelta(seconds=15)).origin != "advertisement"
-    assert second.broadcast_at(epoch + timedelta(seconds=25)).origin == "advertisement"
+    resumed = second.broadcast_at(epoch + timedelta(seconds=15))
+    assert resumed.origin != "advertisement"
+    assert resumed.program_started_at == epoch
+    next_ad = second.broadcast_at(epoch + timedelta(seconds=25))
+    assert next_ad.origin == "advertisement"
+    assert next_ad.event.parent_program_id == resumed.event.event_id
     plans = second.break_store.plans_for_channel(
         74, start=epoch, end=epoch + timedelta(seconds=40)
     )

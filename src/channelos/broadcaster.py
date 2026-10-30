@@ -11,6 +11,10 @@ from typing import Any, Callable, Iterable
 
 import yaml
 
+from .ad_catalog import (
+    AdCatalogStore, AdCollection, BreakProfile, ChannelAdAssignment,
+    export_portable_channel,
+)
 from .library import MediaLibrary
 from .loader import load_channel
 from .models import (
@@ -333,6 +337,9 @@ class BroadcasterService:
         library: MediaLibrary,
     ) -> None:
         self.library = library
+        self.ad_catalog = AdCatalogStore(
+            self.library.database_path.with_name("ad_catalog.sqlite")
+        )
         self.managed_directory = Path(managed_directory)
         self._explicit_paths = tuple(
             self._normalize_path(path)
@@ -689,6 +696,67 @@ class BroadcasterService:
             raise BroadcasterError("Studio program group no longer exists")
         self._save_studio_groups(retained)
 
+    def ad_catalog_snapshot(self) -> dict[str, Any]:
+        return {
+            "collections": [
+                {
+                    "collectionId": item.collection_id,
+                    "name": item.name,
+                    "assetIds": list(item.asset_ids),
+                    "sourcePaths": list(item.source_paths),
+                    "excludedAssetIds": list(item.excluded_asset_ids),
+                    "membership": item.membership,
+                }
+                for item in self.ad_catalog.list_collections()
+            ],
+            "profiles": [
+                {"profileId": item.profile_id, "name": item.name,
+                 "defaults": dict(item.defaults)}
+                for item in self.ad_catalog.list_profiles()
+            ],
+            "assignments": [
+                {"channelNumber": item.channel_number,
+                 "collectionId": item.collection_id or "",
+                 "profileId": item.profile_id or "",
+                 "overrides": dict(item.overrides)}
+                for item in self.ad_catalog.list_assignments()
+            ],
+        }
+
+    def save_ad_collection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        collection = AdCollection(
+            str(payload.get("collectionId", "")).strip(),
+            str(payload.get("name", "")).strip(),
+            tuple(str(x).strip() for x in payload.get("assetIds", [])),
+            tuple(str(x).strip() for x in payload.get("sourcePaths", [])),
+            tuple(str(x).strip() for x in payload.get("excludedAssetIds", [])),
+            str(payload.get("membership", "fixed")),
+        )
+        self.ad_catalog.save_collection(collection)
+        return self.ad_catalog_snapshot()
+
+    def save_ad_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        profile = BreakProfile(
+            str(payload.get("profileId", "")).strip(),
+            str(payload.get("name", "")).strip(),
+            dict(payload.get("defaults", {})),
+        )
+        self.ad_catalog.save_profile(profile)
+        return self.ad_catalog_snapshot()
+
+    def assign_ad_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        assignment = ChannelAdAssignment(
+            int(payload.get("channelNumber", 0)),
+            str(payload.get("collectionId") or "").strip() or None,
+            str(payload.get("profileId") or "").strip() or None,
+            dict(payload.get("overrides", {})),
+        )
+        self.ad_catalog.assign_channel(assignment)
+        return self.ad_catalog_snapshot()
+
+    def _apply_ad_catalog(self, definition: ChannelDefinition) -> ChannelDefinition:
+        return export_portable_channel(definition, self.ad_catalog, self.library)
+
     def studio_draft(self, channel_number: int = 0) -> dict[str, Any]:
         """Build a detached Studio draft; opening it never alters live TV."""
 
@@ -707,6 +775,20 @@ class BroadcasterService:
                 "adBreaksEnabled": False,
                 "adSources": [],
                 "adSelectionStrategy": "best_fit",
+                "adAssetIds": [],
+                "adCollectionId": "",
+                "adProfileId": "",
+                "adConfigVersion": "0.5",
+                "adBreakpointsSeconds": [],
+                "adIntervalSeconds": "",
+                "adBreakDurationSeconds": 120,
+                "adTimingPolicy": "strict_fit",
+                "adSmooshMinimumSeconds": 5,
+                "adSmooshMaxTrimSeconds": 15,
+                "adExpandMaxSeconds": 0,
+                "adPriority": 0,
+                "adTriggers": ["breakpoint", "interval", "between_programs", "calendar_boundary"],
+                "adTransitionBehavior": "cut",
                 "sources": sources,
                 "calendarBlocks": [],
                 "media": media,
@@ -787,6 +869,20 @@ class BroadcasterService:
             "adBreaksEnabled": definition.advertising.enabled,
             "adSources": [str(source.path) for source in definition.advertising.sources],
             "adSelectionStrategy": definition.advertising.selection_strategy,
+            "adConfigVersion": definition.schema_version,
+            "adAssetIds": list(definition.advertising.asset_ids),
+            "adCollectionId": definition.advertising.collection_id or "",
+            "adProfileId": definition.advertising.profile_id or "",
+            "adBreakpointsSeconds": list(definition.advertising.breakpoints_seconds),
+            "adIntervalSeconds": definition.advertising.interval_seconds or "",
+            "adBreakDurationSeconds": definition.advertising.break_duration_seconds,
+            "adTimingPolicy": definition.advertising.timing_policy,
+            "adSmooshMinimumSeconds": definition.advertising.smoosh_minimum_seconds,
+            "adSmooshMaxTrimSeconds": definition.advertising.smoosh_max_trim_seconds,
+            "adExpandMaxSeconds": definition.advertising.expand_max_seconds,
+            "adPriority": definition.advertising.priority,
+            "adTriggers": list(definition.advertising.triggers),
+            "adTransitionBehavior": definition.advertising.transition_behavior,
             "sources": [str(source.path) for source in definition.sources],
             "calendarBlocks": blocks,
             "media": list(media_by_id.values()),
@@ -1020,7 +1116,7 @@ class BroadcasterService:
         return resolved
 
     def preview(self, raw: dict[str, Any], limit: int = 8) -> dict[str, Any]:
-        definition = definition_from_editor(raw)
+        definition = self._apply_ad_catalog(definition_from_editor(raw))
         resolved = self._resolve_and_validate(definition)
 
         if definition.programming.mode == "shuffle":
@@ -1106,7 +1202,7 @@ class BroadcasterService:
                 raise
 
     def create(self, raw: dict[str, Any]) -> ChannelSaveResult:
-        definition = definition_from_editor(raw)
+        definition = self._apply_ad_catalog(definition_from_editor(raw))
         if definition.channel in self._records:
             existing = self._records[definition.channel]
             raise ChannelConflictError(
@@ -1142,7 +1238,7 @@ class BroadcasterService:
                 f"channel {original_number} is no longer in the active lineup"
             ) from exc
 
-        definition = definition_from_editor(raw)
+        definition = self._apply_ad_catalog(definition_from_editor(raw))
 
         # Renumbering is intentionally not an in-place edit. It changes
         # television identity/continuity and will get its own explicit flow.

@@ -926,8 +926,50 @@ ApplicationWindow {
                         }
                     }
 
+                    Row {
+                        width: parent.width
+                        spacing: 10
+
+                        Rectangle {
+                            visible: Boolean(root.playback.isAdvertisement)
+                            width: 42
+                            height: 30
+                            radius: 5
+                            color: "#9a6a20"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "AD"
+                                color: root.textPrimary
+                                font.pixelSize: 15
+                                font.weight: Font.Bold
+                            }
+                        }
+
+                        Text {
+                            text: root.playback.isAdvertisement
+                                  ? ("Ad break"
+                                     + (root.playback.parentProgramTitle
+                                         ? " • " + root.playback.parentProgramTitle : ""))
+                                  : (root.playback.title || "No Programming")
+                            color: root.textPrimary
+                            font.pixelSize: 30
+                            font.weight: Font.DemiBold
+                            width: parent.width - (root.playback.isAdvertisement ? 52 : 0)
+                            elide: Text.ElideRight
+                        }
+                    }
+
                     Text {
-                        text: root.playback.title || "No Programming"
+                        visible: Boolean(root.playback.isAdvertisement)
+                        text: "Now airing: " + (root.playback.title || "Commercial")
+                        color: root.textSecondary
+                        font.pixelSize: 14
+                        elide: Text.ElideRight
+                    }
+
+                    Text {
+                        visible: false
+                        text: ""
                         color: root.textPrimary
                         font.pixelSize: 30
                         font.weight: Font.DemiBold

@@ -177,6 +177,25 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary) -> Resolv
                 seen_ad_assets.add(item.asset.asset_id)
                 ad_media.append(item)
         ad_media.sort(key=lambda item: item.location.path_key)
+        if channel.advertising.asset_ids:
+            # The YAML carries a complete, portable snapshot of its collection.
+            # Resolve by canonical identity, not by the Studio catalog database.
+            indexed_ads: dict[str, IndexedMedia] = {}
+            for item in library.list_online_media():
+                indexed_ads.setdefault(item.asset.asset_id, item)
+            missing = [
+                asset_id for asset_id in channel.advertising.asset_ids
+                if asset_id not in indexed_ads
+            ]
+            if missing:
+                raise ChannelResolutionError(
+                    "advertising references missing or offline assets: "
+                    + ", ".join(missing)
+                )
+            for asset_id in channel.advertising.asset_ids:
+                if asset_id not in seen_ad_assets:
+                    seen_ad_assets.add(asset_id)
+                    ad_media.append(indexed_ads[asset_id])
     indexed: list[IndexedMedia] = []
     seen_locations: set[str] = set()
     for source in channel.sources:

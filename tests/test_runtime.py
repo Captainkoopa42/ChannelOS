@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from channelos.guide import GuideError, GuideService
+from channelos.ad_break_engine import BreakPlan, BreakPlanStore, PlannedSegment
 from channelos.library import IndexedMedia, MediaAsset, MediaLocation, MediaLibrary
 from channelos.models import ChannelDefinition
 from channelos.probe import MediaProbeResult
@@ -270,3 +271,43 @@ def test_now_next_projects_active_ad_then_the_interrupted_program(tmp_path: Path
     assert result.now.asset_id == ad_asset.asset_id
     assert not result.next.is_advertisement
     assert result.next.asset_id == base.media[0].asset.asset_id
+
+
+def test_ad_policy_revision_preserves_active_plan_and_invalidates_future_plan(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = BreakPlanStore(tmp_path / "policy-plans.db")
+    store.apply_policy_revision(73, "revision-a", at=epoch)
+
+    def plan(name: str, starts_at: datetime) -> BreakPlan:
+        return BreakPlan(
+            plan_id=f"plan-{name}",
+            opportunity_id=f"opportunity-{name}",
+            occurrence_id="program-occurrence",
+            channel_number=73,
+            scheduled_at=starts_at,
+            reserved_seconds=5.0,
+            segments=(PlannedSegment(
+                asset_id=f"ad-{name}",
+                start_offset_seconds=0.0,
+                source_offset_seconds=0.0,
+                duration_seconds=5.0,
+            ),),
+            strategy="best_fit",
+            timing_policy="strict_fit",
+        )
+
+    active = plan("active", epoch + timedelta(seconds=5))
+    future = plan("future", epoch + timedelta(seconds=20))
+    store.commit(active)
+    store.commit(future)
+
+    changed = store.apply_policy_revision(
+        73, "revision-b", at=epoch + timedelta(seconds=7)
+    )
+
+    assert changed is True
+    assert store.load_opportunity(active.opportunity_id) is not None
+    assert store.load_opportunity(future.opportunity_id) is None
+    store.close()

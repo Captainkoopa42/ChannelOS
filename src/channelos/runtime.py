@@ -1329,7 +1329,7 @@ class ChannelRuntime:
                         prior_program_duration = sum(
                             self._plan_duration(plan)
                             for plan in prior
-                            if plan.occurrence_id != occurrence_id
+                            if plan.scheduled_at <= base.program_started_at
                             and plan.scheduled_at + timedelta(
                                 seconds=self._plan_duration(plan)
                             ) <= active.scheduled_at

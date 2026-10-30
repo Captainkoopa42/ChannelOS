@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .ad_breaks import plan_ad_break
+from .ad_breaks import PlannedAd, plan_ad_break
 from .ad_break_engine import (
     AdCandidate, AdSelectionEngine, BreakOpportunityScheduler, BreakPlan,
     BreakPlanStore, BreakPolicy, PlannedSegment, ProgramOccurrence,
@@ -237,6 +237,8 @@ class CalendarTimeline:
         )
         self.advertising = advertising or AdvertisingDefinition()
         self.channel_number = int(channel_number)
+        self.break_store: BreakPlanStore | None = None
+        self.ad_revision = ""
         self._ad_plan_cache: dict[tuple[datetime, datetime], tuple] = {}
         by_asset = {item.asset.asset_id: item for item in media}
 
@@ -310,6 +312,70 @@ class CalendarTimeline:
         self._starts = tuple(starts)
         self._ends = tuple(ends)
 
+    def _calendar_ad_plan(self, gap_anchor: datetime, next_start: datetime) -> tuple[PlannedAd, ...]:
+        """Persist fixed-gap decisions before projecting them onto the broadcast clock."""
+        budget = (next_start - gap_anchor).total_seconds()
+        seed = (
+            f"channel:{self.channel_number}:"
+            f"{gap_anchor.isoformat(timespec='microseconds')}:"
+            f"{next_start.isoformat(timespec='microseconds')}"
+        )
+        opportunity_id = hashlib.sha256(
+            f"{seed}:{self.ad_revision}".encode("utf-8")
+        ).hexdigest()
+        stored = (
+            self.break_store.load_opportunity(opportunity_id)
+            if self.break_store is not None else None
+        )
+        if stored is None:
+            settings = self.advertising
+            selected = AdSelectionEngine().select(
+                tuple(AdCandidate(item.asset.asset_id, float(item.asset.duration_seconds))
+                      for item in self.ad_media),
+                budget,
+                strategy=settings.selection_strategy,
+                seed=seed,
+                play_counts=(
+                    self.break_store.play_counts()
+                    if self.break_store is not None else None
+                ),
+                timing_policy=(
+                    "smoosh" if settings.timing_policy == "smoosh"
+                    else "strict_fit"  # Never expand across a fixed start.
+                ),
+                smoosh_minimum_seconds=settings.smoosh_minimum_seconds,
+                smoosh_max_trim_seconds=settings.smoosh_max_trim_seconds,
+            )
+            if self.break_store is None:
+                segments = selected
+            else:
+                stored = self.break_store.commit(BreakPlan(
+                    plan_id=opportunity_id,
+                    opportunity_id=opportunity_id,
+                    occurrence_id=hashlib.sha256(seed.encode("utf-8")).hexdigest(),
+                    channel_number=self.channel_number,
+                    scheduled_at=gap_anchor,
+                    reserved_seconds=budget,
+                    segments=tuple(selected),
+                    strategy=settings.selection_strategy,
+                    timing_policy=(
+                        "smoosh" if settings.timing_policy == "smoosh"
+                        else "strict_fit"
+                    ),
+                ))
+                segments = stored.segments
+        else:
+            segments = stored.segments
+        by_asset = {item.asset.asset_id: item for item in self.ad_media}
+        return tuple(
+            PlannedAd(
+                media=by_asset[segment.asset_id],
+                start_offset_seconds=segment.start_offset_seconds,
+                duration_seconds=segment.duration_seconds,
+            )
+            for segment in segments
+        )
+
     def selection_at(self, epoch: datetime, at: datetime) -> BroadcastSelection:
         epoch_utc = require_aware_utc(epoch)
         at_utc = require_aware_utc(at)
@@ -348,19 +414,14 @@ class CalendarTimeline:
             and self.ad_media
             and next_start is not None
             and next_start > gap_anchor
+            and (
+                "between_programs" in self.advertising.triggers
+                or "calendar_boundary" in self.advertising.triggers
+            )
         ):
             cache_key = (gap_anchor, next_start)
             if cache_key not in self._ad_plan_cache:
-                self._ad_plan_cache[cache_key] = plan_ad_break(
-                    self.ad_media,
-                    (next_start - gap_anchor).total_seconds(),
-                    strategy=self.advertising.selection_strategy,
-                    seed=(
-                        f"channel:{self.channel_number}:"
-                        f"{gap_anchor.isoformat(timespec='microseconds')}:"
-                        f"{next_start.isoformat(timespec='microseconds')}"
-                    ),
-                )
+                self._ad_plan_cache[cache_key] = self._calendar_ad_plan(gap_anchor, next_start)
             ad_plan = self._ad_plan_cache[cache_key]
             for ad_index, segment in enumerate(ad_plan):
                 segment_start = gap_anchor + timedelta(
@@ -1138,9 +1199,11 @@ class ChannelRuntime:
         break_store = (
             BreakPlanStore(store.database_path)
             if channel.definition.advertising.enabled
-            and programming.mode != "calendar"
             else None
         )
+        if programming.mode == "calendar":
+            timeline.break_store = break_store
+            timeline.ad_revision = advertising_signature(channel)
         policy_revision_changed_at = None
         if break_store is not None and not transient:
             revision_time = require_aware_utc(now or utc_now())

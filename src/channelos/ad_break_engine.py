@@ -191,7 +191,10 @@ class BreakOpportunityScheduler:
 
     @staticmethod
     def for_occurrence(
-        occurrence: ProgramOccurrence, policy: BreakPolicy
+        occurrence: ProgramOccurrence,
+        policy: BreakPolicy,
+        *,
+        revision: str = "",
     ) -> tuple[BreakOpportunity, ...]:
         if not policy.enabled:
             return ()
@@ -210,7 +213,7 @@ class BreakOpportunityScheduler:
         result = []
         for offset, trigger in sorted(offsets.items()):
             at = occurrence.starts_at + timedelta(seconds=offset)
-            identity = _stable(occurrence.occurrence_id, trigger, f"{offset:.6f}")
+            identity = _stable(occurrence.occurrence_id, revision, trigger, f"{offset:.6f}")
             result.append(BreakOpportunity(
                 identity, occurrence.occurrence_id, occurrence.channel_number,
                 trigger, at, policy.duration_seconds, policy.priority,

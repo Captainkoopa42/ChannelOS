@@ -715,6 +715,21 @@ class BroadcasterCouchController(CouchController):
         except (OSError, ValueError) as exc:
             return self._error(exc)
 
+    @Slot(int, result="QVariantMap")
+    def adBreakDiagnostics(self, channel_number: int) -> dict[str, object]:
+        try:
+            channel = self._actions.runtime.channels.get(int(channel_number))
+            if channel is None:
+                return {"ok": False, "message": "Channel is not live; apply it first"}
+            if channel.break_store is None:
+                return {"ok": True, "channelNumber": int(channel_number),
+                        "plannedBreaks": 0, "completedAirings": 0,
+                        "completedViewings": 0, "lastAiredUtc": "",
+                        "viewerCounts": {}}
+            return {"ok": True, **channel.break_store.diagnostics(int(channel_number))}
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
     @Slot("QVariantMap", result="QVariantMap")
     def saveAdCollection(self, payload: dict[str, object]) -> dict[str, object]:
         try:

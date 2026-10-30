@@ -1,35 +1,57 @@
-# Advertisement Breaks — Alpha Test
+# Advertisement Breaks — Development Guide (v0.5)
 
-This branch adds the first end-to-end advertisement path for fixed Calendar channels.
+This document replaces the original calendar-only alpha instructions. The
+advertising feature is **opt-in** and uses the same canonical Library index as
+ordinary television programming, but commercial assets are resolved in their
+own pool. The currently active development branch is
+`feature/ad-breaks-complete`; this is not yet a release claim.
 
-## Try it
+## Try the ad system
 
-1. Open Library and add/scan the folder that contains your ad videos. ChannelOS must have indexed the files and discovered their durations.
-2. Open Channel Studio and edit a channel that uses fixed calendar blocks.
-3. Click Ad Breaks in the calendar toolbar.
-4. Enable Enable ads in calendar gaps.
-5. Paste the full path of each ad folder into the source box, separate paths with semicolons. These paths are kept separate from the channel's ordinary program sources.
-6. Choose a selection strategy and click Apply to Draft.
-7. Save/apply the channel, and make sure there is a gap between one fixed program's end and the next program's start. Tune to the channel during that gap.
+1. Start ChannelOS with an indexed Library. Add your ad folder through Library
+   and scan it so every commercial has a stable asset ID and duration.
+2. Open **Channel Studio**. Use **Ad Catalog** to save a fixed collection of
+   canonical asset IDs, or a dynamic collection of indexed source folders.
+   Optionally exclude asset IDs.
+3. Save a **Break Profile** with timing and selection defaults. The catalog
+   supports `best_fit`, `largest`, `smallest`, `sequential`,
+   `least_played`, and `complete_rotation` selection.
+4. Assign the collection and profile to the current channel. An assignment
+   remains authoring data until you **Apply** the Studio channel.
+5. In **Ad Breaks**, enable advertising, supply sources or asset IDs, and
+   configure breakpoints, intervals, duration, and timing policy. Existing
+   reusable catalog assignments provide the effective settings on apply.
+6. Use **Preview Ad Schedule** to inspect sample events. Applying the Studio
+   draft writes a portable v0.5 channel YAML containing the effective policy
+   and canonical asset IDs. Channel playback does not need the Studio catalog.
+7. Tune the channel during a break: the authoritative runtime computes the
+   advertisement and the correct media offset, then resumes normal content.
+   The Live HUD shows an AD badge.
 
-Example: a 60-second program starts at 10:00, and the next fixed program starts at 10:04. The three-minute gap can be filled by 90-, 60-, and 30-second ads. The next scheduled program still starts at 10:04.
+For fixed calendar channels, ads fill *bounded gaps between programs*. They
+cannot delay the next fixed UTC calendar block. For sequential channels, ads
+can be triggered by program-content breakpoints and intervals. Runtime plans
+are saved in SQLite and recovered on restart. Older schema 0.1–0.4 definitions
+remain readable.
 
-## Selection strategies
+## Policies and diagnostics
 
-- Best Fit: uses a one-step lookahead to prefer combinations that leave the least unused time.
-- Largest: plays the longest eligible ad that fits, then repeats the choice for the remaining time.
-- Smallest: plays the shortest eligible ad that fits, then repeats.
-- Sequential: uses a deterministic, opportunity-specific order and skips items that do not fit.
+- **Strict Fit** schedules only ads that fully fit a break.
+- **Smoosh** permits trimming only within configured limits.
+- **Expand** can extend sequential breaks within its explicit budget; calendar
+  expansion is disabled at protected fixed starts.
+- Completed scheduled airings and verified viewer ad completions use *separate*
+  ledgers. Tuning into an ad or skipping over it does not count as a completed
+  viewing.
+- **Ad Catalog → Current Channel Diagnostics** reports committed plans, aired
+  segments, watched segments, and last logical airing.
 
-Ads are never trimmed in this alpha. If the remaining gap is too short for any unused ad, normal channel filler takes over for the remainder.
+## Known release blockers
 
-## What is and is not implemented yet
-
-- Implemented: portable schema 0.4 settings, separate ad-folder resolution from normal program media, deterministic ad planning in bounded Calendar gaps, restart-stable selection for an unchanged lineup/library, and a Studio settings dialog.
-- Not yet implemented: reusable ad profiles (these alpha settings are per-channel), mid-program/interval breakpoints, fades/crossfades, persisted historical rotation (such as least played), Smoosh/Expand policies, and Guide/HUD ad-break labels.
-- This version calculates a gap's plan from the currently indexed ad pool. Keep the same ad files and channel schedule when checking restart determinism.
-- Older channel schemas 0.1–0.3 remain supported and do not enable ads unless explicitly configured.
-
-## Automated coverage
-
-The tests/test_ad_breaks.py tests exercise deterministic selection, gap packing, legacy defaults, and a real ChannelRuntime selection sequence that resumes the next fixed program at its original calendar start.
+This is still in-progress development. See
+[AD_BREAKS_COMPLETE_BUILD.md](AD_BREAKS_COMPLETE_BUILD.md) for the complete
+design contract and verification requirements. Remaining features include
+runtime execution of fade/hold transitions, full offline catch-up planning,
+richer per-placement profile selection, protected schedule-expansion policies,
+and end-to-end native decoder/controller validation. Do not label Phases A–E
+fully shipped until all verification gates pass.

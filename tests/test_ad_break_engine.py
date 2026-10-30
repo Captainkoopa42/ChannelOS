@@ -242,3 +242,17 @@ def test_view_history_is_separate_and_requires_proven_consumption(tmp_path):
     assert store.play_counts() == {}
     assert store.diagnostics(3)["completedViewings"] == 1
     store.close()
+
+
+
+def test_best_fit_finds_exact_combination_greedy_misses():
+    candidates = (
+        AdCandidate("almost-fills", 88),
+        AdCandidate("part-one", 60),
+        AdCandidate("part-two", 40),
+    )
+    engine = AdSelectionEngine()
+    selected = engine.select(candidates, 100, strategy="best_fit", seed="stable")
+    assert {item.asset_id for item in selected} == {"part-one", "part-two"}
+    assert sum(item.duration_seconds for item in selected) == 100
+    assert engine.select(candidates, 100, strategy="best_fit", seed="stable") == selected

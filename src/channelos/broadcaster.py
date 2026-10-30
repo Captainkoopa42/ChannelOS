@@ -1174,38 +1174,40 @@ class BroadcasterService:
                     resolved, RuntimeStore(Path(temporary) / "runtime.sqlite"),
                     now=first_at, transient=True,
                 )
-                samples: list[datetime] = []
-                if definition.programming.mode == "calendar":
-                    blocks = definition.programming.calendar
-                    for index, block in enumerate(blocks[:-1]):
-                        duration = next(
-                            item.asset.duration_seconds for item in resolved.media
-                            if item.asset.asset_id == block.asset_id
-                        )
-                        after = block.start_utc + timedelta(seconds=float(duration))
-                        before = blocks[index + 1].start_utc
-                        if before > after:
-                            samples.append(after + timedelta(seconds=min(1.0,
-                                (before - after).total_seconds() / 2)))
-                else:
-                    triggers = list(definition.advertising.breakpoints_seconds)
-                    if definition.advertising.interval_seconds is not None:
-                        triggers.append(definition.advertising.interval_seconds)
-                    if triggers:
-                        samples.append(first_at + timedelta(seconds=min(triggers) + 1.0))
-                for sample in samples[:max(1, min(int(limit), 8))]:
-                    selected = runtime.broadcast_at(sample)
-                    event = selected.event
-                    ad_preview.append({
-                        "eventType": event.event_type,
-                        "assetId": event.asset_id,
-                        "title": selected.media.location.path.stem,
-                        "startUtc": event.start_utc.isoformat(),
-                        "endUtc": event.end_utc.isoformat(),
-                        "breakId": event.break_id or "",
-                    })
-                if runtime.break_store is not None:
-                    runtime.break_store.close()
+                try:
+                    samples: list[datetime] = []
+                    if definition.programming.mode == "calendar":
+                        blocks = definition.programming.calendar
+                        for index, block in enumerate(blocks[:-1]):
+                            duration = next(
+                                item.asset.duration_seconds for item in resolved.media
+                                if item.asset.asset_id == block.asset_id
+                            )
+                            after = block.start_utc + timedelta(seconds=float(duration))
+                            before = blocks[index + 1].start_utc
+                            if before > after:
+                                samples.append(after + timedelta(seconds=min(1.0,
+                                    (before - after).total_seconds() / 2)))
+                    else:
+                        triggers = list(definition.advertising.breakpoints_seconds)
+                        if definition.advertising.interval_seconds is not None:
+                            triggers.append(definition.advertising.interval_seconds)
+                        if triggers:
+                            samples.append(first_at + timedelta(seconds=min(triggers) + 1.0))
+                    for sample in samples[:max(1, min(int(limit), 8))]:
+                        selected = runtime.broadcast_at(sample)
+                        event = selected.event
+                        ad_preview.append({
+                            "eventType": event.event_type,
+                            "assetId": event.asset_id,
+                            "title": selected.media.location.path.stem,
+                            "startUtc": event.start_utc.isoformat(),
+                            "endUtc": event.end_utc.isoformat(),
+                            "breakId": event.break_id or "",
+                        })
+                finally:
+                    if runtime.break_store is not None:
+                        runtime.break_store.close()
 
         return {
             "ok": True,

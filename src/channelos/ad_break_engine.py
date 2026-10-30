@@ -155,6 +155,15 @@ class BreakPlan:
     strategy: str
     timing_policy: str
 
+    @property
+    def duration_seconds(self) -> float:
+        """Actual scheduled media duration, excluding unused reserved capacity."""
+        return max(
+            (segment.start_offset_seconds + segment.duration_seconds
+             for segment in self.segments),
+            default=0.0,
+        )
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "scheduled_at", _utc(self.scheduled_at))
         if not self.plan_id or not self.opportunity_id or not self.occurrence_id:

@@ -30,16 +30,31 @@ class AdCollection:
     collection_id: str
     name: str
     asset_ids: tuple[str, ...]
+    source_paths: tuple[str, ...] = ()
+    excluded_asset_ids: tuple[str, ...] = ()
+    membership: str = "fixed"
 
     def __post_init__(self) -> None:
         if not self.collection_id.strip() or not self.name.strip():
             raise AdCatalogValidationError("collection ID and name are required")
-        if not self.asset_ids:
-            raise AdCatalogValidationError("an ad collection must contain at least one asset")
+        if self.membership not in {"fixed", "dynamic"}:
+            raise AdCatalogValidationError("membership must be fixed or dynamic")
+        if not self.asset_ids and not (
+            self.membership == "dynamic" and self.source_paths
+        ):
+            raise AdCatalogValidationError("an ad collection must contain at least one asset or dynamic source")
         if any(not value.strip() for value in self.asset_ids):
             raise AdCatalogValidationError("asset IDs cannot be empty")
         if len(set(self.asset_ids)) != len(self.asset_ids):
             raise AdCatalogValidationError("duplicate asset IDs are not allowed")
+        if any(not path.strip() for path in self.source_paths):
+            raise AdCatalogValidationError("ad source paths cannot be empty")
+        if len(set(self.source_paths)) != len(self.source_paths):
+            raise AdCatalogValidationError("duplicate ad source paths are not allowed")
+        if len(set(self.excluded_asset_ids)) != len(self.excluded_asset_ids):
+            raise AdCatalogValidationError("duplicate excluded asset IDs are not allowed")
+        if self.membership == "fixed" and self.source_paths:
+            raise AdCatalogValidationError("fixed collections cannot specify dynamic source paths")
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,12 +155,28 @@ class AdCatalogStore:
             db.execute("""INSERT INTO ad_collections VALUES (?, ?, ?)
                 ON CONFLICT(collection_id) DO UPDATE SET
                 name=excluded.name, asset_ids_json=excluded.asset_ids_json""",
-                (item.collection_id, item.name, json.dumps(item.asset_ids)))
+                (item.collection_id, item.name, json.dumps({
+                    "asset_ids": item.asset_ids,
+                    "source_paths": item.source_paths,
+                    "excluded_asset_ids": item.excluded_asset_ids,
+                    "membership": item.membership,
+                }, sort_keys=True)))
 
     def get_collection(self, collection_id: str) -> AdCollection | None:
         with self._connect() as db:
             row = db.execute("SELECT * FROM ad_collections WHERE collection_id=?", (collection_id,)).fetchone()
-        return None if row is None else AdCollection(row["collection_id"], row["name"], tuple(json.loads(row["asset_ids_json"])))
+        if row is None:
+            return None
+        payload = json.loads(row["asset_ids_json"])
+        # Old catalog rows were plain JSON lists; load them without migration.
+        if isinstance(payload, list):
+            return AdCollection(row["collection_id"], row["name"], tuple(payload))
+        return AdCollection(
+            row["collection_id"], row["name"], tuple(payload.get("asset_ids", ())),
+            tuple(payload.get("source_paths", ())),
+            tuple(payload.get("excluded_asset_ids", ())),
+            payload.get("membership", "fixed"),
+        )
 
     def save_profile(self, item: BreakProfile) -> None:
         with self._connect() as db:
@@ -199,12 +230,28 @@ class AdCatalogStore:
         BreakProfile("resolved", "Resolved", settings)
         media: tuple[Any, ...] = ()
         if settings["enabled"] and collection:
-            online = library.online_locations_for_assets(collection.asset_ids)
-            missing = [asset_id for asset_id in collection.asset_ids if not online.get(asset_id)]
+            ids = list(collection.asset_ids)
+            if collection.membership == "dynamic":
+                seen = set(ids)
+                for root in collection.source_paths:
+                    for item in library.list_online_media_for_source(root):
+                        if item.asset.asset_id not in seen:
+                            seen.add(item.asset.asset_id)
+                            ids.append(item.asset.asset_id)
+            ids = [
+                asset_id for asset_id in ids
+                if asset_id not in collection.excluded_asset_ids
+            ]
+            if not ids:
+                raise AdCatalogValidationError(
+                    "advertising collection has no eligible online media"
+                )
+            online = library.online_locations_for_assets(ids)
+            missing = [asset_id for asset_id in ids if not online.get(asset_id)]
             if missing:
                 raise AdCatalogValidationError(
                     "collection contains missing or offline library assets: " + ", ".join(missing))
-            media = tuple(online[asset_id][0] for asset_id in collection.asset_ids)
+            media = tuple(online[asset_id][0] for asset_id in ids)
         return ResolvedAdAssignment(collection, profile, settings, media)
 
 
@@ -220,7 +267,7 @@ def resolve_indexed_ad_media(
     """
     if not assignment.settings.get("enabled") or assignment.collection is None:
         return ()
-    requested = assignment.collection.asset_ids
+    requested = tuple(location.asset_id for location in assignment.ad_media)
     indexed = {item.asset.asset_id: item for item in library.list_online_media()}
     missing = [asset_id for asset_id in requested if asset_id not in indexed]
     if missing:
@@ -259,7 +306,10 @@ def export_portable_channel(
         )
     options = {
         "enabled": enabled,
-        "asset_ids": collection.asset_ids if collection else (),
+        "asset_ids": (
+            tuple(location.asset_id for location in resolved.ad_media)
+            if collection and enabled else ()
+        ),
         "collection_id": assignment.collection_id,
         "profile_id": assignment.profile_id,
         "selection_strategy": settings.get("strategy", channel.advertising.selection_strategy),

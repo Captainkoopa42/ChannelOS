@@ -312,3 +312,39 @@ def test_unimplemented_transitions_are_rejected_before_apply(tmp_path, behavior)
             resolved, RuntimeStore(tmp_path / "runtime.sqlite"),
             now=datetime(2026, 10, 30, tzinfo=UTC),
         )
+
+
+
+def test_active_calendar_ad_plan_survives_policy_revision(tmp_path):
+    library, root, ads = indexed(tmp_path)
+    ad_ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
+    show = library.list_online_media_for_source(root)[0]
+    epoch = datetime(2026, 10, 30, 12, tzinfo=UTC)
+    blocks = [
+        {"asset_id": show.asset.asset_id, "start_utc": epoch.isoformat()},
+        {"asset_id": show.asset.asset_id,
+         "start_utc": (epoch + timedelta(seconds=90)).isoformat()},
+    ]
+    first = config(root, ad_ids, mode="calendar", calendar=blocks,
+                   triggers=["calendar_boundary"])
+    db_path = tmp_path / "runtime.sqlite"
+    runtime = ChannelRuntime.open(resolve_channel(first, library),
+                                  RuntimeStore(db_path), now=epoch)
+    playing = runtime.broadcast_at(epoch + timedelta(seconds=66))
+    assert playing.origin == "advertisement"
+    previous_id = playing.event.break_id
+    assert previous_id
+    runtime.break_store.close()
+
+    revised = channel_to_mapping(first)
+    revised["advertising"]["selection_strategy"] = "smallest"
+    runtime2 = ChannelRuntime.open(
+        resolve_channel(ChannelDefinition.from_mapping(revised), library),
+        RuntimeStore(db_path), now=epoch + timedelta(seconds=67),
+    )
+    unchanged = runtime2.broadcast_at(epoch + timedelta(seconds=67))
+    assert unchanged.origin == "advertisement"
+    assert unchanged.event.break_id == previous_id
+    assert unchanged.media.asset.asset_id == playing.media.asset.asset_id
+    assert runtime2.broadcast_at(epoch + timedelta(seconds=91)).origin == "calendar"
+    runtime2.break_store.close()

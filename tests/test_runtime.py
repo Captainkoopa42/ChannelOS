@@ -735,3 +735,59 @@ def test_ad_policy_revision_preserves_active_plan_and_invalidates_future_plan(
     assert store.load_opportunity(active.opportunity_id) is not None
     assert store.load_opportunity(future.opportunity_id) is None
     store.close()
+
+
+def test_policy_edit_keeps_current_break_and_only_replans_future_content_positions(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    base = build_resolved_channel(tmp_path, [30.0, 30.0], channel_number=74)
+    definition = ChannelDefinition.from_mapping({
+        "schema_version": "0.4",
+        "channel": 74,
+        "name": "Policy Revision TV",
+        "sources": [{"path": str(source.path)} for source in base.definition.sources],
+        "advertising": {
+            "enabled": True,
+            "sources": [{"path": str(tmp_path / "policy-ads")}],
+            "selection_strategy": "best_fit",
+            "breakpoints_seconds": [10.0, 20.0],
+            "break_duration_seconds": 5.0,
+        },
+        "programming": {"mode": "sequential"},
+    })
+    ad_path = tmp_path / "policy-ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:policy-ad", content_sha256="policy-ad", size_bytes=1,
+        duration_seconds=5.0, container_format="mp4",
+    )
+    ad = IndexedMedia(
+        ad_asset,
+        MediaLocation(
+            path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+            source_root=ad_path.parent, online=True,
+        ),
+    )
+    original = ResolvedChannel(definition, base.media, (ad,))
+    database = tmp_path / "policy-edit-runtime.db"
+    first = ChannelRuntime.open(original, RuntimeStore(database), now=epoch)
+    assert first.broadcast_at(epoch + timedelta(seconds=12)).origin == "advertisement"
+    first.break_store.close()
+
+    revised_advertising = replace(
+        definition.advertising, selection_strategy="smallest"
+    )
+    revised_definition = replace(definition, advertising=revised_advertising)
+    revised = ResolvedChannel(revised_definition, base.media, (ad,))
+    second = ChannelRuntime.open(
+        revised, RuntimeStore(database), now=epoch + timedelta(seconds=12)
+    )
+
+    assert second.broadcast_at(epoch + timedelta(seconds=12)).origin == "advertisement"
+    assert second.broadcast_at(epoch + timedelta(seconds=15)).origin != "advertisement"
+    assert second.broadcast_at(epoch + timedelta(seconds=25)).origin == "advertisement"
+    plans = second.break_store.plans_for_channel(
+        74, start=epoch, end=epoch + timedelta(seconds=40)
+    )
+    assert len(plans) == 2
+    second.break_store.close()

@@ -240,6 +240,7 @@ class CalendarTimeline:
         self.break_store: BreakPlanStore | None = None
         self.ad_revision = ""
         self._ad_plan_cache: dict[tuple[datetime, datetime], tuple] = {}
+        self._ad_plan_ids: dict[tuple[datetime, datetime], str] = {}
         by_asset = {item.asset.asset_id: item for item in media}
 
         programs: list[ScheduledProgram] = []
@@ -327,6 +328,14 @@ class CalendarTimeline:
             self.break_store.load_opportunity(opportunity_id)
             if self.break_store is not None else None
         )
+        if stored is None and self.break_store is not None:
+            # A changed policy must not replace the plan of a gap that has
+            # already started. The occurrence ID is independent of revision.
+            occurrence_id = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+            for previous in self.break_store.plans_for_occurrence(occurrence_id):
+                if previous.scheduled_at == gap_anchor:
+                    stored = previous
+                    break
         if stored is None:
             settings = self.advertising
             selected = AdSelectionEngine().select(
@@ -366,6 +375,9 @@ class CalendarTimeline:
                 segments = stored.segments
         else:
             segments = stored.segments
+        self._ad_plan_ids[(gap_anchor, next_start)] = (
+            stored.plan_id if stored is not None else opportunity_id
+        )
         by_asset = {item.asset.asset_id: item for item in self.ad_media}
         return tuple(
             PlannedAd(
@@ -443,14 +455,7 @@ class CalendarTimeline:
                         program_ends_at=segment_end,
                         cycle_index=previous_index,
                         origin="advertisement",
-                        break_id=hashlib.sha256(
-                            (
-                                f"channel:{self.channel_number}:"
-                                f"{gap_anchor.isoformat(timespec='microseconds')}:"
-                                f"{next_start.isoformat(timespec='microseconds')}:"
-                                f"{self.ad_revision}"
-                            ).encode("utf-8")
-                        ).hexdigest(),
+                        break_id=self._ad_plan_ids.get(cache_key),
                         parent_program_asset_id=(
                             self.programs[previous_index].media.asset.asset_id
                             if previous_index >= 0 else None

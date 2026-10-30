@@ -295,3 +295,20 @@ def test_studio_preview_is_isolated_and_reports_ad_events(tmp_path):
     assert preview["adPreview"][0]["breakId"]
     # Preview never applies a channel to the live lineup.
     assert not (tmp_path / "channels").exists()
+
+
+
+@pytest.mark.parametrize("behavior", ["fade", "hold"])
+def test_unimplemented_transitions_are_rejected_before_apply(tmp_path, behavior):
+    from channelos.runtime import ChannelRuntimeError
+
+    library, root, ads = indexed(tmp_path)
+    ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
+    raw = channel_to_mapping(config(root, ids))
+    raw["advertising"]["transition_behavior"] = behavior
+    resolved = resolve_channel(ChannelDefinition.from_mapping(raw), library)
+    with pytest.raises(ChannelRuntimeError, match="not supported"):
+        ChannelRuntime.open(
+            resolved, RuntimeStore(tmp_path / "runtime.sqlite"),
+            now=datetime(2026, 10, 30, tzinfo=UTC),
+        )

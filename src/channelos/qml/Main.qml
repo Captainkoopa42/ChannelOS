@@ -967,16 +967,6 @@ ApplicationWindow {
                         elide: Text.ElideRight
                     }
 
-                    Text {
-                        visible: false
-                        text: ""
-                        color: root.textPrimary
-                        font.pixelSize: 30
-                        font.weight: Font.DemiBold
-                        width: parent.width
-                        elide: Text.ElideRight
-                    }
-
                     Row {
                         width: parent.width
                         spacing: 18

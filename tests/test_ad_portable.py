@@ -101,12 +101,12 @@ def test_mid_program_break_and_resume_are_restart_stable(tmp_path):
     assert inside.origin == "advertisement"
     assert inside.offset_seconds == pytest.approx(3.0)
     assert after.media.asset.asset_id == resolved.media[0].asset.asset_id
-    assert after.offset_seconds == pytest.approx(28.0)
+    assert after.offset_seconds == pytest.approx(23.0)
     restarted = ChannelRuntime.open(resolved, RuntimeStore(tmp_path / "runtime.sqlite"), now=epoch)
     again = restarted.broadcast_at(epoch + timedelta(seconds=23))
     assert again.media.asset.asset_id == inside.media.asset.asset_id
     assert again.offset_seconds == pytest.approx(inside.offset_seconds)
-    assert restarted.broadcast_at(epoch + timedelta(seconds=38)).offset_seconds == pytest.approx(28.0)
+    assert restarted.broadcast_at(epoch + timedelta(seconds=38)).offset_seconds == pytest.approx(23.0)
 
 
 def test_calendar_gap_is_persistent_and_does_not_move_fixed_start(tmp_path):

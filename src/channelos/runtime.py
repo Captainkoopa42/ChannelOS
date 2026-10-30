@@ -81,6 +81,9 @@ class BroadcastEvent:
     source_offset_seconds: float
     parent_program_id: str | None = None
     break_id: str | None = None
+    parent_program_asset_id: str | None = None
+    parent_program_started_at: datetime | None = None
+    parent_program_ends_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +96,9 @@ class BroadcastSelection:
     origin: str = "cycle"
     parent_program_id: str | None = None
     break_id: str | None = None
+    parent_program_asset_id: str | None = None
+    parent_program_started_at: datetime | None = None
+    parent_program_ends_at: datetime | None = None
 
     @property
     def media(self) -> IndexedMedia:
@@ -107,7 +113,6 @@ class BroadcastSelection:
             event_type,
             self.media.asset.asset_id,
             self.program_started_at.isoformat(timespec="microseconds"),
-            self.program_ends_at.isoformat(timespec="microseconds"),
             self.break_id or "",
         )).encode("utf-8")).hexdigest()
         return BroadcastEvent(
@@ -119,6 +124,9 @@ class BroadcastSelection:
             source_offset_seconds=self.offset_seconds,
             parent_program_id=self.parent_program_id,
             break_id=self.break_id,
+            parent_program_asset_id=self.parent_program_asset_id,
+            parent_program_started_at=self.parent_program_started_at,
+            parent_program_ends_at=self.parent_program_ends_at,
         )
 
 
@@ -1295,6 +1303,9 @@ class ChannelRuntime:
                             origin="advertisement",
                             parent_program_id=base.event.event_id,
                             break_id=active.plan_id,
+                            parent_program_asset_id=base.media.asset.asset_id,
+                            parent_program_started_at=base.program_started_at,
+                            parent_program_ends_at=base.program_ends_at,
                         )
             next_content_time = instant - timedelta(seconds=elapsed_before)
             if next_content_time == content_time:
@@ -1332,6 +1343,35 @@ class ChannelRuntime:
                 selection.origin,
             )
         return selection
+
+    def break_plans_for_event(
+        self, selection: BroadcastSelection, *, at: datetime | None = None
+    ) -> tuple[BreakPlan, ...]:
+        """Return the persisted break plans associated with a program selection.
+
+        Advertisement selections carry their parent program identity, allowing
+        the Guide to display one parent occurrence with break markers.
+        """
+        if self.break_store is None:
+            return ()
+        event = selection.event
+        if event.event_type == "advertisement":
+            asset_id = event.parent_program_asset_id
+            started_at = event.parent_program_started_at
+            ends_at = event.parent_program_ends_at
+        else:
+            asset_id = event.asset_id
+            started_at = event.start_utc
+            ends_at = event.end_utc
+            self._ensure_occurrence_plans(selection, at or started_at)
+        if not asset_id or started_at is None or ends_at is None:
+            return ()
+        occurrence_id = hashlib.sha256("|".join((
+            str(self.channel_number), self.signature,
+            advertising_signature(self.channel), asset_id,
+            started_at.isoformat(timespec="microseconds"),
+        )).encode("utf-8")).hexdigest()
+        return self.break_store.plans_for_occurrence(occurrence_id)
 
     def broadcast_at(self, at: datetime | None = None) -> BroadcastSelection:
         return self._selection_at(at or utc_now())

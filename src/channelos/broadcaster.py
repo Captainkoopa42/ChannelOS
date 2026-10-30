@@ -229,11 +229,27 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
     ]
     ad_enabled = bool(raw.get("adBreaksEnabled", False))
     ad_strategy = str(raw.get("adSelectionStrategy", "best_fit")).strip().lower()
-    has_advertising = ad_enabled or bool(ad_sources)
+    ad_asset_ids = raw.get("adAssetIds", [])
+    if not isinstance(ad_asset_ids, (list, tuple)):
+        raise ChannelValidationError("adAssetIds must be a list")
+    ad_collection_id = str(raw.get("adCollectionId", "") or "").strip()
+    ad_profile_id = str(raw.get("adProfileId", "") or "").strip()
+    advanced_ads = bool(
+        raw.get("adConfigVersion") == "0.5"
+        or ad_asset_ids or ad_collection_id or ad_profile_id
+        or raw.get("adBreakpointsSeconds")
+        or raw.get("adIntervalSeconds")
+        or raw.get("adTimingPolicy")
+    )
+    has_advertising = ad_enabled or bool(ad_sources) or bool(ad_asset_ids) or bool(
+        ad_collection_id or ad_profile_id
+    )
 
     mapping = {
         "schema_version": (
-            "0.4"
+            "0.5"
+            if has_advertising and advanced_ads
+            else "0.4"
             if has_advertising
             else "0.3"
             if mode == "calendar" and has_show_filler
@@ -273,6 +289,31 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
             "sources": ad_sources,
             "selection_strategy": ad_strategy,
         }
+        if advanced_ads:
+            def values(key: str) -> list[str]:
+                value = raw.get(key, [])
+                if not isinstance(value, (list, tuple)):
+                    raise ChannelValidationError(f"{key} must be a list")
+                return [str(item).strip() for item in value if str(item).strip()]
+
+            settings = mapping["advertising"]
+            settings.update({
+                "asset_ids": [str(value) for value in ad_asset_ids],
+                "collection_id": ad_collection_id or None,
+                "profile_id": ad_profile_id or None,
+                "breakpoints_seconds": values("adBreakpointsSeconds"),
+                "interval_seconds": raw.get("adIntervalSeconds") or None,
+                "break_duration_seconds": raw.get("adBreakDurationSeconds", 120),
+                "priority": raw.get("adPriority", 0),
+                "timing_policy": raw.get("adTimingPolicy", "strict_fit"),
+                "smoosh_minimum_seconds": raw.get("adSmooshMinimumSeconds", 5),
+                "smoosh_max_trim_seconds": raw.get("adSmooshMaxTrimSeconds", 15),
+                "expand_max_seconds": raw.get("adExpandMaxSeconds", 0),
+                "triggers": values("adTriggers") or [
+                    "breakpoint", "interval", "between_programs", "calendar_boundary",
+                ],
+                "transition_behavior": raw.get("adTransitionBehavior", "cut"),
+            })
     return ChannelDefinition.from_mapping(mapping)
 
 

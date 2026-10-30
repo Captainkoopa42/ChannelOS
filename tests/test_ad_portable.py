@@ -176,3 +176,101 @@ def test_legacy_channel_has_no_ad_media_unless_enabled(tmp_path):
     assert resolve_channel(legacy, library).ad_media == ()
     disabled = config(root, ["sha256:missing"], enabled=False)
     assert resolve_channel(disabled, library).ad_media == ()
+
+
+def test_dynamic_collection_follows_indexed_folder_and_snapshots_membership(tmp_path):
+    library, root, ads = indexed(tmp_path)
+    store = AdCatalogStore(tmp_path / "catalog.sqlite")
+    store.save_collection(AdCollection(
+        "dynamic", "Dynamic Ads", (), (str(ads),), (), "dynamic",
+    ))
+    store.save_profile(BreakProfile("standard", "Standard", {
+        "enabled": True, "strategy": "least_played",
+        "duration_seconds": 15, "breakpoints_seconds": [20],
+    }))
+    store.assign_channel(ChannelAdAssignment(7, "dynamic", "standard"))
+    base = ChannelDefinition.from_mapping({
+        "schema_version": "0.1", "channel": 7, "name": "TV",
+        "sources": [{"path": str(root)}], "programming": {"mode": "sequential"},
+    })
+    first = export_portable_channel(base, store, library)
+    assert len(first.advertising.asset_ids) == 2
+    new_path = ads / "new-promo.mp4"
+    payload = b"new-promo"
+    new_path.write_bytes(payload)
+    library.upsert_file(
+        new_path, ads, content_sha256=hashlib.sha256(payload).hexdigest(),
+        probe=MediaProbeResult(duration_seconds=8, container_format="mp4"),
+    )
+    updated = export_portable_channel(base, AdCatalogStore(tmp_path / "catalog.sqlite"), library)
+    assert len(updated.advertising.asset_ids) == 3
+    # Already applied YAML remains a stable snapshot until the next apply.
+    assert len(first.advertising.asset_ids) == 2
+
+
+def test_dynamic_collection_excludes_assets(tmp_path):
+    library, root, ads = indexed(tmp_path)
+    ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
+    store = AdCatalogStore(tmp_path / "catalog.sqlite")
+    store.save_collection(AdCollection(
+        "x", "Exclude", (), (str(ads),), (ids[0],), "dynamic",
+    ))
+    store.save_profile(BreakProfile("p", "P", {"enabled": True}))
+    store.assign_channel(ChannelAdAssignment(7, "x", "p"))
+    resolved = store.resolve_channel(7, library)
+    assert len(resolved.ad_media) == 1
+    assert resolved.ad_media[0].asset_id == ids[1]
+
+
+def test_broadcaster_embeds_catalog_assignment_on_apply(tmp_path):
+    from channelos.broadcaster import BroadcasterService
+    from channelos.loader import load_channel
+
+    library, root, ads = indexed(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
+    service.save_ad_collection({
+        "collectionId": "ads", "name": "Ads", "assetIds": ids,
+    })
+    service.save_ad_profile({
+        "profileId": "p", "name": "Profile",
+        "defaults": {
+            "enabled": True, "strategy": "smallest",
+            "breakpoints_seconds": [20], "duration_seconds": 20,
+        },
+    })
+    service.assign_ad_profile({
+        "channelNumber": 7, "collectionId": "ads", "profileId": "p",
+        "overrides": {"priority": 11},
+    })
+    result = service.create({
+        "channel": 7, "name": "Catalog TV", "sources": [str(root)],
+        "mode": "sequential",
+    })
+    applied = load_channel(result.record.path)
+    assert applied.schema_version == "0.5"
+    assert applied.advertising.enabled
+    assert applied.advertising.asset_ids == tuple(ids)
+    assert applied.advertising.priority == 11
+    assert len(resolve_channel(applied, library).ad_media) == 2
+
+
+def test_editor_advanced_configuration_roundtrip(tmp_path):
+    from channelos.broadcaster import definition_from_editor
+
+    library, root, ads = indexed(tmp_path)
+    ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
+    definition = definition_from_editor({
+        "channel": 7, "name": "Ad TV", "sources": [str(root)],
+        "mode": "sequential", "adBreaksEnabled": True,
+        "adAssetIds": ids, "adConfigVersion": "0.5",
+        "adSelectionStrategy": "complete_rotation",
+        "adBreakpointsSeconds": ["20"],
+        "adBreakDurationSeconds": 25,
+        "adTimingPolicy": "smoosh",
+        "adSmooshMaxTrimSeconds": 10,
+        "adTriggers": ["breakpoint"],
+    })
+    assert definition.advertising.selection_strategy == "complete_rotation"
+    assert definition.advertising.smoosh_max_trim_seconds == 10
+    assert ChannelDefinition.from_mapping(channel_to_mapping(definition)) == definition

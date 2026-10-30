@@ -424,12 +424,68 @@ class BreakPlanStore:
                 policy_revision TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS ad_break_catchup_state (
+                channel_number INTEGER PRIMARY KEY,
+                policy_revision TEXT NOT NULL,
+                content_cursor_utc TEXT NOT NULL,
+                activated_at_utc TEXT NOT NULL
+            );
         """)
         self.connection.commit()
 
     def close(self) -> None:
         self.connection.close()
 
+
+    def ensure_catchup_cursor(
+        self, channel_number: int, revision: str, *,
+        start_at: datetime, activated_at: datetime,
+    ) -> datetime:
+        """Maintain a durable content-clock checkpoint for missed programs.
+
+        A profile revision begins at its activation date rather than
+        retroactively generating advertisements before the policy existed.
+        """
+        content = _utc(start_at).isoformat()
+        activated = _utc(activated_at).isoformat()
+        row = self.connection.execute(
+            "SELECT policy_revision, content_cursor_utc FROM ad_break_catchup_state "
+            "WHERE channel_number = ?", (int(channel_number),),
+        ).fetchone()
+        if row is not None and str(row[0]) == revision:
+            return _utc(datetime.fromisoformat(str(row[1])))
+        self.connection.execute("""
+            INSERT INTO ad_break_catchup_state (
+                channel_number, policy_revision, content_cursor_utc, activated_at_utc
+            ) VALUES (?, ?, ?, ?)
+            ON CONFLICT(channel_number) DO UPDATE SET
+                policy_revision = excluded.policy_revision,
+                content_cursor_utc = excluded.content_cursor_utc,
+                activated_at_utc = excluded.activated_at_utc
+        """, (int(channel_number), revision, content, activated))
+        self.connection.commit()
+        return _utc(start_at)
+
+    def catchup_cursor(self, channel_number: int) -> datetime | None:
+        row = self.connection.execute(
+            "SELECT content_cursor_utc FROM ad_break_catchup_state "
+            "WHERE channel_number = ?", (int(channel_number),),
+        ).fetchone()
+        return None if row is None else _utc(datetime.fromisoformat(str(row[0])))
+
+    def advance_catchup_cursor(
+        self, channel_number: int, cursor: datetime,
+    ) -> None:
+        self.connection.execute("""
+            UPDATE ad_break_catchup_state
+            SET content_cursor_utc = ?
+            WHERE channel_number = ?
+              AND content_cursor_utc < ?
+        """, (
+            _utc(cursor).isoformat(), int(channel_number),
+            _utc(cursor).isoformat(),
+        ))
+        self.connection.commit()
 
     def apply_policy_revision(
         self, channel_number: int, revision: str, *, at: datetime

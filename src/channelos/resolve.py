@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .library import IndexedMedia, MediaLibrary, normalize_path
 from .models import ChannelDefinition
@@ -19,6 +19,7 @@ class ResolvedChannel:
     # Advertising media is resolved independently and never added to the
     # ordinary program pool merely because it is used by ad breaks.
     ad_media: tuple[IndexedMedia, ...] = ()
+    library: MediaLibrary | None = field(default=None, repr=False, compare=False)
 
     @property
     def first(self) -> IndexedMedia:
@@ -226,7 +227,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
         and channel.programming.preserve_episode_order
     ):
         media = _resolve_preserved_sequence(channel, indexed, source_keys)
-        return ResolvedChannel(definition=channel, media=media, ad_media=tuple(ad_media))
+        return ResolvedChannel(definition=channel, media=media, ad_media=tuple(ad_media), library=library)
 
     # Compatibility/default behavior: resolve from the canonical library's
     # stable path ordering. Shuffle later derives its own deterministic order.
@@ -243,4 +244,4 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
             seen_assets.add(item.asset.asset_id)
 
     selected.sort(key=lambda item: item.location.path_key)
-    return ResolvedChannel(definition=channel, media=tuple(selected), ad_media=tuple(ad_media))
+    return ResolvedChannel(definition=channel, media=tuple(selected), ad_media=tuple(ad_media), library=library)

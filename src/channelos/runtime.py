@@ -240,6 +240,7 @@ class CalendarTimeline:
         channel_number: int,
         ad_media: tuple[IndexedMedia, ...] = (),
         advertising: AdvertisingDefinition | None = None,
+        library=None,
     ) -> None:
         self.filler = SequentialTimeline(filler_media)
         self.cycle_duration_seconds = self.filler.cycle_duration_seconds
@@ -249,6 +250,7 @@ class CalendarTimeline:
             and float(item.asset.duration_seconds) > 0.0
         )
         self.advertising = advertising or AdvertisingDefinition()
+        self.library = library
         self.channel_number = int(channel_number)
         self.break_store: BreakPlanStore | None = None
         self.ad_revision = ""
@@ -507,7 +509,7 @@ class CalendarTimeline:
         )
         return tuple(
             PlannedAd(
-                media=indexed_media_for_segment(segment, self.ad_media),
+                media=indexed_media_for_segment(segment, self.ad_media, self.library),
                 start_offset_seconds=segment.start_offset_seconds,
                 duration_seconds=segment.duration_seconds,
                 event_type=segment.event_type, source_offset_seconds=segment.source_offset_seconds,
@@ -544,7 +546,7 @@ class CalendarTimeline:
                     ), None)
                     if segment_index is not None:
                         segment = plan.segments[segment_index]
-                        item = indexed_media_for_segment(segment, self.ad_media)
+                        item = indexed_media_for_segment(segment, self.ad_media, self.library)
                         segment_start = plan.scheduled_at + timedelta(
                             seconds=segment.start_offset_seconds
                         )
@@ -1372,6 +1374,7 @@ class ChannelRuntime:
                 channel_number=channel.definition.channel,
                 ad_media=channel.ad_media,
                 advertising=channel.definition.advertising,
+                library=channel.library,
             )
             if programming.filler_mode == "shuffle":
                 _validate_shuffle_repeat_window(
@@ -1738,7 +1741,7 @@ class ChannelRuntime:
         return selection
 
     def _media_for_segment(self, segment: PlannedSegment) -> IndexedMedia:
-        return indexed_media_for_segment(segment, self.channel.ad_media)
+        return indexed_media_for_segment(segment, self.channel.ad_media, self.channel.library)
 
     def project_at(self, at: datetime) -> BroadcastSelection:
         """Resolve a schedule projection without claiming future content aired."""

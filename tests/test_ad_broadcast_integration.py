@@ -531,3 +531,36 @@ def test_hold_reuses_the_preceding_decoder_and_frame(tmp_path):
     assert backend.events.count('load') == 1
     session.sync(now=EPOCH + timedelta(seconds=30.3))
     assert backend.events.count('load') == 1
+
+
+@pytest.mark.parametrize('mode', ['sequential', 'calendar'])
+def test_legacy_plan_without_location_snapshot_recovers_from_canonical_library(tmp_path, mode):
+    import json
+    library, definition, ids = setup(tmp_path, break_duration_seconds=10, triggers=['breakpoint'])
+    raw = channel_to_mapping(definition)
+    if mode == 'calendar':
+        show = resolve_channel(definition, library).media[0].asset.asset_id
+        raw['programming'] = {'mode': mode, 'calendar': [
+            {'asset_id': show, 'start_utc': EPOCH.isoformat()},
+            {'asset_id': show, 'start_utc': (EPOCH + timedelta(seconds=100)).isoformat()},
+        ]}
+    first, _ = open_runtime(tmp_path, library, ChannelDefinition.from_mapping(raw))
+    active = first.broadcast_at(EPOCH + timedelta(seconds=21))
+    assert active.origin == 'advertisement'
+    row = first.break_store.connection.execute('SELECT payload FROM ad_break_plans WHERE plan_id = ?',
+                                               (active.break_id,)).fetchone()
+    payload = json.loads(row[0])
+    for segment in payload:
+        for key in ['media_path', 'original_duration_seconds', 'event_type']:
+            segment.pop(key, None)
+    first.break_store.connection.execute('UPDATE ad_break_plans SET payload = ? WHERE plan_id = ?',
+                                        (json.dumps(payload), active.break_id))
+    first.break_store.connection.commit()
+    first.break_store.close()
+    raw['advertising']['asset_ids'] = [asset_id for asset_id in ids if asset_id != active.media.asset.asset_id]
+    reopened, _ = open_runtime(tmp_path, library, ChannelDefinition.from_mapping(raw),
+                              now=EPOCH + timedelta(seconds=22))
+    recovered = reopened.broadcast_at(EPOCH + timedelta(seconds=23))
+    assert recovered.break_id == active.break_id
+    assert recovered.media.asset.asset_id == active.media.asset.asset_id
+    assert recovered.offset_seconds == 3

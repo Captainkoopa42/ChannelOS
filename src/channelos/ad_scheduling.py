@@ -107,12 +107,20 @@ def select_segments(media, budget: float, policy: AdvertisingDefinition, *, seed
     return tuple(result)
 
 
-def indexed_media_for_segment(segment: PlannedSegment, pool):
+def indexed_media_for_segment(segment: PlannedSegment, pool, library=None):
     from pathlib import Path
     from .library import IndexedMedia, MediaAsset, MediaLocation
     for item in pool:
         if item.asset.asset_id == segment.asset_id:
             return item
+    if library is not None:
+        # Older plans predate source-location snapshots. Recover their exact
+        # canonical asset even if a profile now uses a different collection.
+        for location in library.locations_for_asset(segment.asset_id):
+            if location.online:
+                asset = library.cached_asset_for_unchanged_path(location.path)
+                if asset is not None and asset.asset_id == segment.asset_id:
+                    return IndexedMedia(asset, location)
     if not segment.media_path:
         raise ValueError(f"committed ad asset has no saved location: {segment.asset_id}")
     path = Path(segment.media_path)

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from channelos.ad_break_engine import BreakPlan, BreakPlanStore, PlannedSegment
 from channelos.library import IndexedMedia, MediaAsset, MediaLocation, MediaLibrary
 from channelos.models import AdvertisingDefinition, ChannelDefinition, SourceDefinition
 from channelos.probe import MediaProbeResult

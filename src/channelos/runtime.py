@@ -1366,6 +1366,8 @@ class ChannelRuntime:
 
     def _selection_at(self, at: datetime) -> BroadcastSelection:
         instant = require_aware_utc(at)
+        if self.break_store is not None:
+            self.break_store.reconcile_completed(self.channel_number, through=instant)
         if self.break_store is None or not self.channel.definition.advertising.enabled:
             return self.timeline.selection_at(self.epoch_utc, instant)
 
@@ -1405,10 +1407,6 @@ class ChannelRuntime:
                         if item.asset.asset_id == segment.asset_id
                     ), None)
                     if media is not None:
-                        self.break_store.record_aired(
-                            active.plan_id, segment_index, segment.asset_id,
-                            aired_at=instant,
-                        )
                         ad_program = ScheduledProgram(
                             media=media,
                             index=len(self.timeline.programs) + segment_index,

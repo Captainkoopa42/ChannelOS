@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from .ad_break_engine import BreakPolicy
+from .library import IndexedMedia, MediaLibrary
 
 
 class AdCatalogValidationError(ValueError):
@@ -201,3 +202,25 @@ class AdCatalogStore:
                     "collection contains missing or offline library assets: " + ", ".join(missing))
             media = tuple(online[asset_id][0] for asset_id in collection.asset_ids)
         return ResolvedAdAssignment(collection, profile, settings, media)
+
+
+def resolve_indexed_ad_media(
+    assignment: ResolvedAdAssignment,
+    library: MediaLibrary,
+) -> tuple[IndexedMedia, ...]:
+    """Resolve canonical collection membership into playable indexed media.
+
+    MediaLocation alone is not playable: the broadcast engine needs the
+    associated asset metadata, including duration. Keep collection order and
+    never add advertisements to the normal program/filler candidate pool.
+    """
+    if not assignment.settings.get("enabled") or assignment.collection is None:
+        return ()
+    requested = assignment.collection.asset_ids
+    indexed = {item.asset.asset_id: item for item in library.list_online_media()}
+    missing = [asset_id for asset_id in requested if asset_id not in indexed]
+    if missing:
+        raise AdCatalogValidationError(
+            "collection contains missing or offline library assets: " + ", ".join(missing)
+        )
+    return tuple(indexed[asset_id] for asset_id in requested)

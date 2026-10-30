@@ -174,7 +174,7 @@ def _parent_program_with_breaks(
         GuideBreakMarker(
             break_id=plan.plan_id,
             start_utc=plan.scheduled_at,
-            end_utc=plan.scheduled_at + timedelta(seconds=runtime._plan_duration(plan)),
+            end_utc=plan.scheduled_at + timedelta(seconds=plan.duration_seconds),
             advertisement_asset_ids=tuple(segment.asset_id for segment in plan.segments),
         )
         for plan in plans

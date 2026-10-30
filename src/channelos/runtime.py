@@ -1065,6 +1065,7 @@ class ChannelRuntime:
     epoch_utc: datetime
     signature: str
     break_store: BreakPlanStore | None = None
+    policy_revision_changed_at: datetime | None = None
 
     @classmethod
     def open(
@@ -1134,18 +1135,22 @@ class ChannelRuntime:
             and programming.mode != "calendar"
             else None
         )
+        policy_revision_changed_at = None
         if break_store is not None and not transient:
-            break_store.apply_policy_revision(
+            revision_time = require_aware_utc(now or utc_now())
+            if break_store.apply_policy_revision(
                 channel.definition.channel,
                 advertising_signature(channel),
-                at=require_aware_utc(now or utc_now()),
-            )
+                at=revision_time,
+            ):
+                policy_revision_changed_at = revision_time
         return cls(
             channel=channel,
             timeline=timeline,
             epoch_utc=persisted.epoch_utc,
             signature=signature,
             break_store=break_store,
+            policy_revision_changed_at=policy_revision_changed_at,
         )
 
     @property
@@ -1219,6 +1224,17 @@ class ChannelRuntime:
             if existing is not None:
                 plan = existing
             else:
+                # A policy edit must not replay a trigger whose program-content
+                # position has already passed. The current airing plan, if any,
+                # remains under its old immutable opportunity identity.
+                opportunity_offset = (
+                    opportunity.scheduled_at - occurrence.starts_at
+                ).total_seconds()
+                if (
+                    self.policy_revision_changed_at is not None
+                    and opportunity_offset <= selection.offset_seconds + 1e-6
+                ):
+                    continue
                 planned = engine.select(
                     candidates,
                     opportunity.duration_seconds,

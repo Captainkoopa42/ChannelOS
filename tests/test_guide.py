@@ -273,6 +273,7 @@ def test_now_next_projects_active_ad_then_the_interrupted_program(tmp_path: Path
     assert result.now.break_id
     assert not result.next.is_advertisement
     assert result.next.asset_id == base.media[0].asset.asset_id
+    assert result.now.parent_program_id == result.next.event_id
 
     horizon = GuideService((runtime,)).horizon(
         epoch, epoch + timedelta(seconds=34), generated_at=epoch

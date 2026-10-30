@@ -274,3 +274,24 @@ def test_editor_advanced_configuration_roundtrip(tmp_path):
     assert definition.advertising.selection_strategy == "complete_rotation"
     assert definition.advertising.smoosh_max_trim_seconds == 10
     assert ChannelDefinition.from_mapping(channel_to_mapping(definition)) == definition
+
+
+def test_studio_preview_is_isolated_and_reports_ad_events(tmp_path):
+    from channelos.broadcaster import BroadcasterService
+
+    library, root, ads = indexed(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    ids = [item.asset.asset_id for item in library.list_online_media_for_source(ads)]
+    editor = {
+        "channel": 9, "name": "Preview", "sources": [str(root)],
+        "mode": "sequential", "adBreaksEnabled": True,
+        "adConfigVersion": "0.5", "adAssetIds": ids,
+        "adBreakpointsSeconds": [20], "adBreakDurationSeconds": 20,
+    }
+    preview = service.preview(editor)
+    assert preview["ok"]
+    assert preview["adPreview"]
+    assert preview["adPreview"][0]["eventType"] == "advertisement"
+    assert preview["adPreview"][0]["breakId"]
+    # Preview never applies a channel to the live lineup.
+    assert not (tmp_path / "channels").exists()

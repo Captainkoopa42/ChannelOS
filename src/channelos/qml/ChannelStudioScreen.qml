@@ -3126,6 +3126,234 @@ Item {
         }
     }
 
+    StudioDialog {
+        id: adCatalogDialog
+        title: "Advertisement Catalog & Profiles"
+        width: Math.min(studioRoot.width - 40, 730)
+        height: Math.min(studioRoot.height - 40, 700)
+        x: Math.max(20, (studioRoot.width - width) / 2)
+        y: Math.max(20, (studioRoot.height - height) / 2)
+        property var catalogData: ({})
+        property string catalogFeedback: ""
+
+        function splitValues(value) {
+            return String(value || "").split(";").map(function(part) {
+                return part.trim()
+            }).filter(function(part) { return part.length > 0 })
+        }
+
+        function showResult(result) {
+            catalogFeedback = result && result.message
+                    ? String(result.message) : "Catalog request failed"
+            if (result && result.ok) {
+                catalogData = result
+                studioRoot.feedbackMessage = catalogFeedback
+                studioRoot.feedbackIsError = false
+            } else {
+                studioRoot.feedbackMessage = catalogFeedback
+                studioRoot.feedbackIsError = true
+            }
+        }
+
+        onOpened: {
+            var response = channelOS.adCatalogSnapshot()
+            catalogData = response || ({})
+            catalogFeedback = response && response.ok
+                    ? "Catalog is ready. Save reusable items before assigning them."
+                    : String(response && response.message || "Unable to open catalog")
+        }
+
+        contentItem: Flickable {
+            id: catalogScroll
+            clip: true
+            contentWidth: width
+            contentHeight: catalogColumn.implicitHeight + 12
+            boundsBehavior: Flickable.StopAtBounds
+
+            ColumnLayout {
+                id: catalogColumn
+                width: catalogScroll.width - 16
+                spacing: 8
+
+                Text {
+                    Layout.fillWidth: true
+                    color: studioRoot.textSecondary
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    text: "All commercials use the canonical Library index. "
+                          + "Dynamic collections follow indexed folders; fixed "
+                          + "collections use selected asset IDs. Applying a channel "
+                          + "embeds a portable snapshot of both collection and profile."
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    color: studioRoot.warning
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    text: adCatalogDialog.catalogFeedback
+                }
+                Text {
+                    color: studioRoot.textPrimary
+                    font.bold: true
+                    text: "1. Collection"
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelTextField {
+                        id: catalogCollectionId
+                        Layout.fillWidth: true
+                        placeholderText: "Collection ID, e.g. network-ads"
+                    }
+                    ChannelTextField {
+                        id: catalogCollectionName
+                        Layout.fillWidth: true
+                        placeholderText: "Collection display name"
+                    }
+                    ChannelComboBox {
+                        id: catalogCollectionMode
+                        Layout.preferredWidth: 115
+                        model: ["Fixed", "Dynamic"]
+                    }
+                }
+                ChannelTextField {
+                    id: catalogCollectionAssets
+                    Layout.fillWidth: true
+                    placeholderText: "Canonical asset IDs (semicolon separated)"
+                }
+                ChannelTextField {
+                    id: catalogCollectionSources
+                    Layout.fillWidth: true
+                    placeholderText: "Dynamic source folders (semicolon separated)"
+                }
+                ChannelTextField {
+                    id: catalogCollectionExclusions
+                    Layout.fillWidth: true
+                    placeholderText: "Excluded asset IDs (optional)"
+                }
+                StudioButton {
+                    text: "Save Collection"
+                    onClicked: {
+                        var result = channelOS.saveAdCollection({
+                            collectionId: catalogCollectionId.text.trim(),
+                            name: catalogCollectionName.text.trim(),
+                            membership: catalogCollectionMode.currentIndex === 1
+                                        ? "dynamic" : "fixed",
+                            assetIds: adCatalogDialog.splitValues(catalogCollectionAssets.text),
+                            sourcePaths: adCatalogDialog.splitValues(catalogCollectionSources.text),
+                            excludedAssetIds: adCatalogDialog.splitValues(catalogCollectionExclusions.text)
+                        })
+                        adCatalogDialog.showResult(result)
+                    }
+                }
+                Text {
+                    color: studioRoot.textPrimary
+                    font.bold: true
+                    text: "2. Reusable Break Profile"
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelTextField {
+                        id: catalogProfileId
+                        Layout.fillWidth: true
+                        placeholderText: "Profile ID, e.g. standard"
+                    }
+                    ChannelTextField {
+                        id: catalogProfileName
+                        Layout.fillWidth: true
+                        placeholderText: "Profile display name"
+                    }
+                }
+                ChannelTextField {
+                    id: catalogProfileDefaults
+                    Layout.fillWidth: true
+                    text: '{"enabled":true,"duration_seconds":120,"strategy":"best_fit","triggers":["breakpoint","interval","between_programs"]}'
+                    placeholderText: "JSON policy defaults"
+                }
+                StudioButton {
+                    text: "Save Profile"
+                    onClicked: {
+                        try {
+                            var defaults = JSON.parse(catalogProfileDefaults.text)
+                            adCatalogDialog.showResult(channelOS.saveAdBreakProfile({
+                                profileId: catalogProfileId.text.trim(),
+                                name: catalogProfileName.text.trim(),
+                                defaults: defaults
+                            }))
+                        } catch (error) {
+                            adCatalogDialog.catalogFeedback = "Invalid profile JSON: " + error
+                        }
+                    }
+                }
+                Text {
+                    color: studioRoot.textPrimary
+                    font.bold: true
+                    text: "3. Assign to Current Channel"
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelTextField {
+                        id: catalogAssignCollection
+                        Layout.fillWidth: true
+                        placeholderText: "Saved collection ID"
+                    }
+                    ChannelTextField {
+                        id: catalogAssignProfile
+                        Layout.fillWidth: true
+                        placeholderText: "Saved profile ID"
+                    }
+                }
+                ChannelTextField {
+                    id: catalogAssignOverrides
+                    Layout.fillWidth: true
+                    text: "{}"
+                    placeholderText: "Per-channel overrides (JSON)"
+                }
+                StudioButton {
+                    text: "Save Assignment to Current Channel"
+                    highlighted: true
+                    onClicked: {
+                        try {
+                            var overrides = JSON.parse(catalogAssignOverrides.text)
+                            var result = channelOS.assignAdBreakProfile({
+                                channelNumber: Number(channelNumberField.text),
+                                collectionId: catalogAssignCollection.text.trim(),
+                                profileId: catalogAssignProfile.text.trim(),
+                                overrides: overrides
+                            })
+                            adCatalogDialog.showResult(result)
+                            if (result && result.ok) {
+                                adCollectionField.text = catalogAssignCollection.text.trim()
+                                adProfileField.text = catalogAssignProfile.text.trim()
+                                studioRoot.dirty = true
+                            }
+                        } catch (error) {
+                            adCatalogDialog.catalogFeedback = "Invalid overrides JSON: " + error
+                        }
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    color: studioRoot.textSecondary
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 10
+                    text: "Saved collections: "
+                          + ((adCatalogDialog.catalogData.collections || []).map(function(item) {
+                                return item.collectionId
+                             }).join(", ") || "none")
+                          + "    Profiles: "
+                          + ((adCatalogDialog.catalogData.profiles || []).map(function(item) {
+                                return item.profileId
+                             }).join(", ") || "none")
+                }
+                StudioButton {
+                    text: "Close"
+                    onClicked: adCatalogDialog.close()
+                }
+            }
+        }
+    }
+
     ListModel { id: draftSources }
     ListModel { id: calendarBlocks }
 }

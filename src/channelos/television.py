@@ -18,6 +18,18 @@ _START_ALIGNMENT_TOLERANCE_SECONDS = 0.001
 
 
 @dataclass(slots=True)
+class _AdViewingProgress:
+    channel_number: int
+    plan_id: str
+    segment_index: int
+    asset_id: str
+    duration_seconds: float
+    event_id: str
+    last_position: float
+    consumed_seconds: float = 0.0
+
+
+@dataclass(slots=True)
 class TelevisionSession:
     """Routes television intents through ChannelOS before touching the playback backend."""
 
@@ -26,6 +38,39 @@ class TelevisionSession:
     loaded_asset_id: str | None = None
     loaded_program_started_at: datetime | None = None
     paused: bool = False
+    _ad_viewing: _AdViewingProgress | None = None
+
+    def _sample_ad_viewing(self) -> None:
+        progress = self._ad_viewing
+        if progress is None or self.paused:
+            return
+        try:
+            position = float(self.backend.get_position())
+        except (TypeError, ValueError, PlaybackError):
+            return
+        delta = position - progress.last_position
+        # Large jumps are seeks, not actual continuous viewer consumption.
+        if 0.0 < delta <= 3.0:
+            progress.consumed_seconds += delta
+        progress.last_position = position
+
+    def _finish_ad_viewing(self, at: datetime) -> None:
+        progress = self._ad_viewing
+        self._ad_viewing = None
+        if progress is None:
+            return
+        if progress.consumed_seconds + 0.5 < progress.duration_seconds:
+            return
+        runtime = self.runtime.channels.get(progress.channel_number)
+        if runtime is None or runtime.break_store is None:
+            return
+        runtime.break_store.record_viewed(
+            progress.plan_id,
+            progress.segment_index,
+            progress.asset_id,
+            consumed_seconds=min(progress.consumed_seconds, progress.duration_seconds),
+            completed_at=at,
+        )
 
     def _apply_selection(self, decision: TuneDecision, *, play: bool) -> Path:
         selected = decision.viewer_selection.media
@@ -33,6 +78,9 @@ class TelevisionSession:
         path = selected.location.path
 
         program_started_at = decision.viewer_selection.program_started_at
+        event = decision.viewer_selection.event
+        if self._ad_viewing is not None and self._ad_viewing.event_id != event.event_id:
+            self._finish_ad_viewing(decision.viewer_time_utc)
         if (
             self.loaded_asset_id != asset_id
             or self.loaded_program_started_at != program_started_at
@@ -46,6 +94,28 @@ class TelevisionSession:
             self.paused = False
 
         self.backend.seek(decision.viewer_selection.offset_seconds)
+        if event.event_type == "advertisement" and event.break_id:
+            runtime = self.runtime.channels.get(decision.channel_number)
+            plan = (
+                runtime.break_store.load_plan(event.break_id)
+                if runtime is not None and runtime.break_store is not None else None
+            )
+            if plan is not None:
+                for index, segment in enumerate(plan.segments):
+                    segment_at = plan.scheduled_at + timedelta(
+                        seconds=segment.start_offset_seconds
+                    )
+                    if (segment.asset_id == asset_id
+                            and abs((segment_at - program_started_at).total_seconds()) < 0.01):
+                        if self._ad_viewing is None or self._ad_viewing.event_id != event.event_id:
+                            self._ad_viewing = _AdViewingProgress(
+                                decision.channel_number, plan.plan_id, index,
+                                asset_id, segment.duration_seconds,
+                                event.event_id, decision.viewer_selection.offset_seconds,
+                            )
+                        else:
+                            self._ad_viewing.last_position = decision.viewer_selection.offset_seconds
+                        break
         if not play and self.paused:
             self.backend.pause()
         return path
@@ -218,6 +288,7 @@ class TelevisionSession:
             self.loaded_program_started_at = None
             raise PlaybackError(error)
 
+        self._sample_ad_viewing()
         decision = self.runtime.status(now=now)
         selected = decision.viewer_selection
 
@@ -232,11 +303,13 @@ class TelevisionSession:
     def suspend_decoder(self) -> None:
         """Release active decoder output without changing television clock state."""
 
+        self._ad_viewing = None
         self.backend.stop()
         self.loaded_asset_id = None
         self.loaded_program_started_at = None
 
     def stop(self) -> None:
+        self._ad_viewing = None
         self.backend.stop()
 
     @staticmethod

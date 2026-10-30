@@ -1164,6 +1164,15 @@ class ChannelRuntime:
         transient: bool = False,
     ) -> "ChannelRuntime":
         programming = channel.definition.programming
+        if (
+            channel.definition.advertising.enabled
+            and channel.definition.advertising.transition_behavior != "cut"
+        ):
+            raise ChannelRuntimeError(
+                "fade/hold ad transitions are not supported by the active "
+                "single-decoder player yet; choose 'cut' to avoid silently "
+                "misrepresenting the broadcast policy"
+            )
         if programming.mode == "sequential":
             ordered_media = channel.media
         elif programming.mode == "shuffle":

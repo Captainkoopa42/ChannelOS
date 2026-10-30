@@ -1111,7 +1111,11 @@ class BroadcasterService:
             validation_store = RuntimeStore(
                 Path(temporary) / "runtime.db"
             )
-            ChannelRuntime.open(resolved, validation_store)
+            validated_runtime = ChannelRuntime.open(resolved, validation_store)
+            # Windows locks open SQLite files. Release the temporary ad-plan
+            # connection before TemporaryDirectory tries to remove runtime.db.
+            if validated_runtime.break_store is not None:
+                validated_runtime.break_store.close()
 
         return resolved
 

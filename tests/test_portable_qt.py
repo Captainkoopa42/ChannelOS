@@ -85,6 +85,8 @@ def test_settings_copy_runs_in_background_and_opens_with_explicit_drive_path(con
     from channelos import portable_qt
     monkeypatch.setattr(portable_qt.QProcess, 'startDetached', lambda exe, args: launched.append((exe, args)) or (True, 123))
     monkeypatch.setattr(portable_qt.QTimer, 'singleShot', lambda *_: None)
+    assert not controller.openPortableSetup(str(target), 'another-setup')['ok']
+    assert launched == []
     assert controller.openPortableSetup(str(target))['ok']
     assert launched[0][1][-2:] == ['--portable-setup', str(target)]
 

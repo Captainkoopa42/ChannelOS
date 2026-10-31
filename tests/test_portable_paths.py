@@ -133,3 +133,16 @@ def test_newer_manifest_is_rejected_before_modifying_anything(tmp_path):
         MediaLibrary(paths.data_directory / 'library.db')
     assert marker.read_bytes() == before
     assert not (paths.data_directory / 'library.db').exists()
+
+
+def test_recent_shortcuts_do_not_accept_a_different_setup_at_the_same_drive_path(tmp_path, monkeypatch):
+    from channelos.portable import recent_setups, remember_setup
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'Host'))
+    paths = make_setup(tmp_path / 'Drive E')
+    remember_setup(paths)
+    assert recent_setups()[0]['available'] is True
+    marker = paths.root / MANIFEST_NAME
+    raw = json.loads(marker.read_text())
+    raw['setup_id'] = str(uuid.uuid4())
+    marker.write_text(json.dumps(raw))
+    assert recent_setups()[0]['available'] is False

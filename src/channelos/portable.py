@@ -177,9 +177,18 @@ def recent_setups() -> list[dict[str, Any]]:
         records = json.loads((host_data_directory() / 'portable-recents.json').read_text(encoding='utf-8'))
         if not isinstance(records, list):
             return []
-        return [{**record, 'available': (Path(record['root']) / MANIFEST_NAME).is_file()}
-                for record in records[:10] if isinstance(record, dict)
-                and isinstance(record.get('root'), str) and isinstance(record.get('setupId'), str)]
+        result = []
+        for record in records[:10]:
+            if not isinstance(record, dict) or not isinstance(record.get('root'), str) or not isinstance(record.get('setupId'), str):
+                continue
+            try:
+                paths = load_setup(record['root'])
+                paths.check_available()
+                available = paths.setup_id == record['setupId']
+            except (OSError, ValueError):
+                available = False
+            result.append({**record, 'available': available})
+        return result
     except (OSError, ValueError):
         return []
 

@@ -184,7 +184,7 @@ Dialog {
                 ChannelButton {
                     text: "Open Copied Setup"
                     visible: portableDialog.copyState.phase === "ready"
-                    onClicked: portableDialog.showResult(channelOS.openPortableSetup(portableDialog.copyState.destination))
+                    onClicked: portableDialog.showResult(channelOS.openPortableSetup(portableDialog.copyState.destination, portableDialog.copyState.setupId))
                 }
             }
             Label { text: "RECENT SETUPS"; color: "#42adff"; font.bold: true }
@@ -201,7 +201,7 @@ Dialog {
                     ChannelButton {
                         text: "Open"
                         enabled: Boolean(modelData.available) && !portableDialog.copyState.active
-                        onClicked: portableDialog.showResult(channelOS.openPortableSetup(modelData.root))
+                        onClicked: portableDialog.showResult(channelOS.openPortableSetup(modelData.root, modelData.setupId))
                     }
                 }
             }

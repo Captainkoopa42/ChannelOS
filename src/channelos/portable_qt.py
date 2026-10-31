@@ -151,7 +151,7 @@ def install_portable_support(module):
             self._portable_thread, self._portable_worker = thread, worker
             self._portable_cancellation = cancellation
             self._set_copy(active=True, phase='copying', percent=0,
-                           message='Copying the setup snapshot…', destination='')
+                           message='Copying the setup snapshot…', destination='', setupId='')
             thread.start()
             return {'ok': True, 'message': 'Portable copy started. You can keep using the current setup.'}
 
@@ -162,7 +162,7 @@ def install_portable_support(module):
         @Slot(object)
         def _portable_completed(self, result):
             self._set_copy(active=False, phase='ready', percent=100,
-                           destination=result['destination'], message=result['message'])
+                           destination=result['destination'], setupId=result['setupId'], message=result['message'])
             try:
                 remember_setup(load_setup(result['destination']))
             except (OSError, ValueError):
@@ -198,13 +198,18 @@ def install_portable_support(module):
             return self.openPortableSetup(path) if path else {'ok': False, 'cancelled': True, 'message': ''}
 
         @Slot(str, result='QVariantMap')
-        def openPortableSetup(self, root):
+        @Slot(str, str, result='QVariantMap')
+        def openPortableSetup(self, root, expected_setup_id=''):
             try:
                 blocker = self._copy_blocker()
                 if blocker:
                     return {'ok': False, 'message': blocker}
+                if expected_setup_id and load_setup(root).setup_id != expected_setup_id:
+                    return {'ok': False, 'message': 'A different setup is now at this location. Reconnect the intended drive, or use Open Existing Setup to choose it.'}
                 summary = inspect_setup(root)
                 paths = load_setup(summary['root'])
+                if expected_setup_id and paths.setup_id != expected_setup_id:
+                    return {'ok': False, 'message': 'A different setup is now at this location. Reconnect the intended drive, or use Open Existing Setup to choose it.'}
                 if self._library.portable and paths.root == self._library.portable.root:
                     return {'ok': True, 'message': 'This setup is already active.'}
                 with SetupLock(paths):

@@ -37,6 +37,9 @@ jobs:
       - name: Build and audit portable package
         run: python tools/windows/package_windows.py
 
+      - name: Verify native Qt and bundled VLC ad playback
+        run: python tools/windows/smoke_ad_playback.py
+
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:

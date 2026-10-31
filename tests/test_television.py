@@ -277,3 +277,113 @@ def test_watch_from_beginning_fractional_boundary_keeps_exact_clock_and_correct_
     assert decision.viewer_selection.offset_seconds == pytest.approx(0.0)
     assert backend.loaded == tmp_path / "7" / "01.mp4"
     assert backend.position == pytest.approx(0.0)
+
+
+def test_ad_playback_interrupts_and_resumes_exact_program_position(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    base = make_resolved(tmp_path, 77, [30.0, 30.0])
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.4",
+            "channel": 77,
+            "name": "Ad TV",
+            "sources": [{"path": str(source.path)} for source in base.definition.sources],
+            "advertising": {
+                "enabled": True,
+                "sources": [{"path": str(tmp_path / "ads")}],
+                "breakpoints_seconds": [10.0],
+                "break_duration_seconds": 5.0,
+            },
+            "programming": {"mode": "sequential"},
+        }
+    )
+    ad_path = tmp_path / "ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:tv-ad", content_sha256="tv-ad", size_bytes=1,
+        duration_seconds=5.0, container_format="mp4",
+    )
+    ad = IndexedMedia(
+        ad_asset,
+        MediaLocation(
+            path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+            source_root=ad_path.parent, online=True,
+        ),
+    )
+    resolved = ResolvedChannel(definition, base.media, (ad,))
+    store = RuntimeStore(tmp_path / "ad-tv-runtime.db")
+    runtime = ChannelRuntime.open(resolved, store, now=epoch)
+    backend = FakeBackend()
+    session = TelevisionSession(TelevisionRuntime((runtime,), store), backend)
+
+    during_ad = session.tune(77, now=epoch + timedelta(seconds=12))
+    assert during_ad.viewer_selection.origin == "advertisement"
+    assert backend.loaded == ad_path
+    assert backend.position == pytest.approx(2.0)
+
+    resumed = session.sync(now=epoch + timedelta(seconds=15))
+    assert resumed.viewer_selection.origin != "advertisement"
+    assert backend.loaded == tmp_path / "77" / "00.mp4"
+    assert backend.position == pytest.approx(10.0)
+
+
+def test_viewer_ad_completion_requires_actual_decoder_progress(tmp_path: Path):
+    from dataclasses import replace
+    from channelos.models import AdvertisingDefinition, SourceDefinition
+
+    epoch = datetime(2026, 10, 30, 12, tzinfo=UTC)
+    base = make_resolved(tmp_path, 7, [30.0])
+    ad_path = tmp_path / "ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:viewer-spot", content_sha256="viewer-spot",
+        size_bytes=1, duration_seconds=5.0, container_format="mp4",
+    )
+    ad_item = IndexedMedia(ad_asset, MediaLocation(
+        path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+        source_root=ad_path.parent, online=True,
+    ))
+    definition = replace(base.definition, advertising=AdvertisingDefinition(
+        enabled=True, sources=(SourceDefinition(ad_path.parent),),
+        breakpoints_seconds=(10.0,), break_duration_seconds=5.0,
+    ))
+    resolved = ResolvedChannel(definition, base.media, (ad_item,))
+    store = RuntimeStore(tmp_path / "ad-view.db")
+    channel = ChannelRuntime.open(resolved, store, now=epoch)
+    backend = FakeBackend()
+    session = TelevisionSession(TelevisionRuntime((channel,), store), backend)
+
+    session.tune(7, now=epoch + timedelta(seconds=10))
+    assert session.runtime.status(now=epoch + timedelta(seconds=10)).viewer_selection.origin == "advertisement"
+    for offset in range(1, 6):
+        backend.position = float(offset)
+        session.sync(now=epoch + timedelta(seconds=10 + offset))
+    assert channel.break_store.viewer_counts(7) == {ad_asset.asset_id: 1}
+    assert channel.break_store.diagnostics(7)["completedViewings"] == 1
+
+
+def test_viewer_does_not_count_seek_over_ad_as_watched(tmp_path: Path):
+    from dataclasses import replace
+    from channelos.models import AdvertisingDefinition, SourceDefinition
+
+    epoch = datetime(2026, 10, 30, 12, tzinfo=UTC)
+    base = make_resolved(tmp_path, 7, [30.0])
+    ad_path = tmp_path / "ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:skip-spot", content_sha256="skip-spot",
+        size_bytes=1, duration_seconds=5.0, container_format="mp4",
+    )
+    ad_item = IndexedMedia(ad_asset, MediaLocation(
+        path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+        source_root=ad_path.parent, online=True,
+    ))
+    definition = replace(base.definition, advertising=AdvertisingDefinition(
+        enabled=True, sources=(SourceDefinition(ad_path.parent),),
+        breakpoints_seconds=(10.0,), break_duration_seconds=5.0,
+    ))
+    store = RuntimeStore(tmp_path / "ad-view.db")
+    channel = ChannelRuntime.open(ResolvedChannel(definition, base.media, (ad_item,)), store, now=epoch)
+    backend = FakeBackend()
+    session = TelevisionSession(TelevisionRuntime((channel,), store), backend)
+    session.tune(7, now=epoch + timedelta(seconds=10))
+    backend.position = 5.0  # seek straight across the full advertisement
+    session.sync(now=epoch + timedelta(seconds=15))
+    assert channel.break_store.viewer_counts(7) == {}

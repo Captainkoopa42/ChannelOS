@@ -101,6 +101,11 @@ def _prepare_windows_vlc_runtime() -> tuple[Any | None, Path | None]:
         plugins = candidate / "plugins"
         if plugins.is_dir():
             os.environ["VLC_PLUGIN_PATH"] = str(plugins)
+        # python-vlc can explicitly CDLL('.\\libvlc.dll'), bypassing the DLL
+        # directory registered below. Give its binding the absolute primary
+        # library as well as the dependency/plugin search paths.
+        os.environ["PYTHON_VLC_LIB_PATH"] = str(candidate / "libvlc.dll")
+        os.environ["PYTHON_VLC_MODULE_PATH"] = str(candidate)
 
         add_dll_directory = getattr(os, "add_dll_directory", None)
         if add_dll_directory is not None:
@@ -181,6 +186,11 @@ class PlaybackBackend(ABC):
                 f"{type(self).__name__} does not support audio-output selection"
             )
 
+    def set_transition_level(self, level: float) -> None:
+        """Apply an independent audio/video fade envelope, preserving user settings."""
+        if level != 1.0:
+            raise PlaybackUnavailableError(f"{type(self).__name__} does not support fades")
+
 
 class LibVLCBackend(PlaybackBackend):
     """Reference playback backend using python-vlc over the native libVLC library."""
@@ -199,6 +209,9 @@ class LibVLCBackend(PlaybackBackend):
 
         self._vlc: Any = vlc
         self._loaded_path: Path | None = None
+        self._user_volume: int | None = None
+        self._user_muted: bool | None = None
+        self._transition_level = 1.0
         try:
             self._instance = vlc.Instance(*instance_options)
             self._player = self._instance.media_player_new()
@@ -301,6 +314,9 @@ class LibVLCBackend(PlaybackBackend):
             return False
 
     def playback_error(self) -> str | None:
+        # Audio outputs are recreated asynchronously as streams change. Keep
+        # user intent through silent clips and machines without an audio device.
+        self._apply_audio_settings()
         try:
             state = self._player.get_state()
         except Exception:
@@ -326,19 +342,46 @@ class LibVLCBackend(PlaybackBackend):
     def set_volume(self, percent: int) -> None:
         if not 0 <= percent <= 100:
             raise ValueError("volume must be from 0 through 100 percent")
-        result = self._player.audio_set_volume(percent)
+        self._user_volume = percent
+        result = self._player.audio_set_volume(round(percent * self._transition_level))
         if isinstance(result, int) and result < 0:
             raise PlaybackError(f"libVLC rejected volume {percent}")
 
     def get_volume(self) -> int:
+        if self._user_volume is not None:
+            return self._user_volume
         value = self._player.audio_get_volume()
         return max(0, int(value))
 
+    def set_transition_level(self, level: float) -> None:
+        import math
+        if not math.isfinite(level) or not 0 <= level <= 1:
+            raise ValueError("transition level must be from zero through one")
+        volume = self.get_volume()
+        self._transition_level = level
+        self.set_volume(volume)
+        # libVLC's adjust filter supports brightness 0 (black) through 2.
+        # A single decoder fades through black; media never overlaps in time.
+        enabled = self._vlc.VideoAdjustOption.Enable
+        brightness = self._vlc.VideoAdjustOption.Brightness
+        self._player.video_set_adjust_int(enabled, int(level < 1.0))
+        self._player.video_set_adjust_float(brightness, float(level))
+
     def set_muted(self, muted: bool) -> None:
-        self._player.audio_set_mute(bool(muted))
+        self._user_muted = bool(muted)
+        self._player.audio_set_mute(self._user_muted)
 
     def get_muted(self) -> bool:
-        return bool(self._player.audio_get_mute())
+        if getattr(self, "_user_muted", None) is not None:
+            return self._user_muted
+        value = self._player.audio_get_mute()
+        return bool(value) if value is not None and value >= 0 else False
+
+    def _apply_audio_settings(self) -> None:
+        if getattr(self, "_user_volume", None) is not None:
+            self._player.audio_set_volume(round(self._user_volume * self._transition_level))
+        if getattr(self, "_user_muted", None) is not None:
+            self._player.audio_set_mute(self._user_muted)
 
     @staticmethod
     def _decode_vlc_text(value: Any) -> str:

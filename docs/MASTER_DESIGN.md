@@ -142,7 +142,7 @@ The user can:
 
 ### 4.6 No mandatory advertising
 
-ChannelOS does not inject advertising into local user-owned media.
+ChannelOS never fetches or forces advertising. Optional, explicitly configured broadcast ad breaks schedule the user’s own indexed commercials, bumpers and station IDs. Channels without advertising configuration keep their existing behavior. The runtime, persistence, Studio and playback contract is documented in [AD_BREAKS_COMPLETE_BUILD.md](AD_BREAKS_COMPLETE_BUILD.md).
 
 Users may intentionally program trailers, bumpers, station IDs, home videos, public-service material, music, or their own commercial-like breaks if they want them. The system should not impose them.
 

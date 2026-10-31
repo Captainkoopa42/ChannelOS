@@ -40,7 +40,7 @@ def _open_runtimes(
             definition = load_channel(path)
         except ChannelValidationError as exc:
             raise CouchUIError(str(exc)) from exc
-        resolved = resolve_channel(definition, library)
+        resolved = resolve_channel(definition, library, allow_offline_ads=True)
         if not resolved.media:
             raise CouchUIError(
                 f"Channel {definition.display_number} — {definition.name} has no indexed online media. "

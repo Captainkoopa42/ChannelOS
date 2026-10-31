@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
@@ -744,12 +745,33 @@ class CouchController(QObject):
             decision.channel_number,
             at=decision.viewer_time_utc,
         ).next
+        event = selected.event
+        parent_title = ""
+        if event.parent_program_asset_id:
+            for program in self._actions.runtime.channels[decision.channel_number].channel.media:
+                if program.asset.asset_id == event.parent_program_asset_id:
+                    parent_title = program.location.path.stem
+                    break
+        break_start = break_end = None
+        runtime = self._actions.runtime.channels[decision.channel_number]
+        if event.break_id and runtime.break_store:
+            plan = runtime.break_store.load_plan(event.break_id)
+            if plan:
+                break_start = plan.scheduled_at
+                break_end = plan.scheduled_at + timedelta(seconds=plan.duration_seconds)
         return {
             "active": True,
+            "breakStartMs": int(break_start.timestamp() * 1000) if break_start else 0,
+            "breakEndMs": int(break_end.timestamp() * 1000) if break_end else 0,
+            "breakRemainingSeconds": max(0.0, (break_end - decision.viewer_time_utc).total_seconds()) if break_end else 0,
             "channelNumber": decision.channel_number,
             "displayNumber": definition.display_number,
             "channelName": decision.channel_name,
             "title": selected.media.location.path.stem,
+            "eventType": event.event_type,
+            "isAdvertisement": event.event_type in {"advertisement", "transition"},
+            "breakId": event.break_id or "",
+            "parentProgramTitle": parent_title,
             "assetId": selected.media.asset.asset_id,
             "offsetSeconds": float(selected.offset_seconds),
             "lagSeconds": float(decision.lag_seconds),

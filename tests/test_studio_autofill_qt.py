@@ -296,3 +296,85 @@ def test_settings_can_open_the_diagnostic_log_folder(
     controller.stop()
     assert app is not None
 
+
+def test_qml_ad_settings_survive_real_autofill_preview_and_apply(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Exercise the actual JavaScript -> QVariantMap -> Python service path."""
+    import json
+
+    import channelos
+    from PySide6.QtCore import QUrl
+    from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlExpression
+
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller, _media_root = _controller(tmp_path)
+    ads = tmp_path / "ads"
+    ads.mkdir()
+    (ads / "short.mp4").write_bytes(b"owned-advertisement")
+    MediaScanner(controller._library, FixedProbe()).scan(ads)
+
+    received = []
+    original_auto_fill = controller._broadcaster.auto_fill_studio
+
+    def capture(editor, *args, **kwargs):
+        received.append(editor)
+        return original_auto_fill(editor, *args, **kwargs)
+
+    monkeypatch.setattr(controller._broadcaster, "auto_fill_studio", capture)
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("channelOS", controller)
+    host_component = QQmlComponent(engine)
+    host_component.setData(
+        b'import QtQuick; QtObject { property string screen: "studio"; '
+        b'property int studioChannelNumber: 7 }', QUrl())
+    host = host_component.create()
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(
+        Path(channelos.__file__).resolve().parent / "qml" / "ChannelStudioScreen.qml")))
+    while component.isLoading():
+        app.processEvents()
+    assert component.isReady(), [error.toString() for error in component.errors()]
+    item = component.create()
+    item.setProperty("hostWindow", host)
+    app.processEvents()
+
+    def evaluate(code):
+        expression = QQmlExpression(engine.contextForObject(item), item, code)
+        result, _ = expression.evaluate()
+        assert not expression.hasError(), expression.error().toString()
+        app.processEvents()
+        return result.toVariant() if hasattr(result, "toVariant") else result
+
+    try:
+        evaluate("adBreaksEnabledCheck.checked = true; adSourcesArea.text = " + json.dumps(str(ads))
+                 + '; adTriggersField.text = "calendar_boundary"; adPriorityField.text = "0"; adDurationField.text = "30"')
+        started = evaluate('channelOS.startStudioAutoFill(editorObject(), '
+                           '"2026-09-07T00:00:00+00:00", "2026-09-07T00:02:00+00:00")')
+        assert started["ok"] is True
+        _process_until(lambda: controller._studio_auto_fill_thread is None)
+        _process_until(lambda: not item.property("autoFillApplying"))
+        assert controller.studioAutoFill["phase"] == "ready", controller.studioAutoFill["message"]
+        assert received[0]["adPriority"] == 0
+        assert type(received[0]["adPriority"]) is float  # Qt's whole-number double
+        assert item.property("calendarBlockCount") == 2
+        preview = evaluate("channelOS.previewChannel(editorObject())")
+        assert preview["ok"] is True, preview
+        assert preview['adPreview']
+        profile = evaluate('channelOS.saveAdBreakProfile({profileId: "p", name: "Profile", '
+                           'defaults: {priority: 2}})')
+        assert profile["ok"] is True, profile
+        evaluate("applyDraft()")
+        assert item.property("feedbackIsError") is False, item.property("feedbackMessage")
+        saved = controller._broadcaster.records[0].definition
+        assert saved.advertising.enabled is True
+        assert saved.advertising.priority == 0
+        assert type(saved.advertising.priority) is int
+    finally:
+        controller.stop()
+        item.setProperty("hostWindow", None)
+        item.deleteLater()
+        host.deleteLater()
+        engine.deleteLater()
+        app.processEvents()
+

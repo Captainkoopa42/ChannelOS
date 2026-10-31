@@ -275,6 +275,35 @@ def test_studio_auto_fill_returns_editable_gapless_blocks(tmp_path: Path) -> Non
         assert left["endUtc"] == right["startUtc"]
 
 
+def test_studio_auto_fill_preserves_existing_blocks_and_fills_only_gaps(
+    tmp_path: Path,
+) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source, name="Studio TV")
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    raw["calendarBlocks"] = [
+        {
+            "assetId": library.list_online_media()[0].asset.asset_id,
+            "startUtc": (start + timedelta(seconds=60)).isoformat(),
+            "endUtc": (start + timedelta(seconds=90)).isoformat(),
+        }
+    ]
+
+    result = service.auto_fill_studio(
+        raw, start.isoformat(), (start + timedelta(seconds=180)).isoformat()
+    )
+
+    assert len(result["blocks"]) == 5
+    occupied_start = start + timedelta(seconds=60)
+    occupied_end = start + timedelta(seconds=90)
+    for block in result["blocks"]:
+        block_start = datetime.fromisoformat(block["startUtc"])
+        block_end = datetime.fromisoformat(block["endUtc"])
+        assert block_end <= occupied_start or block_start >= occupied_end
+    assert "preserving existing fixed programs" in result["message"]
+
+
 def test_studio_auto_fill_reports_progress_and_can_cancel_safely(
     tmp_path: Path,
 ) -> None:
@@ -447,3 +476,115 @@ def test_studio_auto_fill_leaves_short_range_remainder_to_filler(tmp_path: Path)
         start + timedelta(seconds=60)
     ).isoformat()
     assert "filler covers any short remainder" in result["message"]
+
+
+def test_ad_break_policy_round_trips_through_portable_yaml(tmp_path: Path) -> None:
+    from channelos.models import ChannelDefinition
+
+    raw = {
+        "schema_version": "0.4",
+        "channel": 77,
+        "name": "Policy Test",
+        "sources": [{"path": str(tmp_path / "programs")}],
+        "programming": {
+            "mode": "calendar",
+            "calendar": [{
+                "start_utc": "2026-10-01T12:00:00+00:00",
+                "asset_id": "sha256:program",
+            }],
+        },
+        "advertising": {
+            "enabled": True,
+            "sources": [{"path": str(tmp_path / "ads")}],
+            "selection_strategy": "complete_rotation",
+            "breakpoints_seconds": [300, 900],
+            "interval_seconds": 600,
+            "break_duration_seconds": 45,
+            "priority": 8,
+        },
+    }
+    definition = ChannelDefinition.from_mapping(raw)
+    encoded = serialize_channel(definition)
+    restored = ChannelDefinition.from_mapping(
+        __import__("yaml").safe_load(encoded)
+    )
+    assert restored.advertising.breakpoints_seconds == (300.0, 900.0)
+    assert restored.advertising.interval_seconds == 600.0
+    assert restored.advertising.break_duration_seconds == 45.0
+    assert restored.advertising.priority == 8
+    assert restored.advertising.selection_strategy == "complete_rotation"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("interval_seconds", 0),
+    ("break_duration_seconds", float("inf")),
+    ("breakpoints_seconds", [30, 30]),
+    ("breakpoints_seconds", [-1]),
+    ("priority", 1.5),
+])
+def test_invalid_ad_break_policy_is_rejected(tmp_path: Path, field, value) -> None:
+    from channelos.models import ChannelDefinition, ChannelValidationError
+
+    advertising = {
+        "enabled": True,
+        "sources": [{"path": str(tmp_path / "ads")}],
+        "breakpoints_seconds": [],
+    }
+    advertising[field] = value
+    raw = {
+        "schema_version": "0.4",
+        "channel": 78,
+        "name": "Invalid Policy",
+        "sources": [{"path": str(tmp_path / "programs")}],
+        "programming": {
+            "mode": "calendar",
+            "calendar": [{
+                "start_utc": "2026-10-01T12:00:00+00:00",
+                "asset_id": "sha256:program",
+            }],
+        },
+        "advertising": advertising,
+    }
+    with pytest.raises(ChannelValidationError):
+        ChannelDefinition.from_mapping(raw)
+
+
+@pytest.mark.parametrize("priority", [0.0, 3.0, -2.0, "4"])
+def test_editor_normalizes_integral_qt_ad_priorities(tmp_path: Path, priority) -> None:
+    raw = editor(7, tmp_path / "programs")
+    raw.update(adBreaksEnabled=True, adSources=[str(tmp_path / "ads")],
+               adConfigVersion="0.5", adPriority=priority,
+               adPlacements=[{"id": "gap", "trigger": "calendar_boundary",
+                              "policy": {"priority": priority}}])
+
+    definition = definition_from_editor(raw)
+
+    assert definition.advertising.priority == int(float(priority))
+    assert type(definition.advertising.priority) is int
+    assert type(definition.advertising.placements[0].policy.priority) is int
+
+
+@pytest.mark.parametrize("priority", [True, 0.5, float("nan"), float("inf"), "bad"])
+def test_editor_rejects_invalid_ad_priority_without_truncation(tmp_path: Path, priority) -> None:
+    from channelos.models import ChannelValidationError
+
+    raw = editor(7, tmp_path / "programs")
+    raw.update(adSources=[str(tmp_path / "ads")], adConfigVersion="0.5", adPriority=priority)
+    with pytest.raises(ChannelValidationError, match="advertising.priority must be an integer"):
+        definition_from_editor(raw)
+
+
+def test_studio_media_retains_every_source_for_a_duplicate_asset(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "copied.mp4").write_bytes((source / "01-alpha.mp4").read_bytes())
+    MediaScanner(library, FixedProbe()).scan(other)
+    service = BroadcasterService((), tmp_path / "channels", library)
+
+    media = service.studio_media()
+    duplicated = next(item for item in media if len(item["locations"]) == 2)
+
+    assert len(media) == 3
+    assert {location["sourceRoot"] for location in duplicated["locations"]} == {str(source), str(other)}
+    assert set(service.studio_draft()["sourceOptions"]) == {str(source), str(other)}

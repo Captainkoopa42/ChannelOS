@@ -22,6 +22,8 @@ class PlannedAd:
     media: IndexedMedia
     start_offset_seconds: float
     duration_seconds: float
+    event_type: str = "advertisement"
+    source_offset_seconds: float = 0.0
 
     @property
     def end_offset_seconds(self) -> float:

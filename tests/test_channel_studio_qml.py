@@ -34,16 +34,16 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
     assert "minuteForTrackPosition" in qml
     assert "studioRoot.openDay(monthDay.cellDate)" in qml
     assert "studioRoot.openDay(weekDay.columnDate)" in qml
-    assert 'text: "Auto Fill Range"' in qml
+    assert '"Auto Fill + Ads" : "Auto Fill Range"' in qml
     assert 'text: "Apply to Channel"' in qml
     assert "DropArea" in qml
     assert 'Drag.keys: ["channelos-media"]' in qml
     assert 'Drag.keys: ["channelos-block"]' in qml
-    assert 'text: "15-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"' in qml
+    assert 'text: studioRoot.snapMinutes + "-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"' in qml
     assert 'text: "−15 min"' in qml
     assert 'text: "+15 min"' in qml
     assert 'placeholderText: "HH:MM"' in qml
-    assert 'text: "FILLER SOURCES  •  "' in qml
+    assert 'placeholderText: "Search selected sources…"' in qml
     assert "channelOS.startStudioAutoFill" in qml
     assert "channelOS.cancelStudioAutoFill" in qml
     assert "onStudioAutoFillCompleted" in qml

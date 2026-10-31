@@ -112,12 +112,17 @@ Item {
     }
 
     property var hostWindow: null
+    property var adPlacementSnapshots: []
     property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
     property var mediaLibrary: draftData.media || []
     property var mediaByAssetId: ({})
+    property var expandedMediaSources: ({})
+    readonly property var mediaBinGroups: selectedSourceMedia()
+    readonly property int mediaBinAssetCount: selectedMediaCount()
     property var groupsLibrary: draftData.groups || []
     property var blocksByDay: ({})
     property string viewMode: "week"
+    property int snapMinutes: 15
     property bool dayMediaBinVisible: false
     property date anchorDate: new Date()
     property string selectedDayKey: dayKey(new Date())
@@ -275,7 +280,37 @@ Item {
             adSources: adSourcesArea.text.split(";").map(function(value) {
                 return value.trim()
             }).filter(function(value) { return value.length > 0 }),
-            adSelectionStrategy: ["best_fit", "largest", "smallest", "sequential"][adStrategyBox.currentIndex]
+            adSelectionStrategy: [
+                "best_fit", "largest", "smallest", "sequential",
+                "least_played", "complete_rotation"
+            ][adStrategyBox.currentIndex],
+            adConfigVersion: "0.5",
+            adAssetIds: adAssetIdsField.text.split(";").map(function(value) {
+                return value.trim()
+            }).filter(function(value) { return value.length > 0 }),
+            adCollectionId: adCollectionField.text.trim(),
+            adProfileId: adProfileField.text.trim(),
+            adBreakpointsSeconds: adBreakpointsField.text.split(";").map(function(value) {
+                return value.trim()
+            }).filter(function(value) { return value.length > 0 }),
+            adIntervalSeconds: adIntervalField.text.trim(),
+            adBreakDurationSeconds: Number(adDurationField.text),
+            adPriority: Number(adPriorityField.text),
+            adTimingPolicy: ["strict_fit", "smoosh", "expand"][adTimingBox.currentIndex],
+            adSmooshMinimumSeconds: 5,
+            adSmooshMaxTrimSeconds: Number(adSmooshTrimField.text),
+            adExpandMaxSeconds: Number(adExpandField.text),
+            adTriggers: adTriggersField.text.split(";").map(function(value) {
+                return value.trim()
+            }).filter(function(value) { return value.length > 0 }),
+            adTransitionBehavior: ["cut", "fade", "hold"][adTransitionBox.currentIndex],
+            adTransitionSeconds: Number(adTransitionSecondsField.text),
+            adSlotSeconds: adSlotSecondsField.text.trim() ? Number(adSlotSecondsField.text) : null,
+            adSchedulePriority: ["program", "fixed", "advertising"][adSchedulePriorityBox.currentIndex],
+            adExpandSource: ["schedule_shift", "available_slot_time", "current_program", "next_event"][adExpandSourceBox.currentIndex],
+            adPlacements: adPlacementSnapshots,
+            adCollectionMembership: draftData.adCollectionMembership || "fixed",
+            adExcludedAssetIds: draftData.adExcludedAssetIds || []
         }
     }
 
@@ -302,15 +337,55 @@ Item {
         mediaByAssetId = byAssetId
     }
 
-    function appendSource(sourceRoot) {
-        var value = String(sourceRoot || "")
+    function appendSource(sourceRoot, expand) {
+        var value = String(sourceRoot || "").trim()
         if (!value.length)
-            return
+            return false
         for (var index = 0; index < draftSources.count; ++index) {
-            if (String(draftSources.get(index).path) === value)
-                return
+            if (sourcePathKey(draftSources.get(index).path) === sourcePathKey(value))
+                return false
         }
         draftSources.append({ path: value })
+        if (expand) {
+            var next = Object.assign({}, expandedMediaSources)
+            next[value] = true
+            expandedMediaSources = next
+        }
+        return true
+    }
+
+    function removeMediaSource(path) {
+        for (var index = 0; index < draftSources.count; ++index) {
+            if (sourcePathKey(draftSources.get(index).path) === sourcePathKey(path)) {
+                draftSources.remove(index)
+                var next = Object.assign({}, expandedMediaSources)
+                delete next[path]
+                expandedMediaSources = next
+                dirty = true
+                return
+            }
+        }
+    }
+
+    function clearMediaSources() {
+        draftSources.clear()
+        expandedMediaSources = ({})
+        dirty = true
+    }
+
+    function toggleMediaSource(path) {
+        var next = Object.assign({}, expandedMediaSources)
+        next[path] = !next[path]
+        expandedMediaSources = next
+    }
+
+    function expandMediaSearchResults() {
+        if (!String(mediaSearch.text || "").trim().length)
+            return
+        var next = Object.assign({}, expandedMediaSources)
+        for (var index = 0; index < mediaBinGroups.length; ++index)
+            next[mediaBinGroups[index].path] = true
+        expandedMediaSources = next
     }
 
     function appendBlock(block) {
@@ -443,9 +518,36 @@ Item {
         adBreaksEnabledCheck.checked = Boolean(draftData.adBreaksEnabled || false)
         adSourcesArea.text = (draftData.adSources || []).join("; ")
         var adStrategy = String(draftData.adSelectionStrategy || "best_fit")
-        adStrategyBox.currentIndex = Math.max(0, ["best_fit", "largest", "smallest", "sequential"].indexOf(adStrategy))
+        adStrategyBox.currentIndex = Math.max(0, [
+            "best_fit", "largest", "smallest", "sequential",
+            "least_played", "complete_rotation"
+        ].indexOf(adStrategy))
+        adAssetIdsField.text = (draftData.adAssetIds || []).join("; ")
+        adCollectionField.text = String(draftData.adCollectionId || "")
+        adProfileField.text = String(draftData.adProfileId || "")
+        adBreakpointsField.text = (draftData.adBreakpointsSeconds || []).join("; ")
+        adIntervalField.text = String(draftData.adIntervalSeconds || "")
+        adDurationField.text = String(draftData.adBreakDurationSeconds || 120)
+        adPriorityField.text = String(draftData.adPriority || 0)
+        adTimingBox.currentIndex = Math.max(0, ["strict_fit", "smoosh", "expand"].indexOf(
+            String(draftData.adTimingPolicy || "strict_fit")))
+        adSmooshTrimField.text = String(draftData.adSmooshMaxTrimSeconds === undefined ? 15 : draftData.adSmooshMaxTrimSeconds)
+        adExpandField.text = String(draftData.adExpandMaxSeconds || 0)
+        adTriggersField.text = (draftData.adTriggers || [
+            "breakpoint", "interval", "between_programs", "calendar_boundary"
+        ]).join("; ")
+        adTransitionBox.currentIndex = Math.max(0, ["cut", "fade", "hold"].indexOf(
+            String(draftData.adTransitionBehavior || "cut")))
+
+        adTransitionSecondsField.text = String(draftData.adTransitionSeconds === undefined ? 0.5 : draftData.adTransitionSeconds)
+        adSlotSecondsField.text = String(draftData.adSlotSeconds || "")
+        adSchedulePriorityBox.currentIndex = Math.max(0, ["program", "fixed", "advertising"].indexOf(String(draftData.adSchedulePriority || "program")))
+        adExpandSourceBox.currentIndex = Math.max(0, ["schedule_shift", "available_slot_time", "current_program", "next_event"].indexOf(String(draftData.adExpandSource || "schedule_shift")))
+        adPlacementSnapshots = draftData.adPlacements || []
 
         draftSources.clear()
+        expandedMediaSources = ({})
+        mediaSearch.text = ""
         var sources = draftData.sources || []
         for (var sourceIndex = 0; sourceIndex < sources.length; ++sourceIndex)
             appendSource(sources[sourceIndex])
@@ -477,16 +579,104 @@ Item {
         feedbackIsError = false
     }
 
-    function filteredMedia() {
-        var result = []
+    function sourcePathKey(value) {
+        var path = String(value || "").replace(/\\/g, "/")
+        if (path !== "/")
+            path = path.replace(/\/+$/, "")
+        // Windows paths are case-insensitive; Linux source names are not.
+        return /^[a-z]:/i.test(path) || path.indexOf("//") === 0
+                ? path.toLowerCase() : path
+    }
+
+    function sourceContainsMedia(path, source) {
+        var candidate = sourcePathKey(path)
+        var root = sourcePathKey(source)
+        return root.length > 0 && (candidate === root
+                || candidate.indexOf(root === "/" ? "/" : root + "/") === 0)
+    }
+
+    function mediaLocations(item) {
+        return item.locations && item.locations.length
+                ? item.locations : [{path: item.path, sourceRoot: item.sourceRoot}]
+    }
+
+    function selectedSourceMedia() {
+        var groups = []
+        for (var sourceIndex = 0; sourceIndex < draftSources.count; ++sourceIndex) {
+            var path = String(draftSources.get(sourceIndex).path)
+            var parts = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/")
+            groups.push({path: path, name: parts[parts.length - 1] || path, media: []})
+        }
+        // Match the runtime's separate advertising scope, including disabled
+        // policies and alternate copies of a canonical asset.
+        var adRoots = String(adSourcesArea.text || "").split(";").map(function(value) {
+            return value.trim()
+        }).filter(function(value) { return value.length > 0 })
+        var adIds = ({})
+        String(adAssetIdsField.text || "").split(";").forEach(function(value) {
+            if (value.trim().length) adIds[value.trim()] = true
+        })
+        for (var placementIndex = 0; placementIndex < adPlacementSnapshots.length; ++placementIndex) {
+            var policy = adPlacementSnapshots[placementIndex].policy || ({})
+            var policyAssets = policy.asset_ids || []
+            var policySources = policy.sources || []
+            policyAssets.forEach(function(assetId) { adIds[assetId] = true })
+            policySources.forEach(function(source) { adRoots.push(String(source.path || "")) })
+        }
+        for (var mediaIndex = 0; mediaIndex < mediaLibrary.length; ++mediaIndex) {
+            var item = mediaLibrary[mediaIndex]
+            var locations = mediaLocations(item)
+            var advertising = Boolean(adIds[String(item.assetId || "")])
+            for (var locationIndex = 0; !advertising && locationIndex < locations.length; ++locationIndex) {
+                for (var adIndex = 0; adIndex < adRoots.length; ++adIndex) {
+                    if (sourceContainsMedia(locations[locationIndex].path, adRoots[adIndex])) {
+                        advertising = true
+                        break
+                    }
+                }
+            }
+            if (advertising)
+                continue
+            for (var groupIndex = 0; groupIndex < groups.length; ++groupIndex) {
+                for (var copyIndex = 0; copyIndex < locations.length; ++copyIndex) {
+                    if (sourceContainsMedia(locations[copyIndex].path, groups[groupIndex].path)) {
+                        groups[groupIndex].media.push(Object.assign({}, item, locations[copyIndex]))
+                        break
+                    }
+                }
+            }
+        }
+        return groups
+    }
+
+    function selectedMediaCount() {
+        var seen = ({})
+        for (var index = 0; index < mediaBinGroups.length; ++index) {
+            mediaBinGroups[index].media.forEach(function(item) { seen[item.assetId] = true })
+        }
+        return Object.keys(seen).length
+    }
+
+    function mediaMatchesSearch(item) {
         var needle = String(mediaSearch.text || "").toLowerCase().trim()
-        for (var index = 0; index < mediaLibrary.length; ++index) {
-            var item = mediaLibrary[index]
-            var haystack = (String(item.title || "") + " "
-                            + String(item.path || "") + " "
-                            + String(item.containerFormat || "")).toLowerCase()
-            if (!needle.length || haystack.indexOf(needle) >= 0)
-                result.push(item)
+        var haystack = (String(item.title || "") + " "
+                        + String(item.path || "") + " "
+                        + String(item.containerFormat || "")).toLowerCase()
+        return !needle.length || haystack.indexOf(needle) >= 0
+    }
+
+    function mediaBinRows() {
+        var result = []
+        for (var index = 0; index < mediaBinGroups.length; ++index) {
+            var group = mediaBinGroups[index]
+            var matching = group.media.filter(mediaMatchesSearch)
+            var expanded = Boolean(expandedMediaSources[group.path])
+            result.push({kind: "source", path: group.path, name: group.name,
+                         count: group.media.length, matchCount: matching.length, expanded: expanded})
+            if (expanded) {
+                for (var mediaIndex = 0; mediaIndex < matching.length; ++mediaIndex)
+                    result.push({kind: "media", media: matching[mediaIndex]})
+            }
         }
         return result
     }
@@ -494,12 +684,20 @@ Item {
     function sourceChoices() {
         var result = []
         var seen = ({})
-        for (var index = 0; index < mediaLibrary.length; ++index) {
-            var source = String(mediaLibrary[index].sourceRoot || "")
-            if (source.length && !seen[source]) {
-                seen[source] = true
+        var roots = draftData.sourceOptions || []
+        function addRoot(source) {
+            var key = sourcePathKey(source)
+            if (key.length && !seen[key]) {
+                seen[key] = true
                 result.push(source)
             }
+        }
+        for (var rootIndex = 0; rootIndex < roots.length; ++rootIndex)
+            addRoot(String(roots[rootIndex]))
+        for (var index = 0; index < mediaLibrary.length; ++index) {
+            mediaLocations(mediaLibrary[index]).forEach(function(location) {
+                addRoot(String(location.sourceRoot || ""))
+            })
         }
         result.sort()
         return result
@@ -644,7 +842,9 @@ Item {
 
     function minuteForTrackPosition(position, trackWidth) {
         var raw = Number(position) / Math.max(1, Number(trackWidth)) * 1440
-        return Math.max(0, Math.min(1425, Math.round(raw / 15) * 15))
+        var step = Math.max(1, Number(snapMinutes))
+        return Math.max(0, Math.min(1440 - step,
+                                    Math.round(raw / step) * step))
     }
 
     function scrollDayToHour(hour) {
@@ -1114,14 +1314,11 @@ Item {
             pendingScheduleOperation = ""
             return
         }
+        // Auto Fill now returns only empty-gap blocks. Keep every existing
+        // fixed program, including those inside the selected range.
         var replacement = []
-        for (var index = 0; index < calendarBlocks.count; ++index) {
-            var existing = calendarBlocks.get(index)
-            var blockMs = new Date(existing.startUtc).getTime()
-            var blockEndMs = new Date(existing.endUtc).getTime()
-            if (!(blockMs < endMs && blockEndMs > startMs))
-                replacement.push(blockObject(existing))
-        }
+        for (var index = 0; index < calendarBlocks.count; ++index)
+            replacement.push(blockObject(calendarBlocks.get(index)))
         var blocks = result.blocks || []
         if (typeof blocks.length !== "number"
                 || replacement.length + blocks.length > maximumCalendarBlocks) {
@@ -1136,6 +1333,19 @@ Item {
             return new Date(left.startUtc).getTime()
                     - new Date(right.startUtc).getTime()
         })
+        // Reject a malformed result rather than ever publishing overlapping
+        // fixed blocks to the detached Studio draft.
+        for (var checkIndex = 1; checkIndex < replacement.length; ++checkIndex) {
+            var previousEnd = new Date(replacement[checkIndex - 1].endUtc).getTime()
+            var currentStart = new Date(replacement[checkIndex].startUtc).getTime()
+            if (!isFinite(previousEnd) || !isFinite(currentStart)
+                    || currentStart < previousEnd) {
+                feedbackMessage = "Auto Fill detected an existing schedule overlap. No draft changes were made."
+                feedbackIsError = true
+                pendingScheduleOperation = ""
+                return
+            }
+        }
 
         // ListModel insertion is intentionally chunked. A two-month range can
         // contain thousands of short clips, and appending them in one JavaScript
@@ -1508,18 +1718,22 @@ Item {
                     font.weight: Font.DemiBold
                 }
                 Text {
-                    text: mediaLibrary.length + " indexed assets • drag or click +"
+                    Layout.fillWidth: true
+                    text: studioRoot.mediaBinAssetCount + " program videos in "
+                          + draftSources.count + " selected sources"
                     color: studioRoot.textSecondary
                     font.pixelSize: 11
+                    wrapMode: Text.Wrap
                 }
                 ChannelTextField {
                     id: mediaSearch
                     Layout.fillWidth: true
-                    placeholderText: "Search indexed media…"
+                    placeholderText: "Search selected sources…"
+                    onTextChanged: studioRoot.expandMediaSearchResults()
                 }
 
                 Text {
-                    text: "FILLER SOURCES  •  " + draftSources.count + " selected"
+                    text: "ADD INDEXED SOURCE"
                     color: studioRoot.textSecondary
                     font.pixelSize: 10
                 }
@@ -1531,23 +1745,30 @@ Item {
                         id: fillerSourceBox
                         Layout.fillWidth: true
                         model: studioRoot.sourceChoices()
+                        ToolTip.visible: hovered
+                        ToolTip.text: currentText
                     }
                     StudioButton {
                         text: "Add"
                         enabled: fillerSourceBox.count > 0
                         onClicked: {
-                            studioRoot.appendSource(fillerSourceBox.currentText)
-                            studioRoot.dirty = true
+                            if (studioRoot.appendSource(fillerSourceBox.currentText, true))
+                                studioRoot.dirty = true
                         }
                     }
                     StudioButton {
                         text: "Clear"
                         enabled: draftSources.count > 0
-                        onClicked: {
-                            draftSources.clear()
-                            studioRoot.dirty = true
-                        }
+                        onClicked: studioRoot.clearMediaSources()
                     }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Expand a source to browse. Selected sources feed Auto Fill and gap filler. Ad clips use Advertisement Breaks."
+                    color: studioRoot.textSecondary
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
                 }
 
                 ListView {
@@ -1556,26 +1777,106 @@ Item {
                     Layout.fillHeight: true
                     clip: true
                     spacing: 7
-                    model: studioRoot.filteredMedia()
+                    model: studioRoot.mediaBinRows()
+
+                    Text {
+                        anchors.centerIn: parent
+                        width: parent.width - 20
+                        visible: draftSources.count === 0
+                        text: "No sources selected.\nAdd an indexed source above."
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 12
+                    }
 
                     delegate: Rectangle {
                         id: mediaCard
                         required property var modelData
                         width: mediaList.width
-                        height: 76
+                        height: isSource ? 70 : 76
                         radius: 7
                         color: mediaMouse.containsMouse
                                ? "#14304a" : studioRoot.panelRaised
                         border.color: mediaMouse.containsMouse
                                       ? studioRoot.accentBright : studioRoot.line
 
-                        property var assetData: modelData
+                        property bool isSource: modelData.kind === "source"
+                        property var assetData: modelData.media || ({})
+
+                        Item {
+                            anchors.fill: parent
+                            visible: mediaCard.isSource
+
+                            StudioButton {
+                                id: sourceToggle
+                                anchors.left: parent.left
+                                anchors.right: removeBinSource.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                anchors.rightMargin: 4
+                                checked: Boolean(mediaCard.modelData.expanded)
+                                onClicked: studioRoot.toggleMediaSource(mediaCard.modelData.path)
+                                ToolTip.visible: hovered
+                                ToolTip.text: String(mediaCard.modelData.path || "")
+                                Accessible.name: String(mediaCard.modelData.name || "")
+                                                 + ", " + mediaCard.modelData.count + " videos"
+                                Accessible.description: checked ? "Collapse source" : "Expand source"
+
+                                contentItem: Column {
+                                    spacing: 5
+                                    Row {
+                                        width: parent.width
+                                        spacing: 6
+                                        Text {
+                                            width: parent.width - sourceCount.implicitWidth - parent.spacing
+                                            text: (mediaCard.modelData.expanded ? "▾  " : "▸  ")
+                                                  + String(mediaCard.modelData.name || "")
+                                            color: studioRoot.textPrimary
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            id: sourceCount
+                                            text: String(mediaSearch.text || "").trim().length
+                                                  ? mediaCard.modelData.matchCount + "/" + mediaCard.modelData.count
+                                                  : String(mediaCard.modelData.count || 0)
+                                            color: studioRoot.accentBright
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                        }
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        text: String(mediaCard.modelData.path || "")
+                                        color: studioRoot.textSecondary
+                                        font.pixelSize: 10
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                            }
+                            StudioButton {
+                                id: removeBinSource
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.rightMargin: 5
+                                width: 30
+                                height: 32
+                                text: "×"
+                                destructive: true
+                                onClicked: studioRoot.removeMediaSource(mediaCard.modelData.path)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Remove source from this draft"
+                                Accessible.name: "Remove " + String(mediaCard.modelData.name || "source")
+                            }
+                        }
 
                         Item {
                             id: mediaDragProxy
                             width: 1
                             height: 1
-                            Drag.active: mediaMouse.drag.active
+                            Drag.active: !mediaCard.isSource && mediaMouse.drag.active
                             Drag.keys: ["channelos-media"]
                             Drag.hotSpot.x: 0
                             Drag.hotSpot.y: 0
@@ -1583,6 +1884,7 @@ Item {
                         }
 
                         Column {
+                            visible: !mediaCard.isSource
                             anchors.left: parent.left
                             anchors.right: addMediaButton.left
                             anchors.verticalCenter: parent.verticalCenter
@@ -1610,6 +1912,7 @@ Item {
 
                         StudioButton {
                             id: addMediaButton
+                            visible: !mediaCard.isSource
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.rightMargin: 8
@@ -1623,6 +1926,7 @@ Item {
 
                         MouseArea {
                             id: mediaMouse
+                            visible: !mediaCard.isSource
                             anchors.left: parent.left
                             anchors.right: addMediaButton.left
                             anchors.top: parent.top
@@ -1669,6 +1973,14 @@ Item {
 
                     StudioButton { text: "‹"; onClicked: studioRoot.navigateRange(-1) }
                     StudioButton { text: "Today"; onClicked: studioRoot.goToday() }
+                    Label { text: "SNAP"; color: studioRoot.textSecondary; font.pixelSize: 10 }
+                    ChannelComboBox {
+                        id: snapIntervalBox
+                        Layout.preferredWidth: 92
+                        model: ["5 min", "10 min", "15 min", "30 min"]
+                        currentIndex: 2
+                        onActivated: studioRoot.snapMinutes = [5, 10, 15, 30][currentIndex]
+                    }
                     StudioButton { text: "›"; onClicked: studioRoot.navigateRange(1) }
 
                     Text {
@@ -1713,7 +2025,7 @@ Item {
                         onClicked: studioRoot.clearVisibleRange()
                     }
                     StudioButton {
-                        text: "Auto Fill Range"
+                        text: adBreaksEnabledCheck.checked ? "Auto Fill + Ads" : "Auto Fill Range"
                         highlighted: true
                         enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.autoFillVisibleRange()
@@ -1722,6 +2034,11 @@ Item {
                         text: "Ad Breaks"
                         enabled: !studioRoot.autoFillBusy
                         onClicked: adBreakSettingsDialog.open()
+                    }
+                    StudioButton {
+                        text: "Ad Catalog"
+                        enabled: !studioRoot.autoFillBusy
+                        onClicked: adCatalogDialog.open()
                     }
                 }
 
@@ -2228,7 +2545,7 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "15-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"
+                                text: studioRoot.snapMinutes + "-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"
                                 color: studioRoot.textSecondary
                                 font.pixelSize: 10
                                 horizontalAlignment: Text.AlignHCenter
@@ -2278,14 +2595,14 @@ Item {
                         onClicked: programGroupDialog.open()
                     }
                     StudioButton {
-                        text: "−15 min"
+                        text: "−" + studioRoot.snapMinutes + " min"
                         enabled: studioRoot.selectedBlockIndex >= 0
-                        onClicked: studioRoot.nudgeSelected(-900)
+                        onClicked: studioRoot.nudgeSelected(-studioRoot.snapMinutes * 60)
                     }
                     StudioButton {
-                        text: "+15 min"
+                        text: "+" + studioRoot.snapMinutes + " min"
                         enabled: studioRoot.selectedBlockIndex >= 0
-                        onClicked: studioRoot.nudgeSelected(900)
+                        onClicked: studioRoot.nudgeSelected(studioRoot.snapMinutes * 60)
                     }
                     ChannelTextField {
                         id: exactTimeField
@@ -2462,6 +2779,8 @@ Item {
                 color: studioRoot.feedbackIsError
                        ? studioRoot.danger : studioRoot.textSecondary
                 font.pixelSize: 12
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
                 elide: Text.ElideRight
             }
             Text {
@@ -2879,42 +3198,99 @@ Item {
         id: adBreakSettingsDialog
         title: "Advertisement Breaks"
         width: Math.min(studioRoot.width - 40, 660)
-        height: Math.min(studioRoot.height - 40, 520)
+        height: Math.min(studioRoot.height - 40, 770)
         x: Math.max(20, (studioRoot.width - width) / 2)
         y: Math.max(20, (studioRoot.height - height) / 2)
         property bool savedAdEnabled: false
         property string savedAdSources: ""
         property int savedAdStrategy: 0
+        property var savedAdvanced: ({})
+
+        function snapshotAdvanced() {
+            return {
+                assets: adAssetIdsField.text,
+                collection: adCollectionField.text,
+                profile: adProfileField.text,
+                breakpoints: adBreakpointsField.text,
+                interval: adIntervalField.text,
+                duration: adDurationField.text,
+                priority: adPriorityField.text,
+                timing: adTimingBox.currentIndex,
+                smoosh: adSmooshTrimField.text,
+                expand: adExpandField.text,
+                triggers: adTriggersField.text,
+                transition: adTransitionBox.currentIndex,
+                transitionSeconds: adTransitionSecondsField.text,
+                slot: adSlotSecondsField.text,
+                schedulePriority: adSchedulePriorityBox.currentIndex,
+                expandSource: adExpandSourceBox.currentIndex
+            }
+        }
+
+        function restoreAdvanced(values) {
+            adAssetIdsField.text = String(values.assets || "")
+            adCollectionField.text = String(values.collection || "")
+            adProfileField.text = String(values.profile || "")
+            adBreakpointsField.text = String(values.breakpoints || "")
+            adIntervalField.text = String(values.interval || "")
+            adDurationField.text = String(values.duration || "120")
+            adPriorityField.text = String(values.priority || "0")
+            adTimingBox.currentIndex = Number(values.timing || 0)
+            adSmooshTrimField.text = String(values.smoosh || "15")
+            adExpandField.text = String(values.expand || "0")
+            adTriggersField.text = String(values.triggers || "")
+            adTransitionBox.currentIndex = Number(values.transition || 0)
+            adTransitionSecondsField.text = String(values.transitionSeconds === undefined ? 0.5 : values.transitionSeconds)
+            adSlotSecondsField.text = String(values.slot || "")
+            adSchedulePriorityBox.currentIndex = Number(values.schedulePriority || 0)
+            adExpandSourceBox.currentIndex = Number(values.expandSource || 0)
+        }
 
         onOpened: {
             savedAdEnabled = adBreaksEnabledCheck.checked
             savedAdSources = adSourcesArea.text
             savedAdStrategy = adStrategyBox.currentIndex
+            savedAdvanced = snapshotAdvanced()
         }
         onAccepted: {
             studioRoot.dirty = true
             savedAdEnabled = adBreaksEnabledCheck.checked
             savedAdSources = adSourcesArea.text
             savedAdStrategy = adStrategyBox.currentIndex
+            savedAdvanced = snapshotAdvanced()
         }
         onRejected: {
             adBreaksEnabledCheck.checked = savedAdEnabled
             adSourcesArea.text = savedAdSources
             adStrategyBox.currentIndex = savedAdStrategy
+            restoreAdvanced(savedAdvanced)
         }
 
-        contentItem: ColumnLayout {
-            spacing: 12
+        contentItem: Flickable {
+            id: adSettingsScroll
+            clip: true
+            contentWidth: width
+            contentHeight: adSettingsColumn.implicitHeight + 12
+            boundsBehavior: Flickable.StopAtBounds
+
+            ColumnLayout {
+                id: adSettingsColumn
+                width: adSettingsScroll.width - 16
+                spacing: 12
 
             ChannelCheckBox {
                 id: adBreaksEnabledCheck
-                text: "Enable ads in calendar gaps"
+                text: "Enable broadcast advertising"
                 checked: false
             }
 
             Text {
                 Layout.fillWidth: true
-                text: "This first test build places ads in the gaps between fixed calendar programs. It does not yet interrupt a program mid-episode. Ad folders must already be added and scanned in Library; they remain separate from normal program sources."
+                text: "Configure indexed advertisements separately from programs. "
+                      + "Calendar channels use fixed gaps; sequential channels can "
+                      + "interrupt episodes at explicit breakpoints or content-time intervals. "
+                      + "Auto Fill reserves ad time in new programming. For an already filled range, "
+                      + "use Clear Range, then Auto Fill + Ads before applying."
                 color: studioRoot.textSecondary
                 wrapMode: Text.Wrap
                 font.pixelSize: 12
@@ -2942,7 +3318,8 @@ Item {
                 ChannelComboBox {
                     id: adStrategyBox
                     Layout.preferredWidth: 190
-                    model: ["Best Fit", "Largest", "Smallest", "Sequential"]
+                    model: ["Best Fit", "Largest", "Smallest", "Sequential",
+                            "Least Played", "Complete Rotation"]
                 }
                 Item { Layout.fillWidth: true }
             }
@@ -2955,6 +3332,177 @@ Item {
                 font.pixelSize: 11
             }
 
+            Text {
+                Layout.fillWidth: true
+                text: "Canonical ad asset IDs (semicolon separated; optional when source folders are set)"
+                color: studioRoot.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+            ChannelTextField {
+                id: adAssetIdsField
+                Layout.fillWidth: true
+                placeholderText: "sha256:…; sha256:…"
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: adCollectionField
+                    Layout.fillWidth: true
+                    placeholderText: "Collection ID"
+                }
+                ChannelTextField {
+                    id: adProfileField
+                    Layout.fillWidth: true
+                    placeholderText: "Profile ID"
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: adBreakpointsField
+                    Layout.fillWidth: true
+                    placeholderText: "Breakpoints in seconds: 900; 1800"
+                }
+                ChannelTextField {
+                    id: adIntervalField
+                    Layout.fillWidth: true
+                    placeholderText: "Interval seconds (optional)"
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Label {
+                        text: "Break length (seconds)"
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 10
+                    }
+                    ChannelTextField {
+                        id: adDurationField
+                        Layout.fillWidth: true
+                        placeholderText: "Break length (seconds)"
+                        text: "120"
+                    }
+                }
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+                    Label {
+                        text: "Priority (whole number)"
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 10
+                    }
+                    ChannelTextField {
+                        id: adPriorityField
+                        Layout.fillWidth: true
+                        placeholderText: "Priority"
+                        text: "0"
+                    }
+                }
+                ColumnLayout {
+                    Layout.preferredWidth: 120
+                    spacing: 4
+                    Label {
+                        text: "Timing"
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 10
+                    }
+                    ChannelComboBox {
+                        id: adTimingBox
+                        Layout.fillWidth: true
+                        model: ["Strict fit", "Smoosh", "Expand"]
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: adSmooshTrimField
+                    Layout.fillWidth: true
+                    placeholderText: "Max trim seconds"
+                    text: "15"
+                }
+                ChannelTextField {
+                    id: adExpandField
+                    Layout.fillWidth: true
+                    placeholderText: "Max extra seconds"
+                    text: "0"
+                }
+                ChannelComboBox {
+                    id: adTransitionBox
+                    Layout.preferredWidth: 120
+                    model: ["Cut", "Fade through black", "Hold last frame"]
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: adTransitionSecondsField
+                    Layout.fillWidth: true
+                    text: "0.5"
+                    placeholderText: "Transition seconds"
+                }
+                ChannelTextField {
+                    id: adSlotSecondsField
+                    Layout.fillWidth: true
+                    placeholderText: "Fixed slot seconds: 900, 1800, 3600"
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelComboBox {
+                    id: adSchedulePriorityBox
+                    Layout.fillWidth: true
+                    model: ["Preserve program", "Keep timing fixed", "Prioritize ads"]
+                }
+                ChannelComboBox {
+                    id: adExpandSourceBox
+                    Layout.fillWidth: true
+                    model: ["Shift sequential programming", "Use available slot time", "Borrow current program", "Borrow next event"]
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                text: "Calendar starts stay protected. Borrowing program content requires Prioritize ads."
+                color: studioRoot.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+            ChannelTextField {
+                id: adTriggersField
+                Layout.fillWidth: true
+                text: "breakpoint; interval; between_programs; calendar_boundary"
+                placeholderText: "breakpoint; interval; between_programs; calendar_boundary"
+            }
+            Text {
+                id: adPreviewStatus
+                Layout.fillWidth: true
+                text: "Preview an ad break before applying your detached draft."
+                color: studioRoot.textSecondary
+                font.pixelSize: 11
+                wrapMode: Text.Wrap
+            }
+            StudioButton {
+                text: "Preview Ad Schedule"
+                onClicked: {
+                    var result = channelOS.previewChannel(studioRoot.editorObject())
+                    if (result && result.ok) {
+                        var events = result.adPreview || []
+                        adPreviewStatus.text = events.length
+                                ? events.map(function(event) {
+                                    return event.eventType + ": " + event.title
+                                        + " @ " + event.startUtc
+                                  }).join(" | ")
+                                : "No ad event is scheduled in the sampled window."
+                    } else {
+                        adPreviewStatus.text = result && result.message
+                                ? result.message : "Preview failed."
+                    }
+                }
+            }
             RowLayout {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
@@ -2966,6 +3514,375 @@ Item {
                     text: "Apply to Draft"
                     highlighted: true
                     onClicked: adBreakSettingsDialog.accept()
+                }
+            }
+            }
+        }
+    }
+
+    StudioDialog {
+        id: adCatalogDialog
+        title: "Advertisement Catalog & Profiles"
+        width: Math.min(studioRoot.width - 40, 730)
+        height: Math.min(studioRoot.height - 40, 700)
+        x: Math.max(20, (studioRoot.width - width) / 2)
+        y: Math.max(20, (studioRoot.height - height) / 2)
+        property var catalogData: ({})
+        property var placementRules: []
+        property string catalogFeedback: ""
+
+        function splitValues(value) {
+            return String(value || "").split(";").map(function(part) {
+                return part.trim()
+            }).filter(function(part) { return part.length > 0 })
+        }
+
+        function showResult(result) {
+            catalogFeedback = result && result.message
+                    ? String(result.message) : "Catalog request failed"
+            if (result && result.ok) {
+                catalogData = result
+                studioRoot.feedbackMessage = catalogFeedback
+                studioRoot.feedbackIsError = false
+            } else {
+                studioRoot.feedbackMessage = catalogFeedback
+                studioRoot.feedbackIsError = true
+            }
+        }
+
+        onOpened: {
+            var response = channelOS.adCatalogSnapshot()
+            catalogData = response || ({})
+            var saved = (catalogData.assignments || []).filter(function(item) {
+                return Number(item.channelNumber) === Number(channelNumberField.text)
+            })
+            placementRules = saved.length ? saved[0].placements || [] : []
+            catalogFeedback = response && response.ok
+                    ? "Catalog is ready. Save reusable items before assigning them."
+                    : String(response && response.message || "Unable to open catalog")
+        }
+
+        contentItem: Flickable {
+            id: catalogScroll
+            clip: true
+            contentWidth: width
+            contentHeight: catalogColumn.implicitHeight + 12
+            boundsBehavior: Flickable.StopAtBounds
+
+            ColumnLayout {
+                id: catalogColumn
+                width: catalogScroll.width - 16
+                spacing: 8
+
+                Text {
+                    Layout.fillWidth: true
+                    color: studioRoot.textSecondary
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    text: "All commercials use the canonical Library index. "
+                          + "Dynamic collections follow indexed folders; fixed "
+                          + "collections use selected asset IDs. Applying a channel "
+                          + "embeds a portable snapshot of both collection and profile."
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    color: studioRoot.warning
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 11
+                    text: adCatalogDialog.catalogFeedback
+                }
+                Text {
+                    color: studioRoot.textPrimary
+                    font.bold: true
+                    text: "1. Collection"
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelTextField {
+                        id: catalogCollectionId
+                        Layout.fillWidth: true
+                        placeholderText: "Collection ID, e.g. network-ads"
+                    }
+                    ChannelTextField {
+                        id: catalogCollectionName
+                        Layout.fillWidth: true
+                        placeholderText: "Collection display name"
+                    }
+                    ChannelComboBox {
+                        id: catalogCollectionMode
+                        Layout.preferredWidth: 115
+                        model: ["Fixed", "Dynamic"]
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelComboBox {
+                        id: catalogMediaPicker
+                        Layout.fillWidth: true
+                        model: studioRoot.mediaLibrary
+                        textRole: "title"
+                    }
+                    StudioButton {
+                        text: "Add Media"
+                        onClicked: {
+                            var media = studioRoot.mediaLibrary[catalogMediaPicker.currentIndex]
+                            if (!media) return
+                            var ids = adCatalogDialog.splitValues(catalogCollectionAssets.text)
+                            if (ids.indexOf(media.assetId) < 0) ids.push(media.assetId)
+                            catalogCollectionAssets.text = ids.join("; ")
+                        }
+                    }
+                }
+                ChannelTextField {
+                    id: catalogCollectionAssets
+                    Layout.fillWidth: true
+                    placeholderText: "Canonical asset IDs (semicolon separated)"
+                }
+                ChannelTextField {
+                    id: catalogCollectionSources
+                    Layout.fillWidth: true
+                    placeholderText: "Dynamic source folders (semicolon separated)"
+                }
+                ChannelTextField {
+                    id: catalogCollectionExclusions
+                    Layout.fillWidth: true
+                    placeholderText: "Excluded asset IDs (optional)"
+                }
+                StudioButton {
+                    text: "Save Collection"
+                    onClicked: {
+                        var result = channelOS.saveAdCollection({
+                            collectionId: catalogCollectionId.text.trim(),
+                            name: catalogCollectionName.text.trim(),
+                            membership: catalogCollectionMode.currentIndex === 1
+                                        ? "dynamic" : "fixed",
+                            assetIds: adCatalogDialog.splitValues(catalogCollectionAssets.text),
+                            sourcePaths: adCatalogDialog.splitValues(catalogCollectionSources.text),
+                            excludedAssetIds: adCatalogDialog.splitValues(catalogCollectionExclusions.text)
+                        })
+                        adCatalogDialog.showResult(result)
+                    }
+                }
+                Text {
+                    color: studioRoot.textPrimary
+                    font.bold: true
+                    text: "2. Reusable Break Profile"
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelTextField {
+                        id: catalogProfileId
+                        Layout.fillWidth: true
+                        placeholderText: "Profile ID, e.g. standard"
+                    }
+                    ChannelTextField {
+                        id: catalogProfileName
+                        Layout.fillWidth: true
+                        placeholderText: "Profile display name"
+                    }
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelComboBox {
+                        id: catalogProfileStrategy
+                        Layout.fillWidth: true
+                        model: ["Best fit", "Largest", "Smallest", "Sequential", "Least played", "Complete rotation"]
+                    }
+                    ChannelTextField {
+                        id: catalogProfileDuration
+                        Layout.fillWidth: true
+                        text: "120"
+                        placeholderText: "Break seconds"
+                    }
+                    ChannelTextField {
+                        id: catalogProfileInterval
+                        Layout.fillWidth: true
+                        placeholderText: "Interval seconds (optional)"
+                    }
+                }
+                ChannelCheckBox {
+                    id: catalogAdvancedProfile
+                    text: "Advanced profile settings"
+                }
+                ChannelTextField {
+                    id: catalogProfileDefaults
+                    visible: catalogAdvancedProfile.checked
+                    Layout.fillWidth: true
+                    text: '{"enabled":true,"duration_seconds":120,"strategy":"best_fit","triggers":["breakpoint","interval","between_programs"]}'
+                    placeholderText: "JSON policy defaults"
+                }
+                StudioButton {
+                    text: "Save Profile"
+                    onClicked: {
+                        try {
+                            var defaults = catalogAdvancedProfile.checked
+                                ? JSON.parse(catalogProfileDefaults.text)
+                                : {enabled: true,
+                                   duration_seconds: Number(catalogProfileDuration.text),
+                                   interval_seconds: catalogProfileInterval.text.trim() ? Number(catalogProfileInterval.text) : null,
+                                   strategy: ["best_fit", "largest", "smallest", "sequential", "least_played", "complete_rotation"][catalogProfileStrategy.currentIndex],
+                                   breakpoints_seconds: studioRoot.editorObject().adBreakpointsSeconds.map(Number),
+                                   timing_policy: studioRoot.editorObject().adTimingPolicy,
+                                   transition_behavior: studioRoot.editorObject().adTransitionBehavior,
+                                   transition_seconds: Number(adTransitionSecondsField.text)}
+                            adCatalogDialog.showResult(channelOS.saveAdBreakProfile({
+                                profileId: catalogProfileId.text.trim(),
+                                name: catalogProfileName.text.trim(),
+                                defaults: defaults
+                            }))
+                        } catch (error) {
+                            adCatalogDialog.catalogFeedback = "Invalid profile JSON: " + error
+                        }
+                    }
+                }
+                Text {
+                    color: studioRoot.textPrimary
+                    font.bold: true
+                    text: "3. Assign to Current Channel"
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelTextField {
+                        id: catalogAssignCollection
+                        Layout.fillWidth: true
+                        placeholderText: "Saved collection ID"
+                    }
+                    ChannelTextField {
+                        id: catalogAssignProfile
+                        Layout.fillWidth: true
+                        placeholderText: "Saved profile ID"
+                    }
+                }
+                Text {
+                    text: "Placement rules (optional)"
+                    color: studioRoot.textPrimary
+                    font.bold: true
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    ChannelComboBox {
+                        id: placementTrigger
+                        Layout.fillWidth: true
+                        model: ["Program breakpoints", "Program interval", "Between programs", "Calendar gap", "Fixed slot"]
+                    }
+                    ChannelComboBox {
+                        id: placementCollection
+                        Layout.fillWidth: true
+                        model: adCatalogDialog.catalogData.collections || []
+                        textRole: "name"
+                    }
+                    ChannelComboBox {
+                        id: placementProfile
+                        Layout.fillWidth: true
+                        model: adCatalogDialog.catalogData.profiles || []
+                        textRole: "name"
+                    }
+                }
+                StudioButton {
+                    id: addAdPlacementButton
+                    text: "Add Placement"
+                    onClicked: {
+                        var collections = adCatalogDialog.catalogData.collections || []
+                        var profiles = adCatalogDialog.catalogData.profiles || []
+                        if (!collections[placementCollection.currentIndex] || !profiles[placementProfile.currentIndex]) return
+                        var trigger = ["breakpoint", "interval", "between_programs", "calendar_boundary", "fixed_slot"][placementTrigger.currentIndex]
+                        var rules = adCatalogDialog.placementRules.slice()
+                        var identity = trigger + "-" + String(Date.now())
+                        rules.push({placement_id: identity, trigger: trigger,
+                                    collection_id: collections[placementCollection.currentIndex].collectionId,
+                                    profile_id: profiles[placementProfile.currentIndex].profileId,
+                                    overrides: trigger === "fixed_slot" ? {slot_seconds: Number(adSlotSecondsField.text || 1800)} : {}})
+                        adCatalogDialog.placementRules = rules
+                    }
+                }
+                Repeater {
+                    model: adCatalogDialog.placementRules
+                    delegate: RowLayout {
+                        required property var modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        Text {
+                            Layout.fillWidth: true
+                            text: modelData.trigger + " • " + modelData.collection_id + " • " + modelData.profile_id
+                            color: studioRoot.textSecondary
+                        }
+                        StudioButton {
+                            text: "Remove"
+                            onClicked: {
+                                var rules = adCatalogDialog.placementRules.slice()
+                                rules.splice(parent.index, 1)
+                                adCatalogDialog.placementRules = rules
+                            }
+                        }
+                    }
+                }
+                ChannelCheckBox {
+                    id: catalogAdvancedOverrides
+                    text: "Advanced channel overrides"
+                }
+                ChannelTextField {
+                    id: catalogAssignOverrides
+                    visible: catalogAdvancedOverrides.checked
+                    Layout.fillWidth: true
+                    text: "{}"
+                    placeholderText: "Per-channel overrides (JSON)"
+                }
+                StudioButton {
+                    id: saveAdAssignmentButton
+                    text: "Save Assignment to Current Channel"
+                    highlighted: true
+                    onClicked: {
+                        try {
+                            var overrides = JSON.parse(catalogAssignOverrides.text)
+                            var result = channelOS.assignAdBreakProfile({
+                                channelNumber: Number(channelNumberField.text),
+                                collectionId: catalogAssignCollection.text.trim(),
+                                profileId: catalogAssignProfile.text.trim(),
+                                overrides: overrides,
+                                placements: adCatalogDialog.placementRules
+                            })
+                            adCatalogDialog.showResult(result)
+                            if (result && result.ok) {
+                                adCollectionField.text = catalogAssignCollection.text.trim()
+                                adProfileField.text = catalogAssignProfile.text.trim()
+                                adBreaksEnabledCheck.checked = true
+                                studioRoot.dirty = true
+                            }
+                        } catch (error) {
+                            adCatalogDialog.catalogFeedback = "Invalid overrides JSON: " + error
+                        }
+                    }
+                }
+                Text {
+                    Layout.fillWidth: true
+                    color: studioRoot.textSecondary
+                    wrapMode: Text.Wrap
+                    font.pixelSize: 10
+                    text: "Saved collections: "
+                          + ((adCatalogDialog.catalogData.collections || []).map(function(item) {
+                                return item.collectionId
+                             }).join(", ") || "none")
+                          + "    Profiles: "
+                          + ((adCatalogDialog.catalogData.profiles || []).map(function(item) {
+                                return item.profileId
+                             }).join(", ") || "none")
+                }
+                StudioButton {
+                    text: "Current Channel Diagnostics"
+                    onClicked: {
+                        var report = channelOS.adBreakDiagnostics(
+                            Number(channelNumberField.text))
+                        adCatalogDialog.catalogFeedback = report && report.ok
+                                ? ("Plans: " + report.plannedBreaks
+                                   + " | Aired: " + report.completedAirings
+                                   + " | Viewed: " + report.completedViewings)
+                                : String(report && report.message || "Channel is not active")
+                    }
+                }
+                StudioButton {
+                    text: "Close"
+                    onClicked: adCatalogDialog.close()
                 }
             }
         }

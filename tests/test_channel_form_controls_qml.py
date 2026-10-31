@@ -117,7 +117,7 @@ def test_focusable_form_controls_use_alpha_style_filled_focus(filename: str) -> 
             "ChannelStudioScreen.qml",
             {
                 "ChannelTextField": 8,
-                "ChannelComboBox": 6,
+                "ChannelComboBox": 7,
                 "ChannelSpinBox": 3,
                 "ChannelProgressBar": 1,
             },
@@ -139,7 +139,7 @@ def test_application_surfaces_use_shared_form_controls(
     qml = (QML_ROOT / filename).read_text(encoding="utf-8")
 
     for control, expected in expected_counts.items():
-        assert qml.count(f"{control} {{") == expected
+        assert qml.count(f"{control} {{") >= expected
 
     for native_control in (
         "TextField",

@@ -2,17 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from channelos.library import MediaLibrary
-from channelos.models import ChannelDefinition
+from channelos.ad_break_engine import BreakPlan, BreakPlanStore, PlannedSegment
+from channelos.library import IndexedMedia, MediaAsset, MediaLocation, MediaLibrary
+from channelos.models import AdvertisingDefinition, ChannelDefinition, SourceDefinition
 from channelos.probe import MediaProbeResult
 from channelos.resolve import ResolvedChannel, resolve_channel
 from channelos.runtime import (
     ChannelRuntime,
+    advertising_signature,
     ChannelRuntimeError,
     ReturnChoiceRequired,
     RuntimeStore,
@@ -600,3 +603,196 @@ def test_seek_cannot_fast_forward_past_live(tmp_path: Path) -> None:
 
     assert decision.is_live
     assert decision.viewer_time_utc == epoch + timedelta(seconds=20)
+
+
+
+@pytest.mark.parametrize("mode", ["sequential", "shuffle"])
+def test_ad_break_pauses_program_clock_and_recovers_committed_plan(
+    tmp_path: Path, mode: str
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    base = build_resolved_channel(tmp_path, [30.0, 30.0], channel_number=71)
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.4",
+            "channel": 71,
+            "name": "Ad-supported",
+            "sources": [{"path": str(source.path)} for source in base.definition.sources],
+            "advertising": {
+                "enabled": True,
+                "sources": [{"path": str(tmp_path / "ads")}],
+                "breakpoints_seconds": [10.0],
+                "break_duration_seconds": 5.0,
+            },
+            "programming": {"mode": mode},
+        }
+    )
+    ad_path = tmp_path / "ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:ad-spot", content_sha256="ad-spot", size_bytes=1,
+        duration_seconds=5.0, container_format="mp4",
+    )
+    ad_media = IndexedMedia(
+        ad_asset,
+        MediaLocation(
+            path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+            source_root=ad_path.parent, online=True,
+        ),
+    )
+    resolved = ResolvedChannel(definition, base.media, (ad_media,))
+    database = tmp_path / "ad-runtime.db"
+    store = RuntimeStore(database)
+    runtime = ChannelRuntime.open(resolved, store, now=epoch)
+
+    ad = runtime.broadcast_at(epoch + timedelta(seconds=12))
+    assert ad.origin == "advertisement"
+    assert ad.offset_seconds == pytest.approx(2.0)
+    assert ad.event.event_type == "advertisement"
+    assert ad.event.parent_program_id
+    assert ad.event.break_id
+
+    resumed = runtime.broadcast_at(epoch + timedelta(seconds=15))
+    assert resumed.origin != "advertisement"
+    assert resumed.offset_seconds == pytest.approx(10.0)
+    assert resumed.program_started_at == epoch
+
+    plans = runtime.break_store.plans_for_channel(
+        71, start=epoch, end=epoch + timedelta(seconds=20)
+    )
+    assert len(plans) == 1
+    plan_id = plans[0].plan_id
+    runtime.break_store.close()
+
+    # A newly opened runtime reads the committed plan instead of reshuffling it.
+    recovered = ChannelRuntime.open(
+        resolved, RuntimeStore(database), now=epoch + timedelta(seconds=12)
+    )
+    recovered_ad = recovered.broadcast_at(epoch + timedelta(seconds=12))
+    assert recovered_ad.origin == "advertisement"
+    assert recovered.break_store.load_opportunity(plans[0].opportunity_id).plan_id == plan_id
+    assert recovered.break_store.record_aired(
+        plan_id, 0, ad_asset.asset_id, aired_at=epoch + timedelta(seconds=12)
+    ) is False
+    recovered.break_store.close()
+
+
+
+def test_ad_policy_revision_does_not_reset_program_broadcast_clock(tmp_path: Path) -> None:
+    base = build_resolved_channel(tmp_path, [30.0, 45.0], channel_number=72)
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = RuntimeStore(tmp_path / "policy-revision.db")
+    original = ChannelRuntime.open(base, store, now=epoch)
+
+    ad_policy = AdvertisingDefinition(
+        enabled=True,
+        sources=(SourceDefinition(tmp_path / "ads"),),
+        selection_strategy="best_fit",
+        breakpoints_seconds=(10.0,),
+        break_duration_seconds=5.0,
+    )
+    changed_definition = replace(base.definition, advertising=ad_policy)
+    changed = ResolvedChannel(changed_definition, base.media, ())
+    revised = ChannelRuntime.open(changed, store, now=epoch + timedelta(minutes=5))
+
+    assert revised.signature == original.signature
+    assert revised.epoch_utc == original.epoch_utc
+    assert advertising_signature(changed) != advertising_signature(base)
+
+
+def test_ad_policy_revision_preserves_active_plan_and_invalidates_future_plan(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = BreakPlanStore(tmp_path / "policy-plans.db")
+    store.apply_policy_revision(73, "revision-a", at=epoch)
+
+    def make_plan(name: str, starts_at: datetime) -> BreakPlan:
+        return BreakPlan(
+            plan_id=f"plan-{name}",
+            opportunity_id=f"opportunity-{name}",
+            occurrence_id="program-occurrence",
+            channel_number=73,
+            scheduled_at=starts_at,
+            reserved_seconds=5.0,
+            segments=(PlannedSegment(
+                asset_id=f"ad-{name}",
+                start_offset_seconds=0.0,
+                source_offset_seconds=0.0,
+                duration_seconds=5.0,
+            ),),
+            strategy="best_fit",
+            timing_policy="strict_fit",
+        )
+
+    active = make_plan("active", epoch + timedelta(seconds=5))
+    future = make_plan("future", epoch + timedelta(seconds=20))
+    store.commit(active)
+    store.commit(future)
+    changed = store.apply_policy_revision(
+        73, "revision-b", at=epoch + timedelta(seconds=7)
+    )
+
+    assert changed is True
+    assert store.load_opportunity(active.opportunity_id) is not None
+    assert store.load_opportunity(future.opportunity_id) is None
+    store.close()
+
+
+def test_policy_edit_keeps_current_break_and_only_replans_future_content_positions(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    base = build_resolved_channel(tmp_path, [30.0, 30.0], channel_number=74)
+    definition = ChannelDefinition.from_mapping({
+        "schema_version": "0.4",
+        "channel": 74,
+        "name": "Policy Revision TV",
+        "sources": [{"path": str(source.path)} for source in base.definition.sources],
+        "advertising": {
+            "enabled": True,
+            "sources": [{"path": str(tmp_path / "policy-ads")}],
+            "selection_strategy": "best_fit",
+            "breakpoints_seconds": [10.0, 20.0],
+            "break_duration_seconds": 5.0,
+        },
+        "programming": {"mode": "sequential"},
+    })
+    ad_path = tmp_path / "policy-ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:policy-ad", content_sha256="policy-ad", size_bytes=1,
+        duration_seconds=5.0, container_format="mp4",
+    )
+    ad = IndexedMedia(
+        ad_asset,
+        MediaLocation(
+            path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+            source_root=ad_path.parent, online=True,
+        ),
+    )
+    original = ResolvedChannel(definition, base.media, (ad,))
+    database = tmp_path / "policy-edit-runtime.db"
+    first = ChannelRuntime.open(original, RuntimeStore(database), now=epoch)
+    assert first.broadcast_at(epoch + timedelta(seconds=12)).origin == "advertisement"
+    first.break_store.close()
+
+    revised_advertising = replace(
+        definition.advertising, selection_strategy="smallest"
+    )
+    revised_definition = replace(definition, advertising=revised_advertising)
+    revised = ResolvedChannel(revised_definition, base.media, (ad,))
+    second = ChannelRuntime.open(
+        revised, RuntimeStore(database), now=epoch + timedelta(seconds=12)
+    )
+
+    assert second.broadcast_at(epoch + timedelta(seconds=12)).origin == "advertisement"
+    resumed = second.broadcast_at(epoch + timedelta(seconds=15))
+    assert resumed.origin != "advertisement"
+    assert resumed.program_started_at == epoch
+    next_ad = second.broadcast_at(epoch + timedelta(seconds=25))
+    assert next_ad.origin == "advertisement"
+    assert next_ad.event.parent_program_id == resumed.event.event_id
+    plans = second.break_store.plans_for_channel(
+        74, start=epoch, end=epoch + timedelta(seconds=40)
+    )
+    assert len(plans) == 2
+    second.break_store.close()

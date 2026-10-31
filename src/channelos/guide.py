@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -33,6 +32,21 @@ class GuideProgram:
     is_current: bool
     is_past: bool
     is_future: bool
+    is_advertisement: bool = False
+    event_id: str = ""
+    parent_program_id: str | None = None
+    break_id: str | None = None
+    break_markers: tuple["GuideBreakMarker", ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class GuideBreakMarker:
+    """A compact Guide marker for an ad break inside a parent program."""
+
+    break_id: str
+    start_utc: datetime
+    end_utc: datetime
+    advertisement_asset_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,21 +73,20 @@ class GuideHorizon:
 
 
 def _schedule_id(runtime: ChannelRuntime, selection: BroadcastSelection) -> str:
-    payload = "|".join(
-        (
-            str(runtime.channel_number),
-            runtime.signature,
-            selection.media.asset.asset_id,
-            selection.program_started_at.isoformat(timespec="microseconds"),
-        )
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return selection.event.event_id
 
 
 def _explanation(runtime: ChannelRuntime, selection: BroadcastSelection) -> tuple[str, ...]:
     programming = runtime.channel.definition.programming
     position = selection.program.index + 1
     count = len(runtime.timeline.programs)
+    if selection.origin == "advertisement":
+        return (
+            f"Channel {runtime.channel_number}",
+            "advertisement break",
+            "committed ad event from the ChannelRuntime broadcast timeline",
+            f"asset {selection.media.asset.asset_id}",
+        )
     if programming.mode == "calendar":
         if selection.origin == "calendar":
             return (
@@ -135,12 +148,98 @@ def _program_from_selection(
         is_current=start <= reference < end,
         is_past=end <= reference,
         is_future=start > reference,
+        is_advertisement=selection.event.event_type == "advertisement",
+        event_id=selection.event.event_id,
+        parent_program_id=selection.event.parent_program_id,
+        break_id=selection.event.break_id,
+    )
+
+
+def _parent_program_with_breaks(
+    runtime: ChannelRuntime,
+    selection: BroadcastSelection,
+    *,
+    relative_to: datetime,
+) -> GuideProgram:
+    """Project a program as one Guide occurrence with ad-break markers.
+
+    When the queried instant falls inside an advertisement, the runtime event
+    carries the interrupted program identity and original timing.
+    """
+    reference = require_aware_utc(relative_to)
+    event = selection.event
+    plans = runtime.break_plans_for_event(selection, at=reference)
+    markers = tuple(
+        GuideBreakMarker(
+            break_id=plan.plan_id,
+            start_utc=plan.scheduled_at,
+            end_utc=plan.scheduled_at + timedelta(seconds=plan.duration_seconds),
+            advertisement_asset_ids=tuple(segment.asset_id for segment in plan.segments if segment.event_type == "advertisement"),
+        )
+        for plan in plans if plan.duration_seconds > 0
+    )
+
+    if event.break_id:
+        asset_id = event.parent_program_asset_id
+        start = event.parent_program_started_at
+        base_end = event.parent_program_ends_at
+        parent_id = event.parent_program_id
+        media = next(
+            (item for item in runtime.channel.media if item.asset.asset_id == asset_id),
+            None,
+        )
+        if media is None or start is None or base_end is None or parent_id is None:
+            plan = runtime.break_store.load_plan(event.break_id) if runtime.break_store and event.break_id else None
+            if plan is None:
+                return _program_from_selection(runtime, selection, relative_to=reference)
+            from dataclasses import replace
+            return replace(_program_from_selection(runtime, selection, relative_to=reference),
+                           schedule_id=plan.plan_id, event_id=plan.plan_id,
+                           display_label="Advertisement break", start_utc=plan.scheduled_at,
+                           end_utc=plan.scheduled_at + timedelta(seconds=plan.duration_seconds),
+                           duration_seconds=plan.duration_seconds, is_advertisement=True)
+        label = media.location.path.stem
+        duration = float(media.asset.duration_seconds or 0.0)
+        explanation = (
+            f"Channel {runtime.channel_number}",
+            "program interrupted by an advertisement break",
+            f"asset {asset_id}",
+        )
+        schedule_id = parent_id
+    else:
+        media = selection.media
+        asset_id = event.asset_id
+        start = selection.program_started_at
+        base_end = selection.program_ends_at
+        parent_id = event.event_id
+        label = media.location.path.stem
+        duration = selection.program.duration_seconds
+        explanation = _explanation(runtime, selection)
+        schedule_id = event.event_id
+
+    end = max(base_end, max((marker.end_utc for marker in markers), default=base_end))
+    return GuideProgram(
+        schedule_id=schedule_id,
+        channel_number=runtime.channel_number,
+        asset_id=asset_id,
+        display_label=label,
+        start_utc=start,
+        end_utc=end,
+        duration_seconds=max(0.0, (end - start).total_seconds()),
+        programming_mode=runtime.channel.definition.programming.mode,
+        explanation=explanation,
+        is_current=start <= reference < end,
+        is_past=end <= reference,
+        is_future=start > reference,
+        is_advertisement=False,
+        event_id=schedule_id,
+        break_markers=markers,
     )
 
 
 def _selection_after_boundary(runtime: ChannelRuntime, boundary: datetime) -> BroadcastSelection:
     """Select the program beginning at a known end boundary without float-edge ambiguity."""
-    return runtime.broadcast_at(require_aware_utc(boundary) + _BOUNDARY_EPSILON)
+    return runtime.project_at(require_aware_utc(boundary) + _BOUNDARY_EPSILON)
 
 
 class GuideService:
@@ -163,8 +262,13 @@ class GuideService:
     def now_next(self, channel_number: int, *, at: datetime | None = None) -> NowNext:
         reference = require_aware_utc(at or utc_now())
         runtime = self._runtime(channel_number)
-        current_selection = runtime.broadcast_at(reference)
-        next_selection = _selection_after_boundary(runtime, current_selection.program_ends_at)
+        current_selection = runtime.project_at(reference)
+        boundary = current_selection.program_ends_at
+        if current_selection.break_id and runtime.break_store:
+            plan = runtime.break_store.load_plan(current_selection.break_id)
+            if plan:
+                boundary = plan.scheduled_at + timedelta(seconds=plan.duration_seconds)
+        next_selection = _selection_after_boundary(runtime, boundary)
         return NowNext(
             channel_number=runtime.channel_number,
             channel_name=runtime.channel.definition.name,
@@ -199,8 +303,8 @@ class GuideService:
     def validate_program(self, program: GuideProgram) -> ChannelRuntime:
         """Verify that a Guide occurrence still belongs to the current channel schedule."""
         runtime = self._runtime(program.channel_number)
-        selection = runtime.broadcast_at(program.start_utc + _BOUNDARY_EPSILON)
-        current = _program_from_selection(runtime, selection, relative_to=program.start_utc)
+        selection = runtime.project_at(program.start_utc + _BOUNDARY_EPSILON)
+        current = _parent_program_with_breaks(runtime, selection, relative_to=program.start_utc)
         if (
             current.schedule_id != program.schedule_id
             or current.asset_id != program.asset_id
@@ -226,13 +330,21 @@ class GuideService:
         reference: datetime,
     ) -> GuideChannelRow:
         programs: list[GuideProgram] = []
-        selection = runtime.broadcast_at(start)
+        selection = runtime.project_at(start)
 
-        while selection.program_started_at < end:
-            programs.append(
-                _program_from_selection(runtime, selection, relative_to=reference)
+        while True:
+            program = _parent_program_with_breaks(
+                runtime, selection, relative_to=reference
             )
-            selection = _selection_after_boundary(runtime, selection.program_ends_at)
+            if program.end_utc <= start:
+                selection = _selection_after_boundary(runtime, program.end_utc)
+                continue
+            if program.start_utc >= end:
+                break
+            programs.append(program)
+            if program.end_utc >= end:
+                break
+            selection = _selection_after_boundary(runtime, program.end_utc)
 
         return GuideChannelRow(
             channel_number=runtime.channel_number,

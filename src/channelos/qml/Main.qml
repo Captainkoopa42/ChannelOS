@@ -926,12 +926,45 @@ ApplicationWindow {
                         }
                     }
 
-                    Text {
-                        text: root.playback.title || "No Programming"
-                        color: root.textPrimary
-                        font.pixelSize: 30
-                        font.weight: Font.DemiBold
+                    Row {
                         width: parent.width
+                        spacing: 10
+
+                        Rectangle {
+                            visible: Boolean(root.playback.isAdvertisement)
+                            width: 42
+                            height: 30
+                            radius: 5
+                            color: "#9a6a20"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "AD"
+                                color: root.textPrimary
+                                font.pixelSize: 15
+                                font.weight: Font.Bold
+                            }
+                        }
+
+                        Text {
+                            text: root.playback.isAdvertisement
+                                  ? ("Ad break"
+                                     + (root.playback.parentProgramTitle
+                                         ? " • " + root.playback.parentProgramTitle : ""))
+                                  : (root.playback.title || "No Programming")
+                            color: root.textPrimary
+                            font.pixelSize: 30
+                            font.weight: Font.DemiBold
+                            width: parent.width - (root.playback.isAdvertisement ? 52 : 0)
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Text {
+                        visible: Boolean(root.playback.isAdvertisement)
+                        text: "Now airing: " + (root.playback.title || "Commercial")
+                              + " • " + Math.ceil(root.playback.breakRemainingSeconds || 0) + "s remaining"
+                        color: root.textSecondary
+                        font.pixelSize: 14
                         elide: Text.ElideRight
                     }
 
@@ -2332,6 +2365,21 @@ ApplicationWindow {
                                           )
 
                             border.width: selectedSegment ? 2 : 1
+                            property var broadcastSegment: modelData
+                            Repeater {
+                                model: parent.broadcastSegment.breakMarkers || []
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    x: Math.max(0, ((modelData.startMs - root.horizonStartMs)
+                                        / root.horizonSpanMs) * programArea.width - parent.x)
+                                    width: Math.max(2, Math.min(parent.width - x,
+                                        (modelData.endMs - modelData.startMs) / root.horizonSpanMs * programArea.width))
+                                    height: 5
+                                    anchors.bottom: parent.bottom
+                                    color: "#d99b36"
+                                    radius: 2
+                                }
+                            }
 
                             Column {
                                 anchors.left: parent.left

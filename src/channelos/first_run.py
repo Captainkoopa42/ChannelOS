@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 from pathlib import Path
 from typing import Callable
 
@@ -11,6 +12,8 @@ from .vlc_probe import LibVLCMediaProbe
 
 
 FIRST_RUN_CANCELLED = 10
+FIRST_RUN_OPEN_PORTABLE = 12
+PORTABLE_HANDOFF = 'open-portable.json'
 
 logger = logging.getLogger(__name__)
 
@@ -117,13 +120,31 @@ def run_first_run_setup(data_directory: str | Path) -> int:
     if icon_path.is_file():
         app.setWindowIcon(QIcon(str(icon_path)))
 
-    QMessageBox.information(
-        None,
-        "Welcome to ChannelOS",
-        "ChannelOS turns media you already own into personal cable-style television.\n\n"
-        "Choose one media folder to build your first channel. Your files stay where "
-        "they are; ChannelOS only indexes them in place.",
-    )
+    welcome = QMessageBox()
+    welcome.setWindowTitle('Welcome to ChannelOS')
+    welcome.setText('Create your first channel, or open a setup already saved on a drive.\n\n'
+                    'An existing setup keeps its channels, index and history on that drive.')
+    create_button = welcome.addButton('New Library', QMessageBox.ButtonRole.AcceptRole)
+    open_button = welcome.addButton('Open Existing Setup…', QMessageBox.ButtonRole.ActionRole)
+    welcome.addButton(QMessageBox.StandardButton.Cancel)
+    welcome.exec()
+    if welcome.clickedButton() == open_button:
+        folder = QFileDialog.getExistingDirectory(None, 'Open Existing ChannelOS Setup')
+        if not folder:
+            return FIRST_RUN_CANCELLED
+        try:
+            from .portable_copy import inspect_setup
+            summary = inspect_setup(folder)
+            path = Path(data_directory) / PORTABLE_HANDOFF
+            temporary = path.with_suffix('.tmp')
+            temporary.write_text(json.dumps({'root': summary['root']}), encoding='utf-8')
+            temporary.replace(path)
+        except Exception as exc:
+            QMessageBox.critical(None, 'Setup could not open', str(exc))
+            return 6
+        return FIRST_RUN_OPEN_PORTABLE
+    if welcome.clickedButton() != create_button:
+        return FIRST_RUN_CANCELLED
 
     folder = QFileDialog.getExistingDirectory(
         None,

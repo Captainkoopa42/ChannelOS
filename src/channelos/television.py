@@ -385,11 +385,12 @@ class TelevisionSession:
 
         return decision
 
-    def suspend_decoder(self) -> None:
+    def suspend_decoder(self, *, persist_history: bool = True) -> None:
         """Release active decoder output without changing television clock state."""
 
         self._sample_ad_viewing()
-        self._finish_ad_viewing(utc_now())
+        if persist_history:
+            self._finish_ad_viewing(utc_now())
         self._clear_transition()
         self.backend.stop()
         self.loaded_asset_id = None

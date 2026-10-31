@@ -606,13 +606,17 @@ class BroadcasterCouchController(CouchController):
 
         runtimes: list[ChannelRuntime] = []
         for record in self._broadcaster.records:
-            resolved = resolve_channel(record.definition, self._library)
+            resolved = resolve_channel(record.definition, self._library,
+                allow_offline_ads=self._library.portable is not None,
+                include_offline_programs=self._library.portable is not None)
             if not resolved.media:
                 raise BroadcasterError(
                     f"Channel {record.definition.display_number} - "
                     f"{record.definition.name} no longer resolves indexed media"
                 )
-            runtimes.append(ChannelRuntime.open(resolved, self._runtime_store))
+            transient = self._library.portable is not None and any(
+                not item.location.online or not item.location.path.is_file() for item in resolved.media)
+            runtimes.append(ChannelRuntime.open(resolved, self._runtime_store, transient=transient))
 
         if not runtimes:
             raise BroadcasterError("the active television lineup cannot be empty")
@@ -1109,6 +1113,10 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         )
 
     def dispatch_command(self, command: ControlCommand) -> bool:
+        notice = getattr(self._window, '_channelos_portable_notice', None)
+        if notice is not None and notice.isVisible():
+            self._invoke_overlay(notice, command.intent)
+            return True
         if command.intent is ControlIntent.CHANNELS:
             self._window.setProperty("infoVisible", False)
             self._controller.refreshBroadcaster()
@@ -1156,6 +1164,11 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         )
 
     def eventFilter(self, watched, event) -> bool:
+        notice = getattr(self._window, '_channelos_portable_notice', None)
+        if notice is not None and notice.isVisible() and event.type() == QEvent.Type.KeyPress:
+            command = self.command_for_key(event.key())
+            if command is not None:
+                return self.dispatch_command(command)
         if (
             event.type() == QEvent.Type.KeyPress
             and str(self._window.property("screen"))
@@ -1297,6 +1310,8 @@ def run_qt(
         "SettingsScreen.qml",
         z=95,
     )
+    portable_notice = _attach_overlay(engine, window, "PortableDriveNotice.qml", z=300)
+    window._channelos_portable_notice = portable_notice
 
     key_filter = BroadcasterKeyFilter(controller, window)
     key_filter.bind_management_overlays(

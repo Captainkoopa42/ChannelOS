@@ -8,6 +8,8 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 
+from .portable import find_setup
+
 
 ARTWORK_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 GENERIC_ARTWORK_STEMS = (
@@ -48,6 +50,7 @@ class MediaArtworkCache:
         ffmpeg_executable: str | Path | None = None,
     ) -> None:
         self.cache_directory = Path(cache_directory)
+        self._portable = find_setup(self.cache_directory)
         self._configured_ffmpeg = (
             None if ffmpeg_executable is None else Path(ffmpeg_executable)
         )
@@ -115,6 +118,8 @@ class MediaArtworkCache:
         """Remove only ChannelOS-generated thumbnails, never user sidecars."""
 
         with self._cache_lock:
+            if self._portable:
+                self._portable.check_available()
             self._generation += 1
             removed_files = 0
             removed_bytes = 0
@@ -144,6 +149,8 @@ class MediaArtworkCache:
             return ArtworkCacheChange(remaining=self.stats())
 
         with self._cache_lock:
+            if self._portable:
+                self._portable.check_available()
             candidates: list[tuple[float, int, Path]] = []
             for path in self._generated_cache_files():
                 try:
@@ -253,6 +260,8 @@ class MediaArtworkCache:
             return destination
 
         try:
+            if self._portable:
+                self._portable.check_available()
             self.cache_directory.mkdir(parents=True, exist_ok=True)
         except OSError:
             return None
@@ -297,6 +306,8 @@ class MediaArtworkCache:
             if completed.returncode != 0 or not self._usable_file(temporary):
                 return None
             with self._cache_lock:
+                if self._portable:
+                    self._portable.check_available()
                 if generation != self._generation:
                     return None
                 temporary.replace(destination)

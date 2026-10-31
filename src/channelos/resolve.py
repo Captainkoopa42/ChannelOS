@@ -167,14 +167,17 @@ def _resolve_preserved_sequence(
 
 
 def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
-                    allow_offline_ads: bool = False) -> ResolvedChannel:
+                    allow_offline_ads: bool = False,
+                    include_offline_programs: bool = False) -> ResolvedChannel:
     source_keys = [normalize_path(source.path)[1] for source in channel.sources]
     ad_media: list[IndexedMedia] = []
     policies = (channel.advertising,) + tuple(item.policy for item in channel.advertising.placements)
     configured_ad_ids = {asset_id for policy in policies for asset_id in policy.asset_ids}
     for policy in policies:
         for source in policy.sources:
-            configured_ad_ids.update(item.asset.asset_id for item in library.list_online_media_for_source(source.path))
+            configured_ad_ids.update(item.asset.asset_id for item in (
+                library.list_cached_media(source.path) if include_offline_programs
+                else library.list_online_media_for_source(source.path)))
     if channel.advertising.enabled:
         active_policies = (tuple(item.policy for item in channel.advertising.placements if item.policy.enabled)
                            if channel.advertising.placements else (channel.advertising,))
@@ -187,7 +190,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
                     continue
                 seen_ad_assets.add(item.asset.asset_id)
                 ad_media.append(item)
-        ad_media.sort(key=lambda item: item.location.path_key)
+        ad_media.sort(key=lambda item: library.order_key(item.location.path))
         requested_ids = tuple(dict.fromkeys(asset_id for policy in active_policies for asset_id in policy.asset_ids))
         if requested_ids:
             # The YAML carries a complete, portable snapshot of its collection.
@@ -216,7 +219,8 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
     advertising_ids = configured_ad_ids | {item.asset.asset_id for item in ad_media}
     seen_locations: set[str] = set()
     for source in channel.sources:
-        for item in library.list_online_media_for_source(source.path):
+        for item in (library.list_cached_media(source.path) if include_offline_programs
+                     else library.list_online_media_for_source(source.path)):
             if item.asset.asset_id in advertising_ids:
                 continue
             if item.location.path_key in seen_locations:
@@ -245,5 +249,5 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
             selected.append(item)
             seen_assets.add(item.asset.asset_id)
 
-    selected.sort(key=lambda item: item.location.path_key)
+    selected.sort(key=lambda item: library.order_key(item.location.path))
     return ResolvedChannel(definition=channel, media=tuple(selected), ad_media=tuple(ad_media), library=library)

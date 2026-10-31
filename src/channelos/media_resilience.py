@@ -40,7 +40,7 @@ def _path_is_usable(path: Path) -> bool:
 def _mark_location_offline(library: MediaLibrary, path: str | Path) -> bool:
     """Quarantine one vanished location without deleting its asset identity."""
 
-    _, path_key = normalize_path(path)
+    _, path_key = library.storage_path(path)
     with library.connect() as connection:
         cursor = connection.execute(
             """

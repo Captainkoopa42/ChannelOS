@@ -16,6 +16,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
+from .portable import PortableConnection, decode_tree, find_setup, path_tree
 
 Strategy = Literal[
     "best_fit", "largest", "smallest", "sequential",
@@ -402,7 +403,11 @@ class BreakPlanStore:
 
     def __init__(self, database_path: str | Path) -> None:
         self.path = str(database_path)
-        self.connection = sqlite3.connect(self.path, timeout=5.0)
+        self.portable = find_setup(database_path)
+        if self.portable:
+            self.portable.check_available()
+        self.connection = sqlite3.connect(self.path, timeout=5.0, factory=PortableConnection)
+        self.connection.portable = self.portable
         self.connection.execute("PRAGMA busy_timeout = 5000")
         self.connection.execute("PRAGMA foreign_keys = ON")
         self.connection.executescript("""
@@ -483,6 +488,13 @@ class BreakPlanStore:
 
     def close(self) -> None:
         self.connection.close()
+
+    def reopen(self) -> None:
+        """Replace a connection after its portable drive has been reattached."""
+        if self.portable:
+            self.portable.check_available()
+        self.close()
+        self.__init__(self.path)
 
     def reset_program_clock(self, channel_number: int, *, at: datetime) -> None:
         """Archive old-schedule decisions while retaining their existing ledgers."""
@@ -597,7 +609,8 @@ class BreakPlanStore:
             raise
 
     def commit(self, plan: BreakPlan) -> BreakPlan:
-        payload = json.dumps([asdict(s) for s in plan.segments], sort_keys=True)
+        segments = [asdict(s) for s in plan.segments]
+        payload = json.dumps(path_tree(segments, self.portable.encode) if self.portable else segments, sort_keys=True)
         created = datetime.now(timezone.utc).isoformat()
         self.connection.execute("BEGIN IMMEDIATE")
         try:
@@ -620,7 +633,7 @@ class BreakPlanStore:
             stored = BreakPlan(
                 row[0], plan.opportunity_id, row[1], row[2],
                 datetime.fromisoformat(row[3]), row[4],
-                tuple(PlannedSegment(**x) for x in json.loads(row[7])),
+                tuple(PlannedSegment(**x) for x in decode_tree(json.loads(row[7]), self.portable)),
                 row[5], row[6],
             )
             self.connection.execute(
@@ -928,7 +941,7 @@ class BreakPlanStore:
         return self._with_metadata(BreakPlan(
             str(row[0]), str(row[1]), str(row[2]), int(row[3]),
             datetime.fromisoformat(str(row[4])), float(row[5]),
-            tuple(PlannedSegment(**item) for item in json.loads(row[8])),
+            tuple(PlannedSegment(**item) for item in decode_tree(json.loads(row[8]), self.portable)),
             str(row[6]), str(row[7]),
         ))
 
@@ -944,7 +957,7 @@ class BreakPlanStore:
         return self._with_metadata(BreakPlan(
             str(row[0]), str(row[1]), str(row[2]), int(row[3]),
             datetime.fromisoformat(str(row[4])), float(row[5]),
-            tuple(PlannedSegment(**item) for item in json.loads(row[8])),
+            tuple(PlannedSegment(**item) for item in decode_tree(json.loads(row[8]), self.portable)),
             str(row[6]), str(row[7]),
         ))
 

@@ -419,6 +419,10 @@ def _convert_runtime(database: Path, plan: CopyPlan, revisions: dict[int, str]):
                 value = path_tree(json.loads(payload), plan.encode)
                 db.execute('UPDATE ad_break_plans SET payload=? WHERE plan_id=?', (json.dumps(value), identity))
         for number, revision in revisions.items():
+            previous_revision = None
+            if 'ad_break_policy_state' in tables:
+                row = db.execute('SELECT policy_revision FROM ad_break_policy_state WHERE channel_number=?', (number,)).fetchone()
+                previous_revision = row[0] if row else None
             for table in ['ad_break_policy_state', 'ad_break_catchup_state']:
                 if table in tables:
                     db.execute(f'UPDATE {table} SET policy_revision=? WHERE channel_number=?', (revision, number))
@@ -426,7 +430,10 @@ def _convert_runtime(database: Path, plan: CopyPlan, revisions: dict[int, str]):
                 rows = db.execute('SELECT m.plan_id,m.payload FROM ad_plan_metadata m JOIN ad_break_plans p ON m.plan_id=p.plan_id WHERE p.channel_number=?', (number,)).fetchall()
                 for identity, payload in rows:
                     value = json.loads(payload)
-                    value['policy_revision'] = revision
+                    # Normalize the active policy's path signature without
+                    # relabelling plans that aired under an older policy.
+                    if previous_revision is not None and value.get('policy_revision') == previous_revision:
+                        value['policy_revision'] = revision
                     db.execute('UPDATE ad_plan_metadata SET payload=? WHERE plan_id=?', (json.dumps(value), identity))
 
 

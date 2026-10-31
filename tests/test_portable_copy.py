@@ -305,3 +305,26 @@ def test_reused_changed_media_still_needs_a_rescan_instead_of_claiming_a_valid_h
         assert reopened.cached_asset_for_unchanged_path(changed) is None
     finally:
         runtime.break_store.close()
+
+
+def test_old_ad_policy_identity_is_retained_in_historical_plan_metadata(tmp_path):
+    library, service, store, runtime = source_setup(tmp_path)
+    try:
+        plan = runtime.break_store.plans_for_channel(7, start=EPOCH, end=EPOCH + timedelta(seconds=60))[0]
+        old_policy = '0' * 64
+        db = runtime.break_store.connection
+        payload = json.loads(db.execute('SELECT payload FROM ad_plan_metadata WHERE plan_id=?', (plan.plan_id,)).fetchone()[0])
+        payload['policy_revision'] = old_policy
+        db.execute('UPDATE ad_plan_metadata SET payload=? WHERE plan_id=?', (json.dumps(payload), plan.plan_id))
+        db.commit()
+        target = tmp_path / 'History drive'
+        copy_setup(library, service, store, target, copy_media=True)
+        from channelos.ad_break_engine import BreakPlanStore
+        copied = BreakPlanStore(load_setup(target).data_directory / 'runtime.db')
+        try:
+            assert copied.load_plan(plan.plan_id).policy_revision == old_policy
+            assert copied.viewer_counts() == runtime.break_store.viewer_counts()
+        finally:
+            copied.close()
+    finally:
+        runtime.break_store.close()

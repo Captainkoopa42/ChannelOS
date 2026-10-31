@@ -117,6 +117,30 @@ def test_calendar_guide_handles_interruptions_gap_and_resume(tmp_path):
     assert runtime.broadcast_at(EPOCH + timedelta(seconds=101)).offset_seconds == 1
 
 
+@pytest.mark.parametrize('mid_break', [False, True])
+def test_startup_snapshot_survives_adjacent_ad_enabled_programs_and_reopen(tmp_path, mid_break):
+    from channelos.couch_model import build_couch_snapshot
+
+    library, definition, _ = setup(tmp_path, breakpoints_seconds=[20],
+        break_duration_seconds=10, triggers=['breakpoint'] if mid_break else ['calendar_boundary'])
+    show = resolve_channel(definition, library).media[0].asset.asset_id
+    spacing = 70 if mid_break else 60
+    raw = channel_to_mapping(definition)
+    raw['programming'] = {'mode': 'calendar', 'calendar': [
+        {'asset_id': show, 'start_utc': (EPOCH + timedelta(seconds=spacing * i)).isoformat()}
+        for i in range(4)
+    ]}
+    definition = ChannelDefinition.from_mapping(raw)
+    for _ in range(2):
+        runtime, _ = open_runtime(tmp_path, library, definition)
+        try:
+            snapshot = build_couch_snapshot(GuideService((runtime,)), at=EPOCH, guide_hours=.1)
+            assert snapshot['rows']
+            assert runtime.broadcast_at(EPOCH + timedelta(seconds=spacing + 1)).offset_seconds == 1
+        finally:
+            runtime.break_store.close()
+
+
 def test_calendar_missed_gaps_have_same_rotation_as_live_queries(tmp_path):
     library, definition, ids = setup(tmp_path, selection_strategy='least_played', triggers=['calendar_boundary'])
     show = resolve_channel(definition, library).media[0].asset.asset_id

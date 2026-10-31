@@ -61,6 +61,19 @@ start early merely because no combination of ads fills the slot.
 Content duration and broadcast duration remain distinct. Fixed calendar starts
 are never silently shifted by advertising.
 
+Studio's **Auto Fill + Ads** reserves configured interruption and gap-break
+capacity before choosing the next program's fixed start. It uses the same
+placement arbitration and calendar-gap policy as playback, including interval,
+breakpoint, between-program and fixed-slot rules. Actual clips and rotation
+remain runtime decisions; ads are never inserted as ordinary program blocks.
+Existing fixed shows and available ad room following them stay protected.
+Already packed ranges report that they need Clear Range followed by Auto Fill
+to regenerate ad room. No-fit pools and inactive triggers produce diagnostics.
+
+Guide projection skips gap-plan queries when the preceding program (including
+interruptions) ends exactly at the next fixed start. Back-to-back ad-enabled
+calendars therefore remain valid at startup and after a persisted-state reopen.
+
 ## Phase D — interruptions and resume
 
 Explicit source-content breakpoints and interval triggers share opportunity

@@ -348,7 +348,7 @@ def test_qml_ad_settings_survive_real_autofill_preview_and_apply(
 
     try:
         evaluate("adBreaksEnabledCheck.checked = true; adSourcesArea.text = " + json.dumps(str(ads))
-                 + '; adTriggersField.text = "calendar_boundary"; adPriorityField.text = "0"')
+                 + '; adTriggersField.text = "calendar_boundary"; adPriorityField.text = "0"; adDurationField.text = "30"')
         started = evaluate('channelOS.startStudioAutoFill(editorObject(), '
                            '"2026-09-07T00:00:00+00:00", "2026-09-07T00:02:00+00:00")')
         assert started["ok"] is True
@@ -357,9 +357,10 @@ def test_qml_ad_settings_survive_real_autofill_preview_and_apply(
         assert controller.studioAutoFill["phase"] == "ready", controller.studioAutoFill["message"]
         assert received[0]["adPriority"] == 0
         assert type(received[0]["adPriority"]) is float  # Qt's whole-number double
-        assert item.property("calendarBlockCount") == 4
+        assert item.property("calendarBlockCount") == 2
         preview = evaluate("channelOS.previewChannel(editorObject())")
         assert preview["ok"] is True, preview
+        assert preview['adPreview']
         profile = evaluate('channelOS.saveAdBreakProfile({profileId: "p", name: "Profile", '
                            'defaults: {priority: 2}})')
         assert profile["ok"] is True, profile

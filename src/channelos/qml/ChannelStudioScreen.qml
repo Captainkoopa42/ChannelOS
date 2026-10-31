@@ -2025,7 +2025,7 @@ Item {
                         onClicked: studioRoot.clearVisibleRange()
                     }
                     StudioButton {
-                        text: "Auto Fill Range"
+                        text: adBreaksEnabledCheck.checked ? "Auto Fill + Ads" : "Auto Fill Range"
                         highlighted: true
                         enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.autoFillVisibleRange()
@@ -2779,6 +2779,8 @@ Item {
                 color: studioRoot.feedbackIsError
                        ? studioRoot.danger : studioRoot.textSecondary
                 font.pixelSize: 12
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
                 elide: Text.ElideRight
             }
             Text {
@@ -3286,7 +3288,9 @@ Item {
                 Layout.fillWidth: true
                 text: "Configure indexed advertisements separately from programs. "
                       + "Calendar channels use fixed gaps; sequential channels can "
-                      + "interrupt episodes at explicit breakpoints or content-time intervals."
+                      + "interrupt episodes at explicit breakpoints or content-time intervals. "
+                      + "Auto Fill reserves ad time in new programming. For an already filled range, "
+                      + "use Clear Range, then Auto Fill + Ads before applying."
                 color: studioRoot.textSecondary
                 wrapMode: Text.Wrap
                 font.pixelSize: 12

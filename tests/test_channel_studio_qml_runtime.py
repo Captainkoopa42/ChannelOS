@@ -423,6 +423,8 @@ def test_ad_management_controls_edit_transition_placements_and_restore_cancelled
 
     controller, host = AdController(), FakeStudioHost()
     engine = QQmlApplicationEngine()
+    warnings = []
+    engine.warnings.connect(lambda errors: warnings.extend(error.toString() for error in errors))
     engine.rootContext().setContextProperty('channelOS', controller)
     component = QQmlComponent(engine, QUrl.fromLocalFile(str(
         Path(channelos.__file__).resolve().parent / 'qml' / 'ChannelStudioScreen.qml')))
@@ -460,6 +462,11 @@ def test_ad_management_controls_edit_transition_placements_and_restore_cancelled
     assert len(controller.saved['placements']) == 1
     assert controller.saved['placements'][0]['trigger'] == 'between_programs'
     assert controller.saved['placements'][0]['collection_id'] == 'ads'
+    evaluate('placementCollection.popup.open()')
+    assert evaluate('placementCollection.popup.contentItem.itemAtIndex(0).contentItem.text') == 'Commercials'
+    evaluate('placementCollection.popup.close(); placementProfile.popup.open()')
+    assert evaluate('placementProfile.popup.contentItem.itemAtIndex(0).contentItem.text') == 'Standard'
+    assert not any('undefined' in warning for warning in warnings)
     evaluate('adCatalogDialog.close()')
     window.close()
     item.setParentItem(None)

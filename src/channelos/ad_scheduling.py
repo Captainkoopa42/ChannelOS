@@ -18,7 +18,41 @@ def configured_policies(settings: AdvertisingDefinition):
     # insert an extra between-program break after an interrupted episode.
     return tuple(("default", trigger, settings) for trigger in settings.triggers
                  if trigger != "between_programs" or not (
-                     settings.breakpoints_seconds or settings.interval_seconds))
+                     ("breakpoint" in settings.triggers and settings.breakpoints_seconds)
+                     or ("interval" in settings.triggers and settings.interval_seconds)))
+
+
+def calendar_gap_policy(settings: AdvertisingDefinition):
+    candidates = [(identity, trigger, policy)
+                  for identity, trigger, policy in configured_policies(settings)
+                  if settings.enabled and policy.enabled
+                  and trigger in {"between_programs", "calendar_boundary", "fixed_slot"}]
+    return min(candidates, key=lambda item: (-item[2].priority, item[0], item[1])) if candidates else None
+
+
+def calendar_ad_room(settings: AdvertisingDefinition, occurrence: ProgramOccurrence, revision: str):
+    """Reserve policy capacity for authoring without choosing or airing any ads.
+
+    The runtime still makes the authoritative, durable media selections. A new
+    fixed start must leave room for the configured interruptions and gap break.
+    """
+    middle = [(opportunity, policy) for opportunity, policy in
+              program_opportunities(settings, occurrence, revision)
+              if opportunity.trigger in {"breakpoint", "interval"}]
+    middle_seconds = sum(opportunity.duration_seconds + (
+        policy.expand_max_seconds if policy.timing_policy == "expand"
+        and policy.schedule_priority != "fixed" else 0.0
+    ) for opportunity, policy in middle)
+    gap = calendar_gap_policy(settings)
+    gap_seconds = 0.0
+    if gap is not None:
+        _, trigger, policy = gap
+        gap_seconds = policy.break_duration_seconds
+        if trigger == "fixed_slot" and policy.slot_seconds:
+            at = occurrence.ends_at + timedelta(seconds=middle_seconds)
+            edge = math.ceil((at.timestamp() + 1e-6) / policy.slot_seconds) * policy.slot_seconds
+            gap_seconds = edge - at.timestamp()
+    return middle_seconds, gap_seconds, len(middle)
 
 
 def program_opportunities(settings: AdvertisingDefinition, occurrence: ProgramOccurrence,

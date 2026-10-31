@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import shutil
 import tempfile
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -15,6 +16,8 @@ from .ad_catalog import (
     AdCatalogStore, AdCollection, AdPlacementAssignment, BreakProfile, ChannelAdAssignment,
     export_portable_channel,
 )
+from .ad_break_engine import ProgramOccurrence
+from .ad_scheduling import calendar_ad_room, calendar_gap_policy, configured_policies, eligible_media, select_segments
 from .library import MediaLibrary
 from .loader import load_channel
 from .models import (
@@ -29,6 +32,7 @@ from .runtime import (
     ChannelRuntimeError,
     RuntimeStore,
     deterministic_shuffle_order,
+    advertising_signature,
 )
 
 
@@ -1002,7 +1006,7 @@ class BroadcasterService:
         pool_editor["name"] = str(raw.get("name", "")).strip() or "Studio Draft"
         pool_editor["mode"] = filler_mode
         pool_editor["calendarBlocks"] = []
-        definition = definition_from_editor(pool_editor)
+        definition = self._configured_definition(pool_editor)
         check_cancelled()
         publish(0, 0, "Resolving indexed local media…")
         resolved = self._resolve_and_validate(definition)
@@ -1012,11 +1016,39 @@ class BroadcasterService:
         else:
             ordered = resolved.media
 
+        advertising = definition.advertising
+        revision = advertising_signature(resolved)
+
+        def ad_room(asset_id: str, begins: datetime, finishes: datetime):
+            identity = hashlib.sha256(
+                f"calendar:{definition.channel}:{asset_id}:{begins.isoformat()}".encode()
+            ).hexdigest()
+            return calendar_ad_room(advertising, ProgramOccurrence(
+                identity, definition.channel, asset_id, begins, finishes,
+            ), revision)
+
+        ad_warnings: list[str] = []
+        if advertising.enabled:
+            policies = [(identity, trigger, policy) for identity, trigger, policy in configured_policies(advertising)
+                        if policy.enabled]
+            if not policies:
+                ad_warnings.append("No ad triggers are enabled.")
+            for identity, trigger, policy in policies:
+                budget = policy.slot_seconds if trigger == "fixed_slot" else policy.break_duration_seconds
+                gap_trigger = trigger in {"calendar_boundary", "between_programs", "fixed_slot"}
+                fit_policy = replace(policy, timing_policy="strict_fit") if gap_trigger and policy.timing_policy == "expand" else policy
+                extra = fit_policy.expand_max_seconds if fit_policy.timing_policy == "expand" and fit_policy.schedule_priority != "fixed" else 0.0
+                selected = select_segments(eligible_media(resolved.ad_media, policy), budget, fit_policy,
+                    seed=f"autofill-fit:{identity}:{trigger}", expand_max_seconds=extra)
+                if not selected:
+                    ad_warnings.append(f"No ad fits the {budget:g}-second {trigger} break. Use shorter clips or increase the break length.")
+
         # Existing fixed programs are occupied time, not disposable filler.
         # Auto Fill only creates complete media blocks inside genuinely empty
         # portions of the requested range. This prevents generated blocks from
         # overlapping hand-authored programs and leaves ad/filler gaps intact.
         occupied: list[tuple[datetime, datetime]] = []
+        existing_programs: list[tuple[datetime, datetime, str]] = []
         raw_existing = raw.get("calendarBlocks", [])
         if not isinstance(raw_existing, (list, tuple)):
             raise ChannelValidationError("calendarBlocks must be a list")
@@ -1050,6 +1082,13 @@ class BroadcasterService:
                 raise ChannelValidationError(
                     f"calendarBlocks[{block_index}] ends before it starts"
                 )
+            existing_programs.append((existing_start, existing_end, str(existing.get("assetId", ""))))
+        existing_programs.sort()
+        for existing_index, (existing_start, existing_end, asset_id) in enumerate(existing_programs):
+            middle, gap, _ = ad_room(asset_id, existing_start, existing_end)
+            boundary = min(end, existing_programs[existing_index + 1][0]) if existing_index + 1 < len(existing_programs) else end
+            padding = min(middle + gap, max(0.0, (boundary - existing_end).total_seconds()))
+            existing_end += timedelta(seconds=padding)
             if existing_start < end and existing_end > start:
                 occupied.append((max(start, existing_start), min(end, existing_end)))
         occupied.sort(key=lambda interval: interval[0])
@@ -1068,10 +1107,12 @@ class BroadcasterService:
         index = 0
         range_seconds = max(1, int((end - start).total_seconds()))
         last_percent = -1
+        ad_slots = 0
+        ad_reserved_seconds = 0.0
         publish(0, range_seconds, "Building the editable schedule…")
 
         def fill_gap(gap_end: datetime) -> None:
-            nonlocal cursor, index, last_percent
+            nonlocal cursor, index, last_percent, ad_slots, ad_reserved_seconds
             while cursor < gap_end and len(blocks) < 10000:
                 check_cancelled()
                 media = ordered[index % len(ordered)]
@@ -1081,8 +1122,11 @@ class BroadcasterService:
                         f"Auto Fill requires a positive duration for {media.location.path}"
                     )
                 block_end = cursor + timedelta(seconds=duration)
-                if block_end > gap_end:
+                middle, gap, middle_count = ad_room(media.asset.asset_id, cursor, block_end)
+                broadcast_end = block_end + timedelta(seconds=middle)
+                if broadcast_end > gap_end:
                     break
+                gap = min(gap, max(0.0, (gap_end - broadcast_end).total_seconds()))
                 blocks.append(
                     {
                         "assetId": media.asset.asset_id,
@@ -1094,7 +1138,9 @@ class BroadcasterService:
                         "endUtc": block_end.isoformat(),
                     }
                 )
-                cursor = block_end
+                cursor = broadcast_end + timedelta(seconds=gap)
+                ad_slots += middle_count + (1 if gap > 0 else 0)
+                ad_reserved_seconds += middle + gap
                 index += 1
                 completed_seconds = min(
                     range_seconds, int((cursor - start).total_seconds())
@@ -1140,6 +1186,16 @@ class BroadcasterService:
             )
         else:
             message += "the normal filler covers any short remainder"
+        if advertising.enabled:
+            ad_summary = f"Reserved {ad_slots} ad windows ({ad_reserved_seconds:g} seconds). "
+            if not blocks and existing_programs:
+                ad_warnings.append("This range is already filled. Use Clear Range, then Auto Fill + Ads to rebuild it with ad space; existing programs were preserved.")
+            elif not ad_slots:
+                ad_warnings.append("No ad window fits this range and its program lengths. Check the triggers, interval and break length.")
+            if ad_warnings:
+                message = " ".join(dict.fromkeys(ad_warnings)) + " " + ad_summary + message
+            else:
+                message = ad_summary + message
 
         result = {
             "ok": True,
@@ -1148,6 +1204,9 @@ class BroadcasterService:
             "endUtc": end.isoformat(),
             "completeThroughUtc": cursor.isoformat(),
             "hitBlockLimit": hit_limit,
+            "adSlotCount": ad_slots,
+            "adReservedSeconds": ad_reserved_seconds,
+            "adWarnings": list(dict.fromkeys(ad_warnings)),
             "blocks": blocks,
         }
         publish(range_seconds, range_seconds, "Auto Fill schedule ready")

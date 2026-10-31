@@ -195,9 +195,11 @@ class _StudioAutoFillWorker(QObject):
             logger.exception("Studio Auto Fill worker failed")
             self.failed.emit(str(exc))
         else:
+            summary = result if isinstance(result, dict) else {}
             logger.info(
-                "Studio Auto Fill worker completed blocks=%d",
-                len(result.get("blocks", ())) if isinstance(result, dict) else 0,
+                "Studio Auto Fill worker completed blocks=%d ad_windows=%d ad_seconds=%s warnings=%d",
+                len(summary.get("blocks", ())), summary.get("adSlotCount", 0),
+                summary.get("adReservedSeconds", 0), len(summary.get("adWarnings", ())),
             )
             self.completed.emit(result)
         finally:

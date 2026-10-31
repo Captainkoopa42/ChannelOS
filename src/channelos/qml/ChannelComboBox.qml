@@ -72,11 +72,15 @@ ComboBox {
         highlighted: channelCombo.highlightedIndex === index
 
         contentItem: Text {
-            text: channelCombo.textRole
-                  ? (Array.isArray(channelCombo.model)
-                     ? modelData[channelCombo.textRole]
-                     : model[channelCombo.textRole])
-                  : modelData
+            text: {
+                var value = typeof modelData === "undefined" ? undefined : modelData
+                if (channelCombo.textRole) {
+                    value = value && value[channelCombo.textRole] !== undefined
+                            ? value[channelCombo.textRole]
+                            : (typeof model !== "undefined" ? model[channelCombo.textRole] : undefined)
+                }
+                return value === undefined || value === null ? "" : String(value)
+            }
             color: highlighted ? "#ffffff" : "#f4f7fb"
             font: channelCombo.font
             verticalAlignment: Text.AlignVCenter

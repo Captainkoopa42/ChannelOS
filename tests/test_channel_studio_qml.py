@@ -34,7 +34,7 @@ def test_channel_studio_exposes_calendar_drag_drop_and_safe_apply() -> None:
     assert "minuteForTrackPosition" in qml
     assert "studioRoot.openDay(monthDay.cellDate)" in qml
     assert "studioRoot.openDay(weekDay.columnDate)" in qml
-    assert 'text: "Auto Fill Range"' in qml
+    assert '"Auto Fill + Ads" : "Auto Fill Range"' in qml
     assert 'text: "Apply to Channel"' in qml
     assert "DropArea" in qml
     assert 'Drag.keys: ["channelos-media"]' in qml

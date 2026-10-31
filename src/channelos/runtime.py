@@ -13,7 +13,7 @@ from .ad_breaks import PlannedAd
 from .ad_break_engine import (
     BreakPlan, BreakPlanStore, PlannedSegment, ProgramOccurrence,
 )
-from .ad_scheduling import configured_policies, eligible_media, program_opportunities, snapshot_segments, select_segments, indexed_media_for_segment
+from .ad_scheduling import calendar_gap_policy, eligible_media, program_opportunities, snapshot_segments, select_segments, indexed_media_for_segment
 from .library import IndexedMedia
 from .models import AdvertisingDefinition, CalendarBlockDefinition
 from .resolve import ResolvedChannel
@@ -434,10 +434,7 @@ class CalendarTimeline:
                 self.break_store.advance_catchup_cursor(self.channel_number, self._starts[index + 1])
 
     def _gap_settings(self):
-        candidates = [(identity, trigger, settings) for identity, trigger, settings in configured_policies(self.advertising)
-                      if trigger in {"between_programs", "calendar_boundary", "fixed_slot"}
-                      and settings.enabled and self.advertising.enabled]
-        return min(candidates, key=lambda item: (-item[2].priority, item[0], item[1])) if candidates else None
+        return calendar_gap_policy(self.advertising)
 
     def _calendar_ad_plan(self, gap_anchor: datetime, next_start: datetime) -> tuple[PlannedAd, ...]:
         """Persist fixed-gap decisions before projecting them onto the broadcast clock."""
@@ -1781,7 +1778,7 @@ class ChannelRuntime:
                 index = self.timeline._starts.index(parent_start)
                 plans = list(self.timeline._calendar_mid_plans(index))
                 end = self.timeline._calendar_program_end(index, plans)
-                if index + 1 < len(self.timeline._starts):
+                if index + 1 < len(self.timeline._starts) and self.timeline._starts[index + 1] > end:
                     for plan in self.break_store.plans_for_channel(
                         self.channel_number, start=end, end=self.timeline._starts[index + 1]
                     ):

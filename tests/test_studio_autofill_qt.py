@@ -297,7 +297,9 @@ def test_settings_can_open_the_diagnostic_log_folder(
     assert app is not None
 
 
+@pytest.mark.parametrize("simple", [False, True])
 def test_qml_ad_settings_survive_real_autofill_preview_and_apply(
+    simple,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -347,8 +349,10 @@ def test_qml_ad_settings_survive_real_autofill_preview_and_apply(
         return result.toVariant() if hasattr(result, "toVariant") else result
 
     try:
-        evaluate("adBreaksEnabledCheck.checked = true; adSourcesArea.text = " + json.dumps(str(ads))
-                 + '; adTriggersField.text = "calendar_boundary"; adPriorityField.text = "0"; adDurationField.text = "30"')
+        settings = {"adBreaksEnabled": True, "adSources": [str(ads)], "adTriggers": ["calendar_boundary"],
+                    "adPriority": 0, "adBreakDurationSeconds": 30,
+                    "adSetupMode": "after_show" if simple else "advanced"}
+        evaluate("adSettings.load(Object.assign(adSettings.editorObject(), " + json.dumps(settings) + "))")
         started = evaluate('channelOS.startStudioAutoFill(editorObject(), '
                            '"2026-09-07T00:00:00+00:00", "2026-09-07T00:02:00+00:00")')
         assert started["ok"] is True
@@ -368,6 +372,7 @@ def test_qml_ad_settings_survive_real_autofill_preview_and_apply(
         assert item.property("feedbackIsError") is False, item.property("feedbackMessage")
         saved = controller._broadcaster.records[0].definition
         assert saved.advertising.enabled is True
+        assert saved.advertising.setup_mode == ("after_show" if simple else "advanced")
         assert saved.advertising.priority == 0
         assert type(saved.advertising.priority) is int
     finally:

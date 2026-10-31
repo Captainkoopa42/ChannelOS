@@ -396,6 +396,8 @@ def export_portable_channel(
     serialized, all required canonical media IDs and policy defaults travel
     with the channel. Unassigned channels are left unchanged.
     """
+    if channel.advertising.setup_mode != "advanced":
+        return channel
     assignment = store.get_assignment(channel.channel)
     if assignment is None:
         return channel
@@ -484,6 +486,6 @@ def export_portable_channel(
     options["placements"] = tuple(placements)
     return replace(
         channel,
-        schema_version="0.5",
+        schema_version="0.6" if any(block.ad_plan for block in channel.programming.calendar) else "0.5",
         advertising=replace(channel.advertising, **options),
     )

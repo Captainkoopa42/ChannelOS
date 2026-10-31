@@ -112,7 +112,7 @@ Item {
     }
 
     property var hostWindow: null
-    property var adPlacementSnapshots: []
+    property string activeBin: "media"
     property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
     property var mediaLibrary: draftData.media || []
     property var mediaByAssetId: ({})
@@ -255,7 +255,8 @@ Item {
             var block = calendarBlocks.get(blockIndex)
             var item = {
                 assetId: String(block.assetId),
-                startUtc: String(block.startUtc)
+                startUtc: String(block.startUtc),
+                adPlan: block.adPlanJson ? JSON.parse(block.adPlanJson) : null
             }
             var fillerIds = parseAssetIds(block.fillerAssetIdsJson)
             if (fillerIds.length) {
@@ -265,7 +266,7 @@ Item {
             blocks.push(item)
         }
 
-        return {
+        return Object.assign({
             channel: channelNumberField.text,
             name: channelNameField.text,
             description: descriptionField.text,
@@ -275,43 +276,8 @@ Item {
             avoidRepeatDays: repeatDays.value,
             numberWidth: 3,
             sources: sources,
-            calendarBlocks: blocks,
-            adBreaksEnabled: adBreaksEnabledCheck.checked,
-            adSources: adSourcesArea.text.split(";").map(function(value) {
-                return value.trim()
-            }).filter(function(value) { return value.length > 0 }),
-            adSelectionStrategy: [
-                "best_fit", "largest", "smallest", "sequential",
-                "least_played", "complete_rotation"
-            ][adStrategyBox.currentIndex],
-            adConfigVersion: "0.5",
-            adAssetIds: adAssetIdsField.text.split(";").map(function(value) {
-                return value.trim()
-            }).filter(function(value) { return value.length > 0 }),
-            adCollectionId: adCollectionField.text.trim(),
-            adProfileId: adProfileField.text.trim(),
-            adBreakpointsSeconds: adBreakpointsField.text.split(";").map(function(value) {
-                return value.trim()
-            }).filter(function(value) { return value.length > 0 }),
-            adIntervalSeconds: adIntervalField.text.trim(),
-            adBreakDurationSeconds: Number(adDurationField.text),
-            adPriority: Number(adPriorityField.text),
-            adTimingPolicy: ["strict_fit", "smoosh", "expand"][adTimingBox.currentIndex],
-            adSmooshMinimumSeconds: 5,
-            adSmooshMaxTrimSeconds: Number(adSmooshTrimField.text),
-            adExpandMaxSeconds: Number(adExpandField.text),
-            adTriggers: adTriggersField.text.split(";").map(function(value) {
-                return value.trim()
-            }).filter(function(value) { return value.length > 0 }),
-            adTransitionBehavior: ["cut", "fade", "hold"][adTransitionBox.currentIndex],
-            adTransitionSeconds: Number(adTransitionSecondsField.text),
-            adSlotSeconds: adSlotSecondsField.text.trim() ? Number(adSlotSecondsField.text) : null,
-            adSchedulePriority: ["program", "fixed", "advertising"][adSchedulePriorityBox.currentIndex],
-            adExpandSource: ["schedule_shift", "available_slot_time", "current_program", "next_event"][adExpandSourceBox.currentIndex],
-            adPlacements: adPlacementSnapshots,
-            adCollectionMembership: draftData.adCollectionMembership || "fixed",
-            adExcludedAssetIds: draftData.adExcludedAssetIds || []
-        }
+            calendarBlocks: blocks
+        }, adSettings.editorObject())
     }
 
     function mediaForAsset(assetId) {
@@ -405,6 +371,7 @@ Item {
             durationSeconds: duration,
             startUtc: start.toISOString(),
             endUtc: end.toISOString(),
+            adPlanJson: String(block.adPlanJson || JSON.stringify(block.adPlan || null)),
             fillerMode: String(block.fillerMode || ""),
             fillerAssetIdsJson: JSON.stringify(block.fillerAssetIds || []),
             fillerGroupName: String(block.fillerGroupName || "")
@@ -428,6 +395,7 @@ Item {
             durationSeconds: duration,
             startUtc: start.toISOString(),
             endUtc: end.toISOString(),
+            adPlanJson: String(block.adPlanJson || JSON.stringify(block.adPlan || null)),
             fillerMode: String(block.fillerMode || ""),
             fillerAssetIdsJson: String(block.fillerAssetIdsJson
                                        || JSON.stringify(block.fillerAssetIds || [])),
@@ -449,6 +417,7 @@ Item {
                 durationSeconds: current.durationSeconds,
                 startUtc: current.startUtc,
                 endUtc: current.endUtc,
+                adPlanJson: current.adPlanJson,
                 fillerMode: current.fillerMode,
                 fillerAssetIdsJson: current.fillerAssetIdsJson,
                 fillerGroupName: current.fillerGroupName
@@ -515,35 +484,7 @@ Item {
         fillerModeBox.currentIndex = String(draftData.fillerMode) === "shuffle"
                 ? 1 : 0
         repeatDays.value = Number(draftData.avoidRepeatDays || 0)
-        adBreaksEnabledCheck.checked = Boolean(draftData.adBreaksEnabled || false)
-        adSourcesArea.text = (draftData.adSources || []).join("; ")
-        var adStrategy = String(draftData.adSelectionStrategy || "best_fit")
-        adStrategyBox.currentIndex = Math.max(0, [
-            "best_fit", "largest", "smallest", "sequential",
-            "least_played", "complete_rotation"
-        ].indexOf(adStrategy))
-        adAssetIdsField.text = (draftData.adAssetIds || []).join("; ")
-        adCollectionField.text = String(draftData.adCollectionId || "")
-        adProfileField.text = String(draftData.adProfileId || "")
-        adBreakpointsField.text = (draftData.adBreakpointsSeconds || []).join("; ")
-        adIntervalField.text = String(draftData.adIntervalSeconds || "")
-        adDurationField.text = String(draftData.adBreakDurationSeconds || 120)
-        adPriorityField.text = String(draftData.adPriority || 0)
-        adTimingBox.currentIndex = Math.max(0, ["strict_fit", "smoosh", "expand"].indexOf(
-            String(draftData.adTimingPolicy || "strict_fit")))
-        adSmooshTrimField.text = String(draftData.adSmooshMaxTrimSeconds === undefined ? 15 : draftData.adSmooshMaxTrimSeconds)
-        adExpandField.text = String(draftData.adExpandMaxSeconds || 0)
-        adTriggersField.text = (draftData.adTriggers || [
-            "breakpoint", "interval", "between_programs", "calendar_boundary"
-        ]).join("; ")
-        adTransitionBox.currentIndex = Math.max(0, ["cut", "fade", "hold"].indexOf(
-            String(draftData.adTransitionBehavior || "cut")))
-
-        adTransitionSecondsField.text = String(draftData.adTransitionSeconds === undefined ? 0.5 : draftData.adTransitionSeconds)
-        adSlotSecondsField.text = String(draftData.adSlotSeconds || "")
-        adSchedulePriorityBox.currentIndex = Math.max(0, ["program", "fixed", "advertising"].indexOf(String(draftData.adSchedulePriority || "program")))
-        adExpandSourceBox.currentIndex = Math.max(0, ["schedule_shift", "available_slot_time", "current_program", "next_event"].indexOf(String(draftData.adExpandSource || "schedule_shift")))
-        adPlacementSnapshots = draftData.adPlacements || []
+        adSettings.load(draftData)
 
         draftSources.clear()
         expandedMediaSources = ({})
@@ -609,15 +550,13 @@ Item {
         }
         // Match the runtime's separate advertising scope, including disabled
         // policies and alternate copies of a canonical asset.
-        var adRoots = String(adSourcesArea.text || "").split(";").map(function(value) {
-            return value.trim()
-        }).filter(function(value) { return value.length > 0 })
+        var adRoots = adSettings.selectedSources.slice()
         var adIds = ({})
-        String(adAssetIdsField.text || "").split(";").forEach(function(value) {
+        adSettings.selectedIds.forEach(function(value) {
             if (value.trim().length) adIds[value.trim()] = true
         })
-        for (var placementIndex = 0; placementIndex < adPlacementSnapshots.length; ++placementIndex) {
-            var policy = adPlacementSnapshots[placementIndex].policy || ({})
+        for (var placementIndex = 0; adSettings.setupMode === "advanced" && placementIndex < adSettings.adPlacementSnapshots.length; ++placementIndex) {
+            var policy = adSettings.adPlacementSnapshots[placementIndex].policy || ({})
             var policyAssets = policy.asset_ids || []
             var policySources = policy.sources || []
             policyAssets.forEach(function(assetId) { adIds[assetId] = true })
@@ -1499,6 +1438,7 @@ Item {
     }
 
     function handleControllerIntent(intent) {
+        if (adSettings.dialogOpen) { if (intent === "BACK") adSettings.cancelActive(); return }
         if (!hostWindow || hostWindow.screen !== "studio")
             return
         if (autoFillBusy) {
@@ -1555,14 +1495,14 @@ Item {
 
         Shortcut {
             sequence: "Esc"
-            enabled: studioSurface.visible && !discardDraftDialog.visible
+            enabled: studioSurface.visible && !discardDraftDialog.visible && !adSettings.dialogOpen
                      && !studioRoot.autoFillBusy
             onActivated: studioRoot.leaveStudio()
         }
 
         Shortcut {
             sequence: "Ctrl+S"
-            enabled: studioSurface.visible && !discardDraftDialog.visible
+            enabled: studioSurface.visible && !discardDraftDialog.visible && !adSettings.dialogOpen
                      && !studioRoot.autoFillBusy
             onActivated: studioRoot.applyDraft()
         }
@@ -1706,17 +1646,30 @@ Item {
             color: studioRoot.panel
             border.color: studioRoot.line
 
+            RowLayout {
+                id: binTabs
+                anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+                anchors.margins: 14
+                StudioButton { text: "MEDIA BIN"; Layout.fillWidth: true; checked: studioRoot.activeBin === "media"; onClicked: studioRoot.activeBin = "media" }
+                StudioButton { objectName: "studioAdBinTab"; text: "AD BIN"; Layout.fillWidth: true; checked: studioRoot.activeBin === "ads"; onClicked: studioRoot.activeBin = "ads" }
+            }
+            AdMediaBin {
+                objectName: "studioAdBin"
+                anchors.top: binTabs.bottom; anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                anchors.margins: 14
+                visible: studioRoot.activeBin === "ads"
+                mediaLibrary: studioRoot.mediaLibrary; sourceOptions: studioRoot.sourceChoices()
+                sources: adSettings.binScope.sources; assetIds: adSettings.binScope.ids; excludedIds: adSettings.binScope.excluded
+                readOnly: adSettings.managedBin
+                onSourcesEdited: function(paths) { adSettings.setSources(paths) }
+                onExclusionsEdited: function(ids) { adSettings.setExcluded(ids) }
+            }
             ColumnLayout {
-                anchors.fill: parent
+                visible: studioRoot.activeBin === "media"
+                anchors.top: binTabs.bottom; anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
                 anchors.margins: 14
                 spacing: 10
 
-                Text {
-                    text: "MEDIA BIN"
-                    color: studioRoot.textPrimary
-                    font.pixelSize: 16
-                    font.weight: Font.DemiBold
-                }
                 Text {
                     Layout.fillWidth: true
                     text: studioRoot.mediaBinAssetCount + " program videos in "
@@ -1765,7 +1718,7 @@ Item {
 
                 Text {
                     Layout.fillWidth: true
-                    text: "Expand a source to browse. Selected sources feed Auto Fill and gap filler. Ad clips use Advertisement Breaks."
+                    text: "Expand a source to browse. Selected sources feed Auto Fill and gap filler. Select ad clips in the Ad Bin tab."
                     color: studioRoot.textSecondary
                     font.pixelSize: 10
                     wrapMode: Text.Wrap
@@ -1971,7 +1924,7 @@ Item {
                     Layout.fillWidth: true
                     spacing: 8
 
-                    StudioButton { text: "‹"; onClicked: studioRoot.navigateRange(-1) }
+                    StudioButton { text: "‹"; Layout.preferredWidth: 38; Layout.minimumWidth: 38; onClicked: studioRoot.navigateRange(-1) }
                     StudioButton { text: "Today"; onClicked: studioRoot.goToday() }
                     Label { text: "SNAP"; color: studioRoot.textSecondary; font.pixelSize: 10 }
                     ChannelComboBox {
@@ -1981,11 +1934,12 @@ Item {
                         currentIndex: 2
                         onActivated: studioRoot.snapMinutes = [5, 10, 15, 30][currentIndex]
                     }
-                    StudioButton { text: "›"; onClicked: studioRoot.navigateRange(1) }
+                    StudioButton { text: "›"; Layout.preferredWidth: 38; Layout.minimumWidth: 38; onClicked: studioRoot.navigateRange(1) }
 
                     Text {
                         Layout.fillWidth: true
                         text: studioRoot.rangeLabel()
+                        elide: Text.ElideRight
                         color: studioRoot.textPrimary
                         font.pixelSize: 20
                         font.weight: Font.DemiBold
@@ -2025,20 +1979,21 @@ Item {
                         onClicked: studioRoot.clearVisibleRange()
                     }
                     StudioButton {
-                        text: adBreaksEnabledCheck.checked ? "Auto Fill + Ads" : "Auto Fill Range"
+                        text: adSettings.adEnabled ? "Auto Fill + Ads" : "Auto Fill Range"
                         highlighted: true
                         enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.autoFillVisibleRange()
                     }
                     StudioButton {
                         text: "Ad Breaks"
+                        highlighted: true
                         enabled: !studioRoot.autoFillBusy
-                        onClicked: adBreakSettingsDialog.open()
+                        onClicked: adSettings.openBasic()
                     }
                     StudioButton {
-                        text: "Ad Catalog"
+                        text: "Advanced Ad Settings…"
                         enabled: !studioRoot.autoFillBusy
-                        onClicked: adCatalogDialog.open()
+                        onClicked: adSettings.openAdvanced()
                     }
                 }
 
@@ -3194,698 +3149,18 @@ Item {
         }
     }
 
-    StudioDialog {
-        id: adBreakSettingsDialog
-        title: "Advertisement Breaks"
-        width: Math.min(studioRoot.width - 40, 660)
-        height: Math.min(studioRoot.height - 40, 770)
-        x: Math.max(20, (studioRoot.width - width) / 2)
-        y: Math.max(20, (studioRoot.height - height) / 2)
-        property bool savedAdEnabled: false
-        property string savedAdSources: ""
-        property int savedAdStrategy: 0
-        property var savedAdvanced: ({})
-
-        function snapshotAdvanced() {
-            return {
-                assets: adAssetIdsField.text,
-                collection: adCollectionField.text,
-                profile: adProfileField.text,
-                breakpoints: adBreakpointsField.text,
-                interval: adIntervalField.text,
-                duration: adDurationField.text,
-                priority: adPriorityField.text,
-                timing: adTimingBox.currentIndex,
-                smoosh: adSmooshTrimField.text,
-                expand: adExpandField.text,
-                triggers: adTriggersField.text,
-                transition: adTransitionBox.currentIndex,
-                transitionSeconds: adTransitionSecondsField.text,
-                slot: adSlotSecondsField.text,
-                schedulePriority: adSchedulePriorityBox.currentIndex,
-                expandSource: adExpandSourceBox.currentIndex
-            }
-        }
-
-        function restoreAdvanced(values) {
-            adAssetIdsField.text = String(values.assets || "")
-            adCollectionField.text = String(values.collection || "")
-            adProfileField.text = String(values.profile || "")
-            adBreakpointsField.text = String(values.breakpoints || "")
-            adIntervalField.text = String(values.interval || "")
-            adDurationField.text = String(values.duration || "120")
-            adPriorityField.text = String(values.priority || "0")
-            adTimingBox.currentIndex = Number(values.timing || 0)
-            adSmooshTrimField.text = String(values.smoosh || "15")
-            adExpandField.text = String(values.expand || "0")
-            adTriggersField.text = String(values.triggers || "")
-            adTransitionBox.currentIndex = Number(values.transition || 0)
-            adTransitionSecondsField.text = String(values.transitionSeconds === undefined ? 0.5 : values.transitionSeconds)
-            adSlotSecondsField.text = String(values.slot || "")
-            adSchedulePriorityBox.currentIndex = Number(values.schedulePriority || 0)
-            adExpandSourceBox.currentIndex = Number(values.expandSource || 0)
-        }
-
-        onOpened: {
-            savedAdEnabled = adBreaksEnabledCheck.checked
-            savedAdSources = adSourcesArea.text
-            savedAdStrategy = adStrategyBox.currentIndex
-            savedAdvanced = snapshotAdvanced()
-        }
-        onAccepted: {
-            studioRoot.dirty = true
-            savedAdEnabled = adBreaksEnabledCheck.checked
-            savedAdSources = adSourcesArea.text
-            savedAdStrategy = adStrategyBox.currentIndex
-            savedAdvanced = snapshotAdvanced()
-        }
-        onRejected: {
-            adBreaksEnabledCheck.checked = savedAdEnabled
-            adSourcesArea.text = savedAdSources
-            adStrategyBox.currentIndex = savedAdStrategy
-            restoreAdvanced(savedAdvanced)
-        }
-
-        contentItem: Flickable {
-            id: adSettingsScroll
-            clip: true
-            contentWidth: width
-            contentHeight: adSettingsColumn.implicitHeight + 12
-            boundsBehavior: Flickable.StopAtBounds
-
-            ColumnLayout {
-                id: adSettingsColumn
-                width: adSettingsScroll.width - 16
-                spacing: 12
-
-            ChannelCheckBox {
-                id: adBreaksEnabledCheck
-                text: "Enable broadcast advertising"
-                checked: false
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: "Configure indexed advertisements separately from programs. "
-                      + "Calendar channels use fixed gaps; sequential channels can "
-                      + "interrupt episodes at explicit breakpoints or content-time intervals. "
-                      + "Auto Fill reserves ad time in new programming. For an already filled range, "
-                      + "use Clear Range, then Auto Fill + Ads before applying."
-                color: studioRoot.textSecondary
-                wrapMode: Text.Wrap
-                font.pixelSize: 12
-            }
-
-            Label {
-                text: "Ad source folders — separate indexed paths with semicolons"
-                color: studioRoot.textPrimary
-                font.pixelSize: 12
-            }
-
-            ChannelTextField {
-                id: adSourcesArea
-                Layout.fillWidth: true
-                placeholderText: "C:/Media/Advertisements; D:/ChannelOS/Ads"
-                selectByMouse: true
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                Label {
-                    text: "Selection strategy"
-                    color: studioRoot.textPrimary
-                }
-                ChannelComboBox {
-                    id: adStrategyBox
-                    Layout.preferredWidth: 190
-                    model: ["Best Fit", "Largest", "Smallest", "Sequential",
-                            "Least Played", "Complete Rotation"]
-                }
-                Item { Layout.fillWidth: true }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: "Best Fit fills the gap with the largest available ads that fit, without cutting an ad short. Any remaining time falls back to the channel's normal filler. The same gap produces the same ad order after a restart."
-                color: studioRoot.textSecondary
-                wrapMode: Text.Wrap
-                font.pixelSize: 11
-            }
-
-            Text {
-                Layout.fillWidth: true
-                text: "Canonical ad asset IDs (semicolon separated; optional when source folders are set)"
-                color: studioRoot.textSecondary
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
-            }
-            ChannelTextField {
-                id: adAssetIdsField
-                Layout.fillWidth: true
-                placeholderText: "sha256:…; sha256:…"
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                ChannelTextField {
-                    id: adCollectionField
-                    Layout.fillWidth: true
-                    placeholderText: "Collection ID"
-                }
-                ChannelTextField {
-                    id: adProfileField
-                    Layout.fillWidth: true
-                    placeholderText: "Profile ID"
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                ChannelTextField {
-                    id: adBreakpointsField
-                    Layout.fillWidth: true
-                    placeholderText: "Breakpoints in seconds: 900; 1800"
-                }
-                ChannelTextField {
-                    id: adIntervalField
-                    Layout.fillWidth: true
-                    placeholderText: "Interval seconds (optional)"
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-                    Label {
-                        text: "Break length (seconds)"
-                        color: studioRoot.textSecondary
-                        font.pixelSize: 10
-                    }
-                    ChannelTextField {
-                        id: adDurationField
-                        Layout.fillWidth: true
-                        placeholderText: "Break length (seconds)"
-                        text: "120"
-                    }
-                }
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-                    Label {
-                        text: "Priority (whole number)"
-                        color: studioRoot.textSecondary
-                        font.pixelSize: 10
-                    }
-                    ChannelTextField {
-                        id: adPriorityField
-                        Layout.fillWidth: true
-                        placeholderText: "Priority"
-                        text: "0"
-                    }
-                }
-                ColumnLayout {
-                    Layout.preferredWidth: 120
-                    spacing: 4
-                    Label {
-                        text: "Timing"
-                        color: studioRoot.textSecondary
-                        font.pixelSize: 10
-                    }
-                    ChannelComboBox {
-                        id: adTimingBox
-                        Layout.fillWidth: true
-                        model: ["Strict fit", "Smoosh", "Expand"]
-                    }
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                ChannelTextField {
-                    id: adSmooshTrimField
-                    Layout.fillWidth: true
-                    placeholderText: "Max trim seconds"
-                    text: "15"
-                }
-                ChannelTextField {
-                    id: adExpandField
-                    Layout.fillWidth: true
-                    placeholderText: "Max extra seconds"
-                    text: "0"
-                }
-                ChannelComboBox {
-                    id: adTransitionBox
-                    Layout.preferredWidth: 120
-                    model: ["Cut", "Fade through black", "Hold last frame"]
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                ChannelTextField {
-                    id: adTransitionSecondsField
-                    Layout.fillWidth: true
-                    text: "0.5"
-                    placeholderText: "Transition seconds"
-                }
-                ChannelTextField {
-                    id: adSlotSecondsField
-                    Layout.fillWidth: true
-                    placeholderText: "Fixed slot seconds: 900, 1800, 3600"
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                ChannelComboBox {
-                    id: adSchedulePriorityBox
-                    Layout.fillWidth: true
-                    model: ["Preserve program", "Keep timing fixed", "Prioritize ads"]
-                }
-                ChannelComboBox {
-                    id: adExpandSourceBox
-                    Layout.fillWidth: true
-                    model: ["Shift sequential programming", "Use available slot time", "Borrow current program", "Borrow next event"]
-                }
-            }
-            Text {
-                Layout.fillWidth: true
-                text: "Calendar starts stay protected. Borrowing program content requires Prioritize ads."
-                color: studioRoot.textSecondary
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
-            }
-            ChannelTextField {
-                id: adTriggersField
-                Layout.fillWidth: true
-                text: "breakpoint; interval; between_programs; calendar_boundary"
-                placeholderText: "breakpoint; interval; between_programs; calendar_boundary"
-            }
-            Text {
-                id: adPreviewStatus
-                Layout.fillWidth: true
-                text: "Preview an ad break before applying your detached draft."
-                color: studioRoot.textSecondary
-                font.pixelSize: 11
-                wrapMode: Text.Wrap
-            }
-            StudioButton {
-                text: "Preview Ad Schedule"
-                onClicked: {
-                    var result = channelOS.previewChannel(studioRoot.editorObject())
-                    if (result && result.ok) {
-                        var events = result.adPreview || []
-                        adPreviewStatus.text = events.length
-                                ? events.map(function(event) {
-                                    return event.eventType + ": " + event.title
-                                        + " @ " + event.startUtc
-                                  }).join(" | ")
-                                : "No ad event is scheduled in the sampled window."
-                    } else {
-                        adPreviewStatus.text = result && result.message
-                                ? result.message : "Preview failed."
-                    }
-                }
-            }
-            RowLayout {
-                Layout.fillWidth: true
-                Item { Layout.fillWidth: true }
-                StudioButton {
-                    text: "Cancel"
-                    onClicked: adBreakSettingsDialog.reject()
-                }
-                StudioButton {
-                    text: "Apply to Draft"
-                    highlighted: true
-                    onClicked: adBreakSettingsDialog.accept()
-                }
-            }
-            }
-        }
-    }
-
-    StudioDialog {
-        id: adCatalogDialog
-        title: "Advertisement Catalog & Profiles"
-        width: Math.min(studioRoot.width - 40, 730)
-        height: Math.min(studioRoot.height - 40, 700)
-        x: Math.max(20, (studioRoot.width - width) / 2)
-        y: Math.max(20, (studioRoot.height - height) / 2)
-        property var catalogData: ({})
-        property var placementRules: []
-        property string catalogFeedback: ""
-
-        function splitValues(value) {
-            return String(value || "").split(";").map(function(part) {
-                return part.trim()
-            }).filter(function(part) { return part.length > 0 })
-        }
-
-        function showResult(result) {
-            catalogFeedback = result && result.message
-                    ? String(result.message) : "Catalog request failed"
-            if (result && result.ok) {
-                catalogData = result
-                studioRoot.feedbackMessage = catalogFeedback
-                studioRoot.feedbackIsError = false
-            } else {
-                studioRoot.feedbackMessage = catalogFeedback
-                studioRoot.feedbackIsError = true
-            }
-        }
-
-        onOpened: {
-            var response = channelOS.adCatalogSnapshot()
-            catalogData = response || ({})
-            var saved = (catalogData.assignments || []).filter(function(item) {
-                return Number(item.channelNumber) === Number(channelNumberField.text)
-            })
-            placementRules = saved.length ? saved[0].placements || [] : []
-            catalogFeedback = response && response.ok
-                    ? "Catalog is ready. Save reusable items before assigning them."
-                    : String(response && response.message || "Unable to open catalog")
-        }
-
-        contentItem: Flickable {
-            id: catalogScroll
-            clip: true
-            contentWidth: width
-            contentHeight: catalogColumn.implicitHeight + 12
-            boundsBehavior: Flickable.StopAtBounds
-
-            ColumnLayout {
-                id: catalogColumn
-                width: catalogScroll.width - 16
-                spacing: 8
-
-                Text {
-                    Layout.fillWidth: true
-                    color: studioRoot.textSecondary
-                    wrapMode: Text.Wrap
-                    font.pixelSize: 11
-                    text: "All commercials use the canonical Library index. "
-                          + "Dynamic collections follow indexed folders; fixed "
-                          + "collections use selected asset IDs. Applying a channel "
-                          + "embeds a portable snapshot of both collection and profile."
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    color: studioRoot.warning
-                    wrapMode: Text.Wrap
-                    font.pixelSize: 11
-                    text: adCatalogDialog.catalogFeedback
-                }
-                Text {
-                    color: studioRoot.textPrimary
-                    font.bold: true
-                    text: "1. Collection"
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    ChannelTextField {
-                        id: catalogCollectionId
-                        Layout.fillWidth: true
-                        placeholderText: "Collection ID, e.g. network-ads"
-                    }
-                    ChannelTextField {
-                        id: catalogCollectionName
-                        Layout.fillWidth: true
-                        placeholderText: "Collection display name"
-                    }
-                    ChannelComboBox {
-                        id: catalogCollectionMode
-                        Layout.preferredWidth: 115
-                        model: ["Fixed", "Dynamic"]
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    ChannelComboBox {
-                        id: catalogMediaPicker
-                        Layout.fillWidth: true
-                        model: studioRoot.mediaLibrary
-                        textRole: "title"
-                    }
-                    StudioButton {
-                        text: "Add Media"
-                        onClicked: {
-                            var media = studioRoot.mediaLibrary[catalogMediaPicker.currentIndex]
-                            if (!media) return
-                            var ids = adCatalogDialog.splitValues(catalogCollectionAssets.text)
-                            if (ids.indexOf(media.assetId) < 0) ids.push(media.assetId)
-                            catalogCollectionAssets.text = ids.join("; ")
-                        }
-                    }
-                }
-                ChannelTextField {
-                    id: catalogCollectionAssets
-                    Layout.fillWidth: true
-                    placeholderText: "Canonical asset IDs (semicolon separated)"
-                }
-                ChannelTextField {
-                    id: catalogCollectionSources
-                    Layout.fillWidth: true
-                    placeholderText: "Dynamic source folders (semicolon separated)"
-                }
-                ChannelTextField {
-                    id: catalogCollectionExclusions
-                    Layout.fillWidth: true
-                    placeholderText: "Excluded asset IDs (optional)"
-                }
-                StudioButton {
-                    text: "Save Collection"
-                    onClicked: {
-                        var result = channelOS.saveAdCollection({
-                            collectionId: catalogCollectionId.text.trim(),
-                            name: catalogCollectionName.text.trim(),
-                            membership: catalogCollectionMode.currentIndex === 1
-                                        ? "dynamic" : "fixed",
-                            assetIds: adCatalogDialog.splitValues(catalogCollectionAssets.text),
-                            sourcePaths: adCatalogDialog.splitValues(catalogCollectionSources.text),
-                            excludedAssetIds: adCatalogDialog.splitValues(catalogCollectionExclusions.text)
-                        })
-                        adCatalogDialog.showResult(result)
-                    }
-                }
-                Text {
-                    color: studioRoot.textPrimary
-                    font.bold: true
-                    text: "2. Reusable Break Profile"
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    ChannelTextField {
-                        id: catalogProfileId
-                        Layout.fillWidth: true
-                        placeholderText: "Profile ID, e.g. standard"
-                    }
-                    ChannelTextField {
-                        id: catalogProfileName
-                        Layout.fillWidth: true
-                        placeholderText: "Profile display name"
-                    }
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    ChannelComboBox {
-                        id: catalogProfileStrategy
-                        Layout.fillWidth: true
-                        model: ["Best fit", "Largest", "Smallest", "Sequential", "Least played", "Complete rotation"]
-                    }
-                    ChannelTextField {
-                        id: catalogProfileDuration
-                        Layout.fillWidth: true
-                        text: "120"
-                        placeholderText: "Break seconds"
-                    }
-                    ChannelTextField {
-                        id: catalogProfileInterval
-                        Layout.fillWidth: true
-                        placeholderText: "Interval seconds (optional)"
-                    }
-                }
-                ChannelCheckBox {
-                    id: catalogAdvancedProfile
-                    text: "Advanced profile settings"
-                }
-                ChannelTextField {
-                    id: catalogProfileDefaults
-                    visible: catalogAdvancedProfile.checked
-                    Layout.fillWidth: true
-                    text: '{"enabled":true,"duration_seconds":120,"strategy":"best_fit","triggers":["breakpoint","interval","between_programs"]}'
-                    placeholderText: "JSON policy defaults"
-                }
-                StudioButton {
-                    text: "Save Profile"
-                    onClicked: {
-                        try {
-                            var defaults = catalogAdvancedProfile.checked
-                                ? JSON.parse(catalogProfileDefaults.text)
-                                : {enabled: true,
-                                   duration_seconds: Number(catalogProfileDuration.text),
-                                   interval_seconds: catalogProfileInterval.text.trim() ? Number(catalogProfileInterval.text) : null,
-                                   strategy: ["best_fit", "largest", "smallest", "sequential", "least_played", "complete_rotation"][catalogProfileStrategy.currentIndex],
-                                   breakpoints_seconds: studioRoot.editorObject().adBreakpointsSeconds.map(Number),
-                                   timing_policy: studioRoot.editorObject().adTimingPolicy,
-                                   transition_behavior: studioRoot.editorObject().adTransitionBehavior,
-                                   transition_seconds: Number(adTransitionSecondsField.text)}
-                            adCatalogDialog.showResult(channelOS.saveAdBreakProfile({
-                                profileId: catalogProfileId.text.trim(),
-                                name: catalogProfileName.text.trim(),
-                                defaults: defaults
-                            }))
-                        } catch (error) {
-                            adCatalogDialog.catalogFeedback = "Invalid profile JSON: " + error
-                        }
-                    }
-                }
-                Text {
-                    color: studioRoot.textPrimary
-                    font.bold: true
-                    text: "3. Assign to Current Channel"
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    ChannelTextField {
-                        id: catalogAssignCollection
-                        Layout.fillWidth: true
-                        placeholderText: "Saved collection ID"
-                    }
-                    ChannelTextField {
-                        id: catalogAssignProfile
-                        Layout.fillWidth: true
-                        placeholderText: "Saved profile ID"
-                    }
-                }
-                Text {
-                    text: "Placement rules (optional)"
-                    color: studioRoot.textPrimary
-                    font.bold: true
-                }
-                RowLayout {
-                    Layout.fillWidth: true
-                    ChannelComboBox {
-                        id: placementTrigger
-                        Layout.fillWidth: true
-                        model: ["Program breakpoints", "Program interval", "Between programs", "Calendar gap", "Fixed slot"]
-                    }
-                    ChannelComboBox {
-                        id: placementCollection
-                        Layout.fillWidth: true
-                        model: adCatalogDialog.catalogData.collections || []
-                        textRole: "name"
-                    }
-                    ChannelComboBox {
-                        id: placementProfile
-                        Layout.fillWidth: true
-                        model: adCatalogDialog.catalogData.profiles || []
-                        textRole: "name"
-                    }
-                }
-                StudioButton {
-                    id: addAdPlacementButton
-                    text: "Add Placement"
-                    onClicked: {
-                        var collections = adCatalogDialog.catalogData.collections || []
-                        var profiles = adCatalogDialog.catalogData.profiles || []
-                        if (!collections[placementCollection.currentIndex] || !profiles[placementProfile.currentIndex]) return
-                        var trigger = ["breakpoint", "interval", "between_programs", "calendar_boundary", "fixed_slot"][placementTrigger.currentIndex]
-                        var rules = adCatalogDialog.placementRules.slice()
-                        var identity = trigger + "-" + String(Date.now())
-                        rules.push({placement_id: identity, trigger: trigger,
-                                    collection_id: collections[placementCollection.currentIndex].collectionId,
-                                    profile_id: profiles[placementProfile.currentIndex].profileId,
-                                    overrides: trigger === "fixed_slot" ? {slot_seconds: Number(adSlotSecondsField.text || 1800)} : {}})
-                        adCatalogDialog.placementRules = rules
-                    }
-                }
-                Repeater {
-                    model: adCatalogDialog.placementRules
-                    delegate: RowLayout {
-                        required property var modelData
-                        required property int index
-                        Layout.fillWidth: true
-                        Text {
-                            Layout.fillWidth: true
-                            text: modelData.trigger + " • " + modelData.collection_id + " • " + modelData.profile_id
-                            color: studioRoot.textSecondary
-                        }
-                        StudioButton {
-                            text: "Remove"
-                            onClicked: {
-                                var rules = adCatalogDialog.placementRules.slice()
-                                rules.splice(parent.index, 1)
-                                adCatalogDialog.placementRules = rules
-                            }
-                        }
-                    }
-                }
-                ChannelCheckBox {
-                    id: catalogAdvancedOverrides
-                    text: "Advanced channel overrides"
-                }
-                ChannelTextField {
-                    id: catalogAssignOverrides
-                    visible: catalogAdvancedOverrides.checked
-                    Layout.fillWidth: true
-                    text: "{}"
-                    placeholderText: "Per-channel overrides (JSON)"
-                }
-                StudioButton {
-                    id: saveAdAssignmentButton
-                    text: "Save Assignment to Current Channel"
-                    highlighted: true
-                    onClicked: {
-                        try {
-                            var overrides = JSON.parse(catalogAssignOverrides.text)
-                            var result = channelOS.assignAdBreakProfile({
-                                channelNumber: Number(channelNumberField.text),
-                                collectionId: catalogAssignCollection.text.trim(),
-                                profileId: catalogAssignProfile.text.trim(),
-                                overrides: overrides,
-                                placements: adCatalogDialog.placementRules
-                            })
-                            adCatalogDialog.showResult(result)
-                            if (result && result.ok) {
-                                adCollectionField.text = catalogAssignCollection.text.trim()
-                                adProfileField.text = catalogAssignProfile.text.trim()
-                                adBreaksEnabledCheck.checked = true
-                                studioRoot.dirty = true
-                            }
-                        } catch (error) {
-                            adCatalogDialog.catalogFeedback = "Invalid overrides JSON: " + error
-                        }
-                    }
-                }
-                Text {
-                    Layout.fillWidth: true
-                    color: studioRoot.textSecondary
-                    wrapMode: Text.Wrap
-                    font.pixelSize: 10
-                    text: "Saved collections: "
-                          + ((adCatalogDialog.catalogData.collections || []).map(function(item) {
-                                return item.collectionId
-                             }).join(", ") || "none")
-                          + "    Profiles: "
-                          + ((adCatalogDialog.catalogData.profiles || []).map(function(item) {
-                                return item.profileId
-                             }).join(", ") || "none")
-                }
-                StudioButton {
-                    text: "Current Channel Diagnostics"
-                    onClicked: {
-                        var report = channelOS.adBreakDiagnostics(
-                            Number(channelNumberField.text))
-                        adCatalogDialog.catalogFeedback = report && report.ok
-                                ? ("Plans: " + report.plannedBreaks
-                                   + " | Aired: " + report.completedAirings
-                                   + " | Viewed: " + report.completedViewings)
-                                : String(report && report.message || "Channel is not active")
-                    }
-                }
-                StudioButton {
-                    text: "Close"
-                    onClicked: adCatalogDialog.close()
-                }
-            }
-        }
+    AdSettingsEditor {
+        id: adSettings
+        objectName: "studioAdSettings"
+        hostItem: studioRoot
+        channelNumber: Number(channelNumberField.text || 1)
+        channelName: channelNameField.text
+        mediaLibrary: studioRoot.mediaLibrary
+        sourceOptions: studioRoot.sourceChoices()
+        inlineBin: true
+        onSettingsApplied: studioRoot.dirty = true
+        onBinRequested: { studioRoot.activeBin = "ads"; studioRoot.dayMediaBinVisible = true }
+        previewProvider: function(settings) { return channelOS.previewChannel(Object.assign(studioRoot.editorObject(), settings)) }
     }
 
     ListModel { id: draftSources }

@@ -168,6 +168,9 @@ class BreakPlan:
     content_cut_seconds: float = 0.0
     cut_target_occurrence_id: str = ""
     cut_source: str = "none"
+    rotation_revision: str = ""
+    rotation_cycle: int = -1
+    rotation_remaining: tuple[str, ...] = ()
 
     @property
     def duration_seconds(self) -> float:
@@ -180,6 +183,13 @@ class BreakPlan:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "scheduled_at", _utc(self.scheduled_at))
+        if (not isinstance(self.rotation_revision, str) or not isinstance(self.rotation_cycle, int)
+                or isinstance(self.rotation_cycle, bool) or self.rotation_cycle < -1
+                or not isinstance(self.rotation_remaining, (tuple, list))
+                or any(not isinstance(value, str) or not value for value in self.rotation_remaining)
+                or len(set(self.rotation_remaining)) != len(self.rotation_remaining)):
+            raise ValueError("invalid saved ad rotation state")
+        object.__setattr__(self, "rotation_remaining", tuple(self.rotation_remaining))
         if not self.plan_id or not self.opportunity_id or not self.occurrence_id:
             raise ValueError("break plan, opportunity, and occurrence IDs are required")
         if self.channel_number < 1:
@@ -640,7 +650,8 @@ class BreakPlanStore:
                 "INSERT OR IGNORE INTO ad_plan_metadata VALUES (?, ?)",
                 (stored.plan_id, json.dumps({key: getattr(plan if inserted.rowcount else stored, key) for key in (
                     "transition_behavior", "transition_seconds", "trigger", "profile_id", "policy_revision",
-                    "content_cut_seconds", "cut_target_occurrence_id", "cut_source"
+                    "content_cut_seconds", "cut_target_occurrence_id", "cut_source",
+                    "rotation_revision", "rotation_cycle", "rotation_remaining"
                 )}, sort_keys=True)),
             )
             stored = self._with_metadata(stored)

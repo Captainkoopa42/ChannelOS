@@ -439,25 +439,29 @@ def test_ad_management_controls_edit_transition_placements_and_restore_cancelled
     window.show()
     app.processEvents()
 
+    ads = item.findChild(QObject, "studioAdSettings")
+    assert ads is not None
+    ad_dialog = ads.findChild(QObject, "advancedAdSettingsDialog")
+
     def evaluate(code):
-        expression = QQmlExpression(engine.contextForObject(item), item, code)
+        expression = QQmlExpression(engine.contextForObject(ad_dialog), ads, code)
         result, undefined = expression.evaluate()
         assert not expression.hasError(), expression.error().toString()
         app.processEvents()
         return result.toVariant() if hasattr(result, 'toVariant') else result
 
-    edited = evaluate('adBreakSettingsDialog.open(); adTransitionBox.currentIndex = 1; '
+    edited = evaluate('advancedDialog.open(); adTransitionBox.currentIndex = 1; '
                       'adTransitionSecondsField.text = "0.75"; adSlotSecondsField.text = "1800"; '
-                      'adBreakSettingsDialog.accept(); editorObject()')
+                      'advancedDirty = true; advancedDialog.accept(); editorObject()')
     assert edited['adTransitionBehavior'] == 'fade'
     assert edited['adTransitionSeconds'] == .75
     assert edited['adSmooshMaxTrimSeconds'] == 0
     assert edited['adTriggers'] == []
     assert edited['adSlotSeconds'] == 1800
-    restored = evaluate('adBreakSettingsDialog.open(); adTransitionSecondsField.text = "4"; '
-                        'adBreakSettingsDialog.reject(); editorObject()')
+    restored = evaluate('advancedDialog.open(); adTransitionSecondsField.text = "4"; '
+                        'advancedDialog.reject(); editorObject()')
     assert restored['adTransitionSeconds'] == .75
-    evaluate('adCatalogDialog.open(); placementTrigger.currentIndex = 2; '
+    evaluate('advancedDialog.open(); advancedTabs.currentIndex = 3; placementTrigger.currentIndex = 2; '
              'addAdPlacementButton.clicked(); saveAdAssignmentButton.clicked()')
     assert len(controller.saved['placements']) == 1
     assert controller.saved['placements'][0]['trigger'] == 'between_programs'
@@ -467,7 +471,7 @@ def test_ad_management_controls_edit_transition_placements_and_restore_cancelled
     evaluate('placementCollection.popup.close(); placementProfile.popup.open()')
     assert evaluate('placementProfile.popup.contentItem.itemAtIndex(0).contentItem.text') == 'Standard'
     assert not any('undefined' in warning for warning in warnings)
-    evaluate('adCatalogDialog.close()')
+    evaluate('advancedDialog.close()')
     window.close()
     item.setParentItem(None)
     item.deleteLater()

@@ -48,6 +48,22 @@ the current broadcast from either side and resumes playing. Pause and seeking
 change your viewing position while the channel's broadcast schedule keeps
 running. Continue Watching preserves that position across restarts.
 
+AD SETTINGS
+-----------
+In Studio, switch the left panel to Ad Bin and add indexed folders. Expand a
+folder to choose its clips. Open Ad Breaks, enable ads and choose Sequential or
+Shuffle. The default plays one complete ad after every planned show.
+
+Timed scheduling adds Timed Ad Breaks or Aligned Show Starts, with a 15-minute
+default and other intervals. Advanced Ad Settings retains the detailed rules;
+its Profiles tab contains collections, saved profiles, IDs and assignments.
+Classic New/Edit uses the same ad controls.
+
+For an already filled Studio range, use Clear Range and Auto Fill to rebuild its
+show times with the new ad settings, then Preview and Apply to Channel. Existing
+fixed starts stay protected. New simple-ad configurations use channel schema
+0.6 and need this version or a compatible later build.
+
 DISPLAY MODE
 ------------
 ChannelOS is fullscreen by default for couch/TV use. Settings > Display Mode can

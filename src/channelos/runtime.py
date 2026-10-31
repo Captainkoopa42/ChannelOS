@@ -329,6 +329,7 @@ class CalendarTimeline:
         self._gap_fillers = tuple(gap_fillers)
         self._starts = tuple(starts)
         self._ends = tuple(ends)
+        self._simple_snapshots = tuple(block.ad_plan for block in calendar)
 
     def _calendar_occurrence_id(self, index: int) -> str:
         return hashlib.sha256(f"calendar:{self.channel_number}:{self.programs[index].media.asset.asset_id}:{self._starts[index].isoformat()}".encode()).hexdigest()
@@ -347,6 +348,39 @@ class CalendarTimeline:
         ).hexdigest()
         existing = list(self.break_store.plans_for_occurrence(occurrence_id)) if self.break_store else []
         next_start = self._starts[index + 1] if index + 1 < len(self._starts) else None
+        if self.advertising.enabled and self.advertising.setup_mode != "advanced":
+            from .simple_ads import SimpleRotation, plan_program, snapshot_plans
+            if not existing:
+                saved = self._simple_snapshots[index]
+                if (saved and saved["revision"] == self.ad_revision
+                        and datetime.fromisoformat(saved["start_utc"]) == start):
+                    existing = list(snapshot_plans(saved))
+                    allowed_ads = {item.asset.asset_id: item for item in self.ad_media}
+                    for plan in existing:
+                        for segment in plan.segments:
+                            if segment.event_type == "advertisement":
+                                media = allowed_ads.get(segment.asset_id)
+                                if media is None or abs(float(media.asset.duration_seconds) - segment.duration_seconds) > .001:
+                                    raise ChannelRuntimeError("A saved ad selection is unavailable or changed. Rebuild the range with Auto Fill.")
+                else:
+                    rotation = SimpleRotation(self.ad_media, self.advertising, self.channel_number,
+                                              store=self.break_store, before=start)
+                    try:
+                        existing, _ = plan_program(
+                            self.programs[index].media, start, self.advertising, self.ad_revision,
+                            self.channel_number, occurrence_id, rotation, next_start=next_start,
+                            activation=self.break_store.policy_activation(self.channel_number) if self.break_store else None,
+                            filler_media=tuple(p.media for p in self.filler.programs),
+                        )
+                    except ValueError as exc:
+                        raise ChannelRuntimeError(str(exc)) from exc
+                if self.break_store:
+                    existing = [self.break_store.commit(plan) for plan in existing]
+            result = tuple(sorted(existing, key=lambda plan: plan.scheduled_at))
+            if next_start is not None and self._calendar_program_end(index, result) > next_start:
+                raise ChannelRuntimeError("Ad breaks cross a protected show start. Rebuild the range with Auto Fill.")
+            self._mid_plan_cache[index] = result
+            return result
         slack = max(0.0, (next_start - natural_end).total_seconds()) if next_start else float("inf")
         inserted = 0.0
         opportunities = program_opportunities(self.advertising, ProgramOccurrence(
@@ -435,6 +469,8 @@ class CalendarTimeline:
                 self.break_store.advance_catchup_cursor(self.channel_number, self._starts[index + 1])
 
     def _gap_settings(self):
+        if self.advertising.setup_mode != "advanced":
+            return None
         return calendar_gap_policy(self.advertising)
 
     def _calendar_ad_plan(self, gap_anchor: datetime, next_start: datetime) -> tuple[PlannedAd, ...]:
@@ -606,6 +642,7 @@ class CalendarTimeline:
         filler_anchor = gap_anchor
         if (
             (self.advertising.enabled or self.break_store is not None)
+            and self.advertising.setup_mode == "advanced"
             and next_start is not None
             and next_start > gap_anchor
             and (
@@ -1485,6 +1522,17 @@ class ChannelRuntime:
     def _plan_duration(plan: BreakPlan) -> float:
         return plan.duration_seconds
 
+    def validate_schedule(self) -> None:
+        if (isinstance(self.timeline, CalendarTimeline) and self.channel.definition.advertising.enabled
+                and self.channel.definition.advertising.setup_mode != "advanced"):
+            for index in range(len(self.timeline.programs)):
+                settings = self.channel.definition.advertising
+                if settings.setup_mode == "aligned":
+                    position = (self.timeline._starts[index].timestamp() + settings.clock_offset_seconds) % settings.clock_interval_seconds
+                    if min(position, settings.clock_interval_seconds-position) > .001:
+                        raise ChannelRuntimeError("Aligned shows must start on clock marks. Rebuild the range with Auto Fill.")
+                self.timeline._calendar_mid_plans(index)
+
     def _program_occurrence_id(self, selection: BroadcastSelection) -> str:
         """Stable identity for the underlying program, independent of ad policy."""
         return hashlib.sha256("|".join((
@@ -1511,7 +1559,8 @@ class ChannelRuntime:
             occurrence_id, self.channel_number, selection.media.asset.asset_id,
             selection.program_started_at, selection.program_ends_at,
         )
-        opportunities = program_opportunities(self.channel.definition.advertising, occurrence, policy_revision)
+        opportunities = (program_opportunities(self.channel.definition.advertising, occurrence, policy_revision)
+                         if self.channel.definition.advertising.setup_mode == "advanced" else ())
         clock = self.break_store.program_clock(occurrence_id)
         previous_end = self.break_store.preceding_program_end(
             self.channel_number, selection.program_started_at
@@ -1521,6 +1570,34 @@ class ChannelRuntime:
         occurrence_plans = list(
             self.break_store.plans_for_occurrence(occurrence_id)
         )
+        settings = self.channel.definition.advertising
+        if settings.enabled and settings.setup_mode != "advanced":
+            from .simple_ads import SimpleRotation, plan_program
+            activation = self.break_store.policy_activation(self.channel_number)
+            if settings.setup_mode == "aligned" and not clock and (activation is None or actual_start >= activation):
+                from .simple_ads import next_clock
+                actual_start = next_clock(actual_start - timedelta(microseconds=100), settings)
+            if not occurrence_plans:
+                rotation = SimpleRotation(self.channel.ad_media, settings, self.channel_number,
+                                          store=self.break_store, before=actual_start)
+                try:
+                    plans, _ = plan_program(
+                        selection.media, actual_start, settings, policy_revision,
+                        self.channel_number, occurrence_id, rotation,
+                        activation=self.break_store.policy_activation(self.channel_number),
+                        filler_media=tuple(program.media for program in self.timeline.programs),
+                    )
+                except ValueError as exc:
+                    raise ChannelRuntimeError(str(exc)) from exc
+                occurrence_plans = [self.break_store.commit(plan) for plan in plans]
+            self.break_store.save_program_clock(
+                occurrence_id, self.channel_number,
+                content_start=selection.program_started_at, content_end=selection.program_ends_at,
+                broadcast_start=actual_start,
+                broadcast_end=actual_start + timedelta(seconds=selection.program.duration_seconds
+                    + sum(plan.duration_seconds for plan in occurrence_plans)),
+            )
+            return tuple(occurrence_plans)
         committed: list[BreakPlan] = []
         for opportunity, settings in opportunities:
             head_cut, tail_cut = self.break_store.content_cuts(occurrence_id)
@@ -1700,7 +1777,12 @@ class ChannelRuntime:
                 self._ensure_occurrence_plans(base, instant)
                 clock_row = self.break_store.clock_at(self.channel_number, instant)
             if clock_row is None:
-                return self.timeline.selection_at(self.epoch_utc, instant)
+                fallback = self.timeline.selection_at(self.epoch_utc, instant)
+                if self.channel.definition.advertising.setup_mode == "aligned":
+                    future = self.break_store.program_clock(self._program_occurrence_id(fallback))
+                    if future is not None and future[0] > instant:
+                        return replace(fallback, origin="filler", program_ends_at=min(future[0], fallback.program_ends_at))
+                return fallback
             occurrence_id, content_start, content_end, parent_start, parent_end = clock_row
             base = self.timeline.selection_at(self.epoch_utc, content_start + timedelta(microseconds=1))
             occurrence_plans = self._ensure_occurrence_plans(base, instant)

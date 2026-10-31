@@ -61,6 +61,7 @@ Item {
     }
 
     function handleControllerIntent(intent: string): void {
+        if (classicAds.dialogOpen) { if (intent === "BACK") classicAds.cancelActive(); return }
         if (!hostWindow || hostWindow.screen !== "broadcaster")
             return
         if (intent === "BACK") {
@@ -110,8 +111,16 @@ Item {
         draftSources.append({ path: value })
     }
 
+    property var adDraftData: ({})
+    function loadAdDraft(number) {
+        var result = channelOS && typeof channelOS.loadChannelStudio === "function" ? channelOS.loadChannelStudio(number) : ({})
+        adDraftData = result && result.draft || ({})
+        classicAds.load(adDraftData)
+    }
+
     function beginCreate() {
         editorMode = "create"
+        loadAdDraft(0)
         editingChannelNumber = 0
         resetFeedback()
         previewData = ({ ok: false, items: [] })
@@ -141,6 +150,7 @@ Item {
             return
         }
         editorMode = "edit"
+        loadAdDraft(Number(channel.channelNumber))
         editingChannelNumber = Number(channel.channelNumber)
         resetFeedback()
         previewData = ({ ok: false, items: [] })
@@ -181,7 +191,7 @@ Item {
         for (var i = 0; i < draftSources.count; ++i)
             sources.push(draftSources.get(i).path)
 
-        return {
+        return Object.assign({
             channel: channelNumberField.text,
             name: channelNameField.text,
             description: descriptionField.text,
@@ -190,7 +200,7 @@ Item {
             avoidRepeatDays: repeatDays.value,
             numberWidth: numberWidth.value,
             sources: sources
-        }
+        }, classicAds.editorObject())
     }
 
     function previewDraft() {
@@ -1272,6 +1282,17 @@ Item {
                             }
                         }
 
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Label { text: "ADVERTISING"; color: broadcasterRoot.accentBright; font.pixelSize: 12 }
+                            Label { text: classicAds.description(); color: broadcasterRoot.textSecondary; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                            RowLayout {
+                                ChannelButton { text: "Ad Bin"; onClicked: classicAds.openBin() }
+                                ChannelButton { objectName: "classicAdBreaksButton"; text: "Ad Breaks"; onClicked: classicAds.openBasic() }
+                                ChannelButton { text: "Advanced Ad Settings…"; onClicked: classicAds.openAdvanced() }
+                            }
+                        }
+
                         Rectangle {
                             width: parent.width
                             height: previewColumn.implicitHeight + 34
@@ -1539,4 +1560,16 @@ Item {
     ListModel {
         id: draftSources
     }
+    AdSettingsEditor {
+        id: classicAds
+        objectName: "classicAdSettings"
+        hostItem: broadcasterRoot
+        channelNumber: Number(channelNumberField.text || 1)
+        channelName: channelNameField.text
+        mediaLibrary: broadcasterRoot.adDraftData.media || []
+        sourceOptions: broadcasterRoot.sourceOptions
+        previewProvider: function(settings) { return channelOS.previewChannel(Object.assign(broadcasterRoot.draftObject(), settings)) }
+        onSettingsApplied: { broadcasterRoot.previewData = ({ok:false, items:[]}); broadcasterRoot.feedbackMessage = "Ad settings updated in this draft."; broadcasterRoot.feedbackIsError = false }
+    }
+
 }

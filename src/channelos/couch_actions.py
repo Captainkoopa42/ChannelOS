@@ -249,11 +249,11 @@ class CouchActions:
                 self._audio_output_device_id
             )
 
-    def suspend_decoder(self) -> None:
+    def suspend_decoder(self, *, persist_history: bool = True) -> None:
         """Release live-TV decoder output while preserving runtime clock state."""
 
         if self._session is not None:
-            self._session.suspend_decoder()
+            self._session.suspend_decoder(persist_history=persist_history)
 
     def stop(self) -> None:
         if self._session is not None:

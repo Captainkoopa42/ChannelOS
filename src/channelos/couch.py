@@ -40,14 +40,18 @@ def _open_runtimes(
             definition = load_channel(path)
         except ChannelValidationError as exc:
             raise CouchUIError(str(exc)) from exc
-        resolved = resolve_channel(definition, library, allow_offline_ads=True)
+        resolved = resolve_channel(definition, library, allow_offline_ads=True,
+                                   include_offline_programs=library.portable is not None)
         if not resolved.media:
             raise CouchUIError(
                 f"Channel {definition.display_number} — {definition.name} has no indexed online media. "
                 "Scan its source folders first."
             )
         try:
-            opened.append(ChannelRuntime.open(resolved, store))
+            transient = library.portable is not None and any(
+                not item.location.online or not item.location.path.is_file()
+                for item in resolved.media)
+            opened.append(ChannelRuntime.open(resolved, store, transient=transient))
         except ChannelRuntimeError as exc:
             raise CouchUIError(str(exc)) from exc
     if not opened:
@@ -91,6 +95,7 @@ def run_couch(
         from .interaction import install_interaction_support
         from .media_resilience import install_media_resilience_support
         from .vlc_probe import install_packaged_media_scan_support
+        from .portable_qt import install_portable_support
     except (ImportError, OSError) as exc:
         raise CouchUIError(
             "ChannelOS couch UI requires the optional Qt package. "
@@ -100,6 +105,7 @@ def run_couch(
     install_display_mode_support(broadcaster_qt)
     install_packaged_media_scan_support(broadcaster_qt)
     install_media_resilience_support(broadcaster_qt)
+    install_portable_support(broadcaster_qt)
     install_interaction_support(broadcaster_qt)
     return run_qt(
         service,
@@ -147,6 +153,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        '--portable-setup', type=Path,
+        help='open an existing portable setup and save directly on its drive',
+    )
+    parser.add_argument(
         "--windowed",
         action="store_true",
         help="launch in a normal window instead of fullscreen",
@@ -156,6 +166,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.portable_setup is not None:
+        from .windows_app import main as launch_setup
+        return launch_setup(list(sys.argv[1:] if argv is None else argv))
     try:
         return run_couch(
             args.paths,

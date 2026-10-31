@@ -25,6 +25,8 @@ from .diagnostics import LOG_DIRECTORY_ENV
 from .guide import GuideError, GuideService
 from .library import IndexedMedia, MediaLibrary
 from .on_demand import OnDemandSession, OnDemandState
+from .portable import host_data_directory
+from .settings import PortableSettingsStore
 from .playback import (
     AudioOutputDevice,
     NativeVideoSurface,
@@ -143,6 +145,11 @@ class CouchController(QObject):
         self._settings_store = SettingsStore(
             self._runtime_store.database_path.with_name("settings.json")
         )
+        if self._library.portable:
+            self._settings_store = PortableSettingsStore(
+                self._settings_store.path, self._library.portable,
+                host_data_directory() / 'portable-devices' / (self._library.portable.setup_id + '.json'),
+            )
         self._settings = self._settings_store.load()
         selected_audio_device = self._settings.audio_output_device_id
         self._audio_output_devices: list[dict[str, object]] = [

@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls
 
 Item {
     id: settingsRoot
@@ -41,7 +42,8 @@ Item {
         { title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
         { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
         { title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
-        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
+        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, and 30 seconds forward." },
+        { title: "Portable Setup", detail: "Copy channels, the existing media index, ad configuration and history to a drive, or open a prior setup and save changes there." }
     ]
 
     anchors.fill: parent
@@ -181,10 +183,16 @@ Item {
         } else if (index === 14) {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
+        } else if (index === 15) {
+            portableSetupDialog.open()
         }
     }
 
     function handleControllerIntent(intent: string): void {
+        if (portableSetupDialog.visible) {
+            portableSetupDialog.handleControllerIntent(intent)
+            return
+        }
         if (!hostWindow || hostWindow.screen !== "settings")
             return
         if (intent === "BACK" || intent === "HOME") {
@@ -320,7 +328,7 @@ Item {
             }
             Text {
                 width: parent.width
-                text: "Settings are local. Display mode is independent of performance; Lightweight changes optional artwork work and motion—not playback quality, schedules, media, or channels."
+                text: "Preferences save to the active setup. Audio device selection stays on this PC. Lightweight reduces optional artwork work and motion."
                 color: "#9fb0c2"
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
@@ -495,7 +503,9 @@ Item {
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
                               : settingRow.index === 13
                               ? "Open Log Folder"
-                              : "Restore Standard Defaults"
+                              : settingRow.index === 14
+                              ? "Restore Standard Defaults"
+                              : "Copy / Open Setup"
                         color: "#f4f7fb"
                         font.pixelSize: 14
                         font.weight: Font.DemiBold
@@ -551,5 +561,10 @@ Item {
             color: "#9fb0c2"
             font.pixelSize: 13
         }
+    }
+
+    PortableSetupDialog {
+        id: portableSetupDialog
+        parent: Overlay.overlay
     }
 }

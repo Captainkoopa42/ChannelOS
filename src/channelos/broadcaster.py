@@ -26,6 +26,7 @@ from .models import (
     ChannelValidationError,
     advertising_to_mapping,
 )
+from .portable import PortablePaths, path_tree
 from .resolve import ResolvedChannel, resolve_channel
 from .runtime import (
     ChannelRuntime,
@@ -163,11 +164,11 @@ def _calendar_block_mapping(block: CalendarBlockDefinition) -> dict[str, Any]:
     return result
 
 
-def serialize_channel(definition: ChannelDefinition) -> str:
+def serialize_channel(definition: ChannelDefinition, *, portable: PortablePaths | None = None) -> str:
     """Return stable, human-readable YAML for a portable channel definition."""
 
     return yaml.safe_dump(
-        channel_to_mapping(definition),
+        path_tree(channel_to_mapping(definition), portable.encode) if portable else channel_to_mapping(definition),
         sort_keys=False,
         allow_unicode=True,
     )
@@ -409,6 +410,8 @@ class BroadcasterService:
         return tuple(unique)
 
     def refresh(self) -> None:
+        if self.library.portable:
+            self.library.portable.check_available()
         records: dict[int, ChannelRecord] = {}
         managed_root = self._normalize_path(self.managed_directory)
 
@@ -1344,8 +1347,9 @@ class BroadcasterService:
             / f"channel-{definition.channel:04d}.yaml"
         )
 
-    @staticmethod
-    def _atomic_write(path: Path, content: str) -> None:
+    def _atomic_write(self, path: Path, content: str) -> None:
+        if self.library.portable:
+            self.library.portable.check_available()
         path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{path.name}.",
@@ -1391,7 +1395,7 @@ class BroadcasterService:
                 "file."
             )
 
-        self._atomic_write(target, serialize_channel(definition))
+        self._atomic_write(target, serialize_channel(definition, portable=self.library.portable))
         self.refresh()
         return ChannelSaveResult(self._records[definition.channel])
 
@@ -1431,7 +1435,7 @@ class BroadcasterService:
             existing.path.suffix + ".bak"
         )
         shutil.copy2(existing.path, backup)
-        self._atomic_write(existing.path, serialize_channel(definition))
+        self._atomic_write(existing.path, serialize_channel(definition, portable=self.library.portable))
         self.refresh()
 
         return ChannelSaveResult(
@@ -1441,6 +1445,9 @@ class BroadcasterService:
 
     def delete(self, channel_number: int) -> ChannelDeleteResult:
         """Remove one managed definition while retaining a recovery backup."""
+
+        if self.library.portable:
+            self.library.portable.check_available()
 
         number = int(channel_number)
         try:
@@ -1516,6 +1523,9 @@ class BroadcasterService:
 
     def restore_deleted(self, result: ChannelDeleteResult) -> None:
         """Roll back an uncommitted lineup deletion from its recovery file."""
+
+        if self.library.portable:
+            self.library.portable.check_available()
 
         original = self._normalize_path(result.record.path)
         backup = self._normalize_path(result.backup_path)

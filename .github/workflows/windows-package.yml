@@ -40,10 +40,13 @@ jobs:
       - name: Verify native Qt and bundled VLC ad playback
         run: python tools/windows/smoke_ad_playback.py
 
+      - name: Verify packaged portable setup relocation and startup
+        run: python tools/windows/smoke_portable_setup.py
+
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: ChannelOS-Windows-x64
-          path: dist/windows/ChannelOS-0.0.2-windows-x64.zip
+          path: dist/windows/ChannelOS-0.0.3-windows-x64.zip
           if-no-files-found: error
           compression-level: 0

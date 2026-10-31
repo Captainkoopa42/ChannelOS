@@ -17,6 +17,7 @@ from .ad_scheduling import calendar_gap_policy, eligible_media, program_opportun
 from .library import IndexedMedia
 from .models import AdvertisingDefinition, CalendarBlockDefinition
 from .resolve import ResolvedChannel
+from .portable import PortableConnection, find_setup, path_tree
 from .storage import (
     SQLITE_BUSY_TIMEOUT_MS,
     configure_sqlite_connection,
@@ -28,7 +29,7 @@ SECONDS_PER_DAY = 86400.0
 DEFAULT_VIEWER_ID = "default"
 
 
-class _ClosingSQLiteConnection(sqlite3.Connection):
+class _ClosingSQLiteConnection(PortableConnection):
     def __exit__(self, exc_type, exc_value, traceback):
         try:
             return super().__exit__(exc_type, exc_value, traceback)
@@ -814,7 +815,7 @@ def schedule_signature(channel: ResolvedChannel) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def advertising_signature(channel: ResolvedChannel) -> str:
+def advertising_signature(channel: ResolvedChannel, *, path_encoder=None) -> str:
     """Fingerprint ad policy independently from the program Broadcast Clock.
 
     Advertising edits must never change the channel epoch or viewer continuity.
@@ -824,6 +825,9 @@ def advertising_signature(channel: ResolvedChannel) -> str:
     advertising = channel.definition.advertising
     from .models import advertising_to_mapping
     payload = advertising_to_mapping(advertising)
+    encoder = path_encoder or (channel.library.portable.encode if channel.library and channel.library.portable else None)
+    if encoder is not None:
+        payload = path_tree(payload, encoder)
     payload["ad_assets"] = sorted(item.asset.asset_id for item in channel.ad_media)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
@@ -966,6 +970,9 @@ class RuntimeStore:
 
     def __init__(self, database_path: str | Path) -> None:
         self.database_path = Path(database_path)
+        self.portable = find_setup(self.database_path)
+        if self.portable:
+            self.portable.check_available()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         prepare_database(
             self.database_path,
@@ -975,11 +982,15 @@ class RuntimeStore:
         self._initialize()
 
     def connect(self) -> sqlite3.Connection:
+        portable = self.portable
+        if portable:
+            portable.check_available()
         connection = sqlite3.connect(
             self.database_path,
             timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000,
             factory=_ClosingSQLiteConnection,
         )
+        connection.portable = portable
         connection.row_factory = sqlite3.Row
         configure_sqlite_connection(connection, self.database_path)
         return connection

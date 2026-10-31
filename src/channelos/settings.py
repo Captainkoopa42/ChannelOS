@@ -228,3 +228,35 @@ class SettingsStore:
 
     def reset(self) -> CouchSettings:
         return self.save(CouchSettings())
+
+
+class PortableSettingsStore(SettingsStore):
+    """Travel preferences with the drive, retaining device IDs on this computer."""
+
+    def __init__(self, path, portable, machine_path):
+        super().__init__(path)
+        self.portable = portable
+        self.machine_path = Path(machine_path)
+
+    def load(self) -> CouchSettings:
+        settings = super().load().to_mapping()
+        try:
+            machine = json.loads(self.machine_path.read_text(encoding='utf-8'))
+            settings['audio_output_device_id'] = machine.get('audio_output_device_id', '')
+        except (OSError, ValueError, AttributeError):
+            settings['audio_output_device_id'] = ''
+        return CouchSettings.from_mapping(settings)
+
+    def save(self, settings: CouchSettings) -> CouchSettings:
+        self.portable.check_available()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        values = settings.to_mapping()
+        device = values.pop('audio_output_device_id', '')
+        temporary = self.path.with_name(self.path.name + '.tmp')
+        temporary.write_text(json.dumps(values, indent=2), encoding='utf-8')
+        temporary.replace(self.path)
+        self.machine_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.machine_path.with_name(self.machine_path.name + '.tmp')
+        temporary.write_text(json.dumps({'audio_output_device_id': device}), encoding='utf-8')
+        temporary.replace(self.machine_path)
+        return settings

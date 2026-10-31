@@ -47,6 +47,12 @@ calendar and fixed-slot filling, rotation/history, Studio previews and Guide/HUD
 indicators. See [advertising implementation and acceptance](docs/AD_BREAKS_COMPLETE_BUILD.md)
 for the A–F roadmap, timing policies and release checks.
 
+Version 0.0.3 adds **Settings → Portable Setup**: copy a setup to a drive or
+folder, then open it as the active save location. Existing media on that drive
+uses its saved index. Channels, Studio groups, ad configuration, schedules and
+history travel together through drive-letter and folder changes. See
+[Portable setups](docs/PORTABLE_SETUP.md) for the workflow and format.
+
 The key runtime rule remains:
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**

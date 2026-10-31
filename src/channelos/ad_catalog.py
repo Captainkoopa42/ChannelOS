@@ -15,6 +15,7 @@ from typing import Any, Mapping, Protocol
 from .ad_break_engine import BreakPolicy
 from .library import IndexedMedia, MediaLibrary
 from .models import ChannelDefinition
+from .portable import PortableConnection, decode_tree, find_setup, path_tree
 
 
 class AdCatalogValidationError(ValueError):
@@ -157,11 +158,20 @@ class ResolvedAdAssignment:
     ad_media: tuple[Any, ...]
 
 
+class _CatalogConnection(PortableConnection):
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 class AdCatalogStore:
     """SQLite-backed collections, profiles, and per-channel assignments."""
 
     def __init__(self, database: str | Path) -> None:
         self.database = str(database)
+        self.portable = find_setup(database)
         with self._connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS ad_collections (
@@ -182,17 +192,26 @@ class AdCatalogStore:
                 db.execute("ALTER TABLE channel_ad_assignments ADD COLUMN placements_json TEXT NOT NULL DEFAULT '[]'")
 
     def _connect(self) -> sqlite3.Connection:
-        db = sqlite3.connect(self.database)
+        if self.portable:
+            self.portable.check_available()
+        db = sqlite3.connect(self.database, factory=_CatalogConnection)
+        db.portable = self.portable
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         return db
+
+    def _dump(self, value, **kwargs):
+        return json.dumps(path_tree(value, self.portable.encode) if self.portable else value, **kwargs)
+
+    def _load(self, value):
+        return decode_tree(json.loads(value), self.portable)
 
     def save_collection(self, item: AdCollection) -> None:
         with self._connect() as db:
             db.execute("""INSERT INTO ad_collections VALUES (?, ?, ?)
                 ON CONFLICT(collection_id) DO UPDATE SET
                 name=excluded.name, asset_ids_json=excluded.asset_ids_json""",
-                (item.collection_id, item.name, json.dumps({
+                (item.collection_id, item.name, self._dump({
                     "asset_ids": item.asset_ids,
                     "source_paths": item.source_paths,
                     "excluded_asset_ids": item.excluded_asset_ids,
@@ -204,7 +223,7 @@ class AdCatalogStore:
             row = db.execute("SELECT * FROM ad_collections WHERE collection_id=?", (collection_id,)).fetchone()
         if row is None:
             return None
-        payload = json.loads(row["asset_ids_json"])
+        payload = self._load(row["asset_ids_json"])
         # Old catalog rows were plain JSON lists; load them without migration.
         if isinstance(payload, list):
             return AdCollection(row["collection_id"], row["name"], tuple(payload))
@@ -220,12 +239,12 @@ class AdCatalogStore:
             db.execute("""INSERT INTO ad_break_profiles VALUES (?, ?, ?)
                 ON CONFLICT(profile_id) DO UPDATE SET
                 name=excluded.name, defaults_json=excluded.defaults_json""",
-                (item.profile_id, item.name, json.dumps(dict(item.defaults), sort_keys=True)))
+                (item.profile_id, item.name, self._dump(dict(item.defaults), sort_keys=True)))
 
     def get_profile(self, profile_id: str) -> BreakProfile | None:
         with self._connect() as db:
             row = db.execute("SELECT * FROM ad_break_profiles WHERE profile_id=?", (profile_id,)).fetchone()
-        return None if row is None else BreakProfile(row["profile_id"], row["name"], json.loads(row["defaults_json"]))
+        return None if row is None else BreakProfile(row["profile_id"], row["name"], self._load(row["defaults_json"]))
 
     def list_collections(self) -> tuple[AdCollection, ...]:
         with self._connect() as db:
@@ -283,15 +302,15 @@ class AdCatalogStore:
                 collection_id=excluded.collection_id, profile_id=excluded.profile_id,
                 overrides_json=excluded.overrides_json, placements_json=excluded.placements_json""",
                 (item.channel_number, item.collection_id, item.profile_id,
-                 json.dumps(dict(item.overrides), sort_keys=True),
-                 json.dumps([asdict(p) for p in item.placements], sort_keys=True)))
+                 self._dump(dict(item.overrides), sort_keys=True),
+                 self._dump([asdict(p) for p in item.placements], sort_keys=True)))
 
     def get_assignment(self, channel_number: int) -> ChannelAdAssignment | None:
         with self._connect() as db:
             row = db.execute("SELECT * FROM channel_ad_assignments WHERE channel_number=?", (channel_number,)).fetchone()
         return None if row is None else ChannelAdAssignment(
-            row["channel_number"], row["collection_id"], row["profile_id"], json.loads(row["overrides_json"]),
-            tuple(AdPlacementAssignment(**item) for item in json.loads(row["placements_json"])))
+            row["channel_number"], row["collection_id"], row["profile_id"], self._load(row["overrides_json"]),
+            tuple(AdPlacementAssignment(**item) for item in self._load(row["placements_json"])))
 
     def resolve_channel(self, channel_number: int, library: AssetLibrary, *,
                         legacy_settings: Mapping[str, Any] | None = None,

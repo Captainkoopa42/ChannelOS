@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable
 
+from .portable import PortableConnection, find_setup
 from .probe import MediaProbeResult
 from .storage import (
     SQLITE_BUSY_TIMEOUT_MS,
@@ -15,7 +16,7 @@ from .storage import (
     prepare_database,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 HASH_CHUNK_SIZE = 4 * 1024 * 1024
 
 
@@ -61,7 +62,7 @@ def media_asset_id(content_sha256: str) -> str:
     return f"sha256:{content_sha256.lower()}"
 
 
-class _ClosingSQLiteConnection(sqlite3.Connection):
+class _ClosingSQLiteConnection(PortableConnection):
     """Context-managed sqlite connection that actually releases its OS handle."""
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -123,6 +124,9 @@ class MediaLibrary:
 
     def __init__(self, database_path: str | Path) -> None:
         self.database_path = Path(database_path)
+        self.portable = find_setup(self.database_path)
+        if self.portable:
+            self.portable.check_available()
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         prepare_database(
             self.database_path,
@@ -131,12 +135,24 @@ class MediaLibrary:
         )
         self._initialize()
 
+    def storage_path(self, path: str | Path) -> tuple[str, str]:
+        return self.portable.storage_path(path) if self.portable else normalize_path(path)
+
+    def physical_path(self, path: str) -> Path:
+        return self.portable.decode(path) if self.portable else Path(path)
+
+    def order_key(self, path: str | Path) -> str:
+        return self.portable.order_key(path) if self.portable else normalize_path(path)[1]
+
     def connect(self) -> sqlite3.Connection:
+        if self.portable:
+            self.portable.check_available()
         connection = sqlite3.connect(
             self.database_path,
             timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000,
             factory=_ClosingSQLiteConnection,
         )
+        connection.portable = self.portable
         connection.row_factory = sqlite3.Row
         configure_sqlite_connection(
             connection,
@@ -239,7 +255,7 @@ class MediaLibrary:
         scan_finished_at: str | None = None,
         last_error: str | None = None,
     ) -> None:
-        source_text, source_key = normalize_path(source_root)
+        source_text, source_key = self.storage_path(source_root)
         with self.connect() as connection:
             connection.execute(
                 """
@@ -335,7 +351,7 @@ class MediaLibrary:
     def mark_source_offline(self, source_root: str | Path) -> None:
         """Compatibility helper for callers that deliberately invalidate a root."""
 
-        _, source_key = normalize_path(source_root)
+        _, source_key = self.storage_path(source_root)
         with self.connect() as connection:
             connection.execute(
                 "UPDATE media_locations SET online = 0 WHERE source_root_key = ?",
@@ -353,8 +369,8 @@ class MediaLibrary:
         entries disappear merely because the user stopped an in-progress job.
         """
 
-        _, source_key = normalize_path(source_root)
-        seen_keys = [normalize_path(path)[1] for path in seen_paths]
+        _, source_key = self.storage_path(source_root)
+        seen_keys = [self.storage_path(path)[1] for path in seen_paths]
 
         with self.connect() as connection:
             connection.execute(
@@ -382,7 +398,7 @@ class MediaLibrary:
             )
 
     def cached_asset_for_unchanged_path(self, path: Path) -> MediaAsset | None:
-        _, path_key = normalize_path(path)
+        _, path_key = self.storage_path(path)
         try:
             stat = path.stat()
         except OSError:
@@ -409,8 +425,8 @@ class MediaLibrary:
         content_sha256: str,
         probe: MediaProbeResult,
     ) -> tuple[MediaAsset, bool]:
-        path_text, path_key = normalize_path(path)
-        source_text, source_key = normalize_path(source_root)
+        path_text, path_key = self.storage_path(path)
+        source_text, source_key = self.storage_path(source_root)
         stat = path.stat()
         now = utc_now_text()
         asset_id = media_asset_id(content_sha256)
@@ -480,8 +496,8 @@ class MediaLibrary:
         return self._asset_from_row(row), not existed
 
     def mark_seen_cached(self, path: Path, source_root: Path) -> None:
-        path_text, path_key = normalize_path(path)
-        source_text, source_key = normalize_path(source_root)
+        path_text, path_key = self.storage_path(path)
+        source_text, source_key = self.storage_path(source_root)
         stat = path.stat()
         with self.connect() as connection:
             connection.execute(
@@ -518,6 +534,30 @@ class MediaLibrary:
             ).fetchall()
         return [self._indexed_from_row(row) for row in rows]
 
+    def list_cached_media(self, source_root: str | Path | None = None) -> list[IndexedMedia]:
+        """Read saved metadata even when media is temporarily unavailable.
+
+        This view supports opening a portable lineup without changing its saved
+        clock just because a source cannot be reached on this computer.
+        """
+        where = ''
+        parameters = ()
+        if source_root is not None:
+            _, key = self.storage_path(source_root)
+            where = '''WHERE l.path_key = ? OR (substr(l.path_key, 1, ?) = ?
+                       AND substr(l.path_key, ?, 1) IN ('/', '\\'))'''
+            parameters = (key, len(key), key, len(key) + 1)
+        with self.connect() as connection:
+            rows = connection.execute('''
+                SELECT a.asset_id, a.content_sha256, a.size_bytes AS asset_size_bytes,
+                       a.duration_seconds, a.container_format,
+                       l.path, l.path_key, l.source_root, l.online
+                FROM media_locations l JOIN media_assets a ON a.asset_id=l.asset_id
+                ''' + where + '''
+                ORDER BY l.path_key
+            ''', parameters).fetchall()
+        return [self._indexed_from_row(row) for row in rows]
+
     def list_online_media_for_source(
         self,
         source_root: str | Path,
@@ -529,7 +569,7 @@ class MediaLibrary:
         the small root list first, then query only matching location rows.
         """
 
-        _, requested_key = normalize_path(source_root)
+        _, requested_key = self.storage_path(source_root)
         with self.connect() as connection:
             root_rows = connection.execute(
                 """
@@ -599,7 +639,7 @@ class MediaLibrary:
                 ORDER BY source_root_key
                 """
             ).fetchall()
-        return tuple(Path(row["source_root"]) for row in rows)
+        return tuple(self.physical_path(row["source_root"]) for row in rows)
 
     def list_sources(self) -> list[MediaSource]:
         with self.connect() as connection:
@@ -634,8 +674,8 @@ class MediaLibrary:
 
         return [
             MediaSource(
-                source_root=Path(row["source_root"]),
-                source_root_key=row["source_root_key"],
+                source_root=self.physical_path(row["source_root"]),
+                source_root_key=normalize_path(self.physical_path(row["source_root"]))[1],
                 status=row["status"],
                 discovered_count=int(row["discovered_count"]),
                 location_count=int(row["location_count"]),
@@ -654,7 +694,7 @@ class MediaLibrary:
     ) -> SourceRemovalResult:
         """Forget one source without touching any file on disk."""
 
-        source_text, source_key = normalize_path(source_root)
+        source_text, source_key = self.storage_path(source_root)
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT COUNT(*) AS n FROM media_locations WHERE source_root_key = ?",
@@ -709,10 +749,10 @@ class MediaLibrary:
             ).fetchall()
         return [
             MediaLocation(
-                path=Path(row["path"]),
-                path_key=row["path_key"],
+                path=self.physical_path(row["path"]),
+                path_key=normalize_path(self.physical_path(row["path"]))[1],
                 asset_id=row["asset_id"],
-                source_root=Path(row["source_root"]),
+                source_root=self.physical_path(row["source_root"]),
                 online=bool(row["online"]),
             )
             for row in rows
@@ -750,10 +790,10 @@ class MediaLibrary:
                     asset_id = str(row["asset_id"])
                     grouped.setdefault(asset_id, []).append(
                         MediaLocation(
-                            path=Path(row["path"]),
-                            path_key=row["path_key"],
+                            path=self.physical_path(row["path"]),
+                            path_key=normalize_path(self.physical_path(row["path"]))[1],
                             asset_id=asset_id,
-                            source_root=Path(row["source_root"]),
+                            source_root=self.physical_path(row["source_root"]),
                             online=bool(row["online"]),
                         )
                     )
@@ -774,8 +814,7 @@ class MediaLibrary:
             container_format=row["container_format"],
         )
 
-    @staticmethod
-    def _indexed_from_row(row: sqlite3.Row) -> IndexedMedia:
+    def _indexed_from_row(self, row: sqlite3.Row) -> IndexedMedia:
         asset = MediaAsset(
             asset_id=row["asset_id"],
             content_sha256=row["content_sha256"],
@@ -784,10 +823,10 @@ class MediaLibrary:
             container_format=row["container_format"],
         )
         location = MediaLocation(
-            path=Path(row["path"]),
-            path_key=row["path_key"],
+            path=self.physical_path(row["path"]),
+            path_key=normalize_path(self.physical_path(row["path"]))[1],
             asset_id=row["asset_id"],
-            source_root=Path(row["source_root"]),
+            source_root=self.physical_path(row["source_root"]),
             online=bool(row["online"]),
         )
         return IndexedMedia(asset=asset, location=location)

@@ -114,7 +114,7 @@ def download_locked_runtime(lock: dict[str, Any], cache_directory: Path) -> Path
         try:
             request = urllib.request.Request(
                 lock["download_url"],
-                headers={"User-Agent": "ChannelOS-Windows-Packager/0.0.2"},
+                headers={"User-Agent": "ChannelOS-Windows-Packager/0.0.3"},
             )
             with urllib.request.urlopen(request, timeout=120) as response:
                 with temporary.open("wb") as output:
@@ -493,7 +493,7 @@ def build_package(output_directory: Path, supplied_nupkg: Path | None = None) ->
     write_bom(package_root, lock, nupkg, vlc_inventory)
     validate_package_root(package_root)
 
-    archive_base = output_directory / "ChannelOS-0.0.2-windows-x64"
+    archive_base = output_directory / "ChannelOS-0.0.3-windows-x64"
     archive = Path(shutil.make_archive(str(archive_base), "zip", output_directory, "ChannelOS"))
     return archive
 

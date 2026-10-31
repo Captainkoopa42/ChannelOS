@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import uuid
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -52,7 +53,7 @@ def test_portable_index_channel_and_committed_ads_follow_a_moved_setup(tmp_path)
         'adConfigVersion': '0.5', 'adBreakpointsSeconds': [20],
         'adBreakDurationSeconds': 10, 'adTriggers': ['breakpoint']})
     assert 'portable://' in created.record.path.read_text()
-    with sqlite3.connect(library.database_path) as db:
+    with closing(sqlite3.connect(library.database_path)) as db:
         assert all(row[0].startswith('portable://') for row in db.execute('SELECT path FROM media_locations'))
     definition = load_channel(created.record.path)
     resolved = resolve_channel(definition, library)
@@ -63,7 +64,7 @@ def test_portable_index_channel_and_committed_ads_follow_a_moved_setup(tmp_path)
     runtime.broadcast_at(epoch + timedelta(seconds=31))
     history = runtime.break_store.play_counts()
     runtime.break_store.close()
-    with sqlite3.connect(paths.data_directory / 'runtime.db') as db:
+    with closing(sqlite3.connect(paths.data_directory / 'runtime.db')) as db:
         assert 'portable://' in db.execute('SELECT payload FROM ad_break_plans').fetchone()[0]
 
     moved = tmp_path / 'another mount' / 'My TV'

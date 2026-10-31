@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 import pickle
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -274,8 +275,9 @@ def test_retired_ad_plan_paths_and_history_survive_after_source_removed_from_ind
         raw['advertising'] = {'enabled': False}
         service.records[0].path.write_text(yaml.safe_dump(raw))
         service.refresh()
-        with sqlite3.connect(service.ad_catalog.database) as db:
+        with closing(sqlite3.connect(service.ad_catalog.database)) as db:
             db.execute('DELETE FROM ad_collections')
+            db.commit()
         library.remove_source_from_index(ad_path.parent)
         target = tmp_path / 'History copy'
         copy_setup(library, service, store, target, copy_media=True)

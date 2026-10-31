@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -152,8 +153,9 @@ def test_host_audio_device_is_separate_while_preferences_follow_the_drive(portab
 
 def test_future_history_schema_is_rejected_before_migration(portable):
     path = portable.data_directory / 'runtime.db'
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db:
         db.execute("UPDATE runtime_meta SET value='999' WHERE key='schema_version'")
+        db.commit()
     before = path.read_bytes()
     with pytest.raises(PortableSetupError, match='history'):
         inspect_setup(portable.root)

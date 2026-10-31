@@ -593,7 +593,7 @@ def test_tuning_and_viewer_clock_survive_runtime_restart(tmp_path: Path) -> None
     assert restored.is_live
 
 
-def test_seek_cannot_fast_forward_past_live(tmp_path: Path) -> None:
+def test_seek_can_watch_ahead_while_paused_and_go_live_returns_to_now(tmp_path: Path) -> None:
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     tv = open_two_channel_tv(tmp_path, epoch)
     tv.tune(7, now=epoch)
@@ -601,8 +601,65 @@ def test_seek_cannot_fast_forward_past_live(tmp_path: Path) -> None:
 
     decision = tv.seek(999, now=epoch + timedelta(seconds=20))
 
-    assert decision.is_live
-    assert decision.viewer_time_utc == epoch + timedelta(seconds=20)
+    assert not decision.is_live
+    assert decision.is_ahead
+    assert decision.ahead_seconds == pytest.approx(989)
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=1009)
+    assert not tv._viewer.running
+    live = tv.go_live(now=epoch + timedelta(seconds=25))
+    assert live.is_live and not live.is_ahead
+    assert live.viewer_time_utc == epoch + timedelta(seconds=25)
+    assert tv._viewer.running
+
+
+@pytest.mark.parametrize('mode', ['sequential', 'shuffle', 'calendar'])
+def test_watch_ahead_keeps_broadcast_epoch_and_station_position(tmp_path, mode):
+    from dataclasses import replace
+    epoch = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    resolved = build_resolved_channel(tmp_path, [30.0, 30.0], channel_number=7)
+    if mode == 'calendar':
+        resolved = calendar_channel(resolved, [(epoch, 0), (epoch + timedelta(seconds=60), 1)])
+    else:
+        resolved = replace(resolved, definition=replace(resolved.definition,
+            programming=replace(resolved.definition.programming, mode=mode)))
+    store = RuntimeStore(tmp_path / 'ahead.db')
+    channel = ChannelRuntime.open(resolved, store, now=epoch)
+    tv = TelevisionRuntime((channel,), store)
+    tv.tune(7, now=epoch + timedelta(seconds=10))
+    decision = tv.seek(60, now=epoch + timedelta(seconds=10))
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=70)
+    assert decision.broadcast_selection == channel.project_at(epoch + timedelta(seconds=10))
+    assert decision.viewer_selection == channel.project_at(epoch + timedelta(seconds=70))
+    assert store.load_channel(7).epoch_utc == epoch
+    assert decision.ahead_seconds == 60
+
+
+def test_watch_ahead_survives_restart_saved_peek_and_channel_return(tmp_path):
+    epoch = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+    tv.tune(7, now=epoch)
+    tv.seek(90, now=epoch + timedelta(seconds=10))
+    restarted = open_two_channel_tv(tmp_path, epoch + timedelta(seconds=20))
+    decision = restarted.status(now=epoch + timedelta(seconds=20))
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=110)
+    assert decision.ahead_seconds == 90
+    assert restarted.saved_status(7, now=epoch + timedelta(seconds=20)).ahead_seconds == 90
+    restarted.tune(12, now=epoch + timedelta(seconds=20))
+    returned = restarted.tune(7, now=epoch + timedelta(seconds=30), return_behavior='resume')
+    assert returned.viewer_time_utc == epoch + timedelta(seconds=110)
+    assert returned.ahead_seconds == 80
+
+
+@pytest.mark.parametrize('offset', [-40, 40])
+def test_go_live_returns_from_either_side_of_broadcast(tmp_path, offset):
+    epoch = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+    tv.tune(7, now=epoch)
+    tv.seek(offset, now=epoch)
+    live = tv.go_live(now=epoch + timedelta(seconds=5))
+    assert live.is_live
+    assert live.lag_seconds == 0 and live.ahead_seconds == 0
+    assert live.viewer_time_utc == epoch + timedelta(seconds=5)
 
 
 

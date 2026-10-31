@@ -110,6 +110,36 @@ def make_session(tmp_path: Path, epoch: datetime) -> tuple[TelevisionSession, Fa
     return TelevisionSession(TelevisionRuntime((channel_7, channel_12), store), backend), backend
 
 
+def test_watch_ahead_loads_future_program_and_go_live_returns_decoder(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    session, backend = make_session(tmp_path, epoch)
+    session.tune(7, now=epoch + timedelta(seconds=5))
+
+    ahead = session.skip(30, now=epoch + timedelta(seconds=5))
+    assert ahead.ahead_seconds == 30
+    assert backend.loaded == tmp_path / "7" / "01.mp4"
+    assert backend.position == pytest.approx(5)
+    assert "AHEAD" in session.describe(ahead)
+
+    # Crossing another occurrence while ahead still follows the viewer timeline.
+    next_program = session.sync(now=epoch + timedelta(seconds=35))
+    assert next_program.ahead_seconds == 30
+    assert backend.loaded == tmp_path / "7" / "00.mp4"
+    assert backend.position == pytest.approx(5)
+
+    session.pause(now=epoch + timedelta(seconds=35))
+    session.skip(30, now=epoch + timedelta(seconds=35))
+    assert session.paused
+    assert backend.events[-1] == "pause"
+    assert backend.loaded == tmp_path / "7" / "01.mp4"
+
+    live = session.go_live(now=epoch + timedelta(seconds=40))
+    assert live.is_live
+    assert not session.paused
+    assert backend.loaded == tmp_path / "7" / "01.mp4"
+    assert backend.position == pytest.approx(10)
+
+
 def test_tune_intent_loads_broadcast_asset_and_seeks_to_live_offset(tmp_path: Path) -> None:
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     session, backend = make_session(tmp_path, epoch)
@@ -387,3 +417,51 @@ def test_viewer_does_not_count_seek_over_ad_as_watched(tmp_path: Path):
     backend.position = 5.0  # seek straight across the full advertisement
     session.sync(now=epoch + timedelta(seconds=15))
     assert channel.break_store.viewer_counts(7) == {}
+
+
+@pytest.mark.parametrize("watch_ad", [False, True])
+def test_future_ad_viewing_uses_observation_time_without_marking_it_aired(tmp_path, watch_ad):
+    from dataclasses import replace
+    from channelos.models import AdvertisingDefinition, SourceDefinition
+
+    epoch = datetime(2026, 10, 31, 12, tzinfo=UTC)
+    base = make_resolved(tmp_path, 7, [30.0])
+    ad_path = tmp_path / "ads" / "spot.mp4"
+    asset = MediaAsset(
+        asset_id="sha256:future-ad", content_sha256="future-ad",
+        size_bytes=1, duration_seconds=5.0, container_format="mp4",
+    )
+    ad = IndexedMedia(asset, MediaLocation(
+        path=ad_path, path_key=str(ad_path), asset_id=asset.asset_id,
+        source_root=ad_path.parent, online=True,
+    ))
+    definition = replace(base.definition, advertising=AdvertisingDefinition(
+        enabled=True, sources=(SourceDefinition(ad_path.parent),),
+        breakpoints_seconds=(10.0,), break_duration_seconds=5.0,
+    ))
+    store = RuntimeStore(tmp_path / "future-ad.db")
+    channel = ChannelRuntime.open(ResolvedChannel(definition, base.media, (ad,)), store, now=epoch)
+    backend = FakeBackend()
+    session = TelevisionSession(TelevisionRuntime((channel,), store), backend)
+    try:
+        session.tune(7, now=epoch)
+        ahead = session.skip(10, now=epoch)
+        assert ahead.is_ahead
+        assert backend.loaded == ad_path
+        assert channel.break_store.diagnostics(7)["completedAirings"] == 0
+        if watch_ad:
+            for elapsed in range(1, 6):
+                backend.position = float(elapsed)
+                session.sync(now=epoch + timedelta(seconds=elapsed))
+        else:
+            session.skip(5, now=epoch)
+
+        assert channel.break_store.diagnostics(7)["completedAirings"] == 0
+        assert channel.break_store.viewer_counts(7) == ({asset.asset_id: 1} if watch_ad else {})
+        if watch_ad:
+            completed_at = channel.break_store.connection.execute(
+                "SELECT completed_at FROM ad_view_history"
+            ).fetchone()[0]
+            assert datetime.fromisoformat(completed_at) == epoch + timedelta(seconds=5)
+    finally:
+        channel.break_store.close()

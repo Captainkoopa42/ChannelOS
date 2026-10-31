@@ -215,17 +215,30 @@ ApplicationWindow {
                + "  " + (homeTelevision.channelName || "ChannelOS")
     }
 
+    function televisionClockText(tv) {
+        if (tv.isLive) return "Live · Broadcast Clock"
+        var ahead = Number(tv.aheadSeconds || 0)
+        return (ahead >= 0.5 ? Math.round(ahead) + "s ahead of live"
+                            : Math.round(Number(tv.lagSeconds || 0)) + "s behind live")
+                + " · Viewer Clock"
+    }
+
+    function televisionClockBadge(tv) {
+        var ahead = Number(tv.aheadSeconds || 0)
+        var offset = ahead >= 0.5 ? Math.round(ahead) + "s AHEAD"
+                                : Math.round(Number(tv.lagSeconds || 0)) + "s BEHIND"
+        if (tv.paused) return "PAUSED" + (tv.isLive ? "" : " · " + offset)
+        return tv.isLive ? "LIVE" : offset + (ahead >= 0.5 ? " OF LIVE" : " LIVE")
+    }
+
     function infoRows() {
         var item = infoItem()
         var result = []
         if (screen === "live" || screen === "home") {
             var tv = screen === "live" ? playback : homeTelevision
             var state = tv.paused
-                      ? "Paused"
-                      : (tv.isLive
-                         ? "Live · Broadcast Clock"
-                         : Math.round(Number(tv.lagSeconds || 0))
-                           + "s behind live · Viewer Clock")
+                      ? "Paused · " + televisionClockText(tv)
+                      : televisionClockText(tv)
             result.push({ label: "STATUS", value: state })
             result.push({
                 label: "AIRTIME",
@@ -907,18 +920,9 @@ ApplicationWindow {
 
                             Text {
                                 id: liveStateText
+                                objectName: "liveClockStatus"
                                 anchors.centerIn: parent
-                                text: root.playback.paused
-                                      ? ("PAUSED"
-                                         + (root.playback.lagSeconds >= 1
-                                            ? " - "
-                                              + Math.round(root.playback.lagSeconds)
-                                              + "s BEHIND"
-                                            : ""))
-                                      : (root.playback.isLive
-                                         ? "LIVE"
-                                         : Math.round(root.playback.lagSeconds)
-                                           + "s BEHIND LIVE")
+                                text: root.televisionClockBadge(root.playback)
                                 color: root.textPrimary
                                 font.pixelSize: 14
                                 font.weight: Font.Bold
@@ -961,7 +965,7 @@ ApplicationWindow {
 
                     Text {
                         visible: Boolean(root.playback.isAdvertisement)
-                        text: "Now airing: " + (root.playback.title || "Commercial")
+                        text: "Playing: " + (root.playback.title || "Commercial")
                               + " • " + Math.ceil(root.playback.breakRemainingSeconds || 0) + "s remaining"
                         color: root.textSecondary
                         font.pixelSize: 14
@@ -1476,11 +1480,9 @@ ApplicationWindow {
                     font.pixelSize: 17
                 }
                 Text {
+                    objectName: "homeClockStatus"
                     visible: root.homeTelevision.mode === "current"
-                    text: root.homeTelevision.isLive
-                          ? "LIVE • Broadcast Clock"
-                          : Math.round(root.homeTelevision.lagSeconds || 0)
-                            + "s behind live • Viewer Clock"
+                    text: root.televisionClockText(root.homeTelevision)
                     color: root.homeTelevision.isLive
                            ? root.liveRed
                            : root.accentBright

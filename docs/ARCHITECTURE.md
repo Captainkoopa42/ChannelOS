@@ -216,7 +216,8 @@ GO_LIVE
 Viewer Clock := Broadcast Clock
 ```
 
-Fast-forward is capped at LIVE.
+Fast-forward may move the Viewer Clock past LIVE into upcoming local
+programming. GO_LIVE returns to the Broadcast Clock from either direction.
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**
 

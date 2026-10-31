@@ -139,7 +139,7 @@ class TelevisionSession:
         program_started_at = decision.viewer_selection.program_started_at
         event = decision.viewer_selection.event
         if self._ad_viewing is not None and self._ad_viewing.event_id != event.event_id:
-            self._finish_ad_viewing(decision.viewer_time_utc)
+            self._finish_ad_viewing(decision.observed_at_utc or utc_now())
         if (
             self.loaded_asset_id != asset_id
             or (self.loaded_program_started_at != program_started_at
@@ -405,7 +405,11 @@ class TelevisionSession:
     @staticmethod
     def describe(decision: TuneDecision) -> str:
         selected = decision.viewer_selection
-        state = "LIVE" if decision.is_live else f"-{decision.lag_seconds:.1f}s"
+        state = (
+            "LIVE" if decision.is_live else
+            f"+{decision.ahead_seconds:.1f}s AHEAD" if decision.is_ahead else
+            f"-{decision.lag_seconds:.1f}s"
+        )
         return (
             f"Channel {decision.channel_number:03d} — {decision.channel_name} | "
             f"{selected.media.location.path.name} @ {selected.offset_seconds:.3f}s | {state}"

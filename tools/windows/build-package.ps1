@@ -57,7 +57,7 @@ Write-Host "Package created in:"
 Write-Host (Join-Path $Repository "dist\windows")
 Write-Host ""
 Write-Host "To run the beta:"
-Write-Host "1. Extract ChannelOS-0.0.3-windows-x64.zip."
+Write-Host "1. Extract ChannelOS-0.0.4-windows-x64.zip."
 Write-Host "2. Open the extracted ChannelOS folder."
 Write-Host "3. Double-click ChannelOS.exe."
 Write-Host "This is a portable build, so it does not add a Start-menu shortcut."

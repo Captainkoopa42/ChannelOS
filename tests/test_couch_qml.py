@@ -181,6 +181,45 @@ def test_main_qml_instantiates_headlessly() -> None:
 
 
 @pytest.mark.parametrize(
+    ("lag", "ahead", "is_live", "paused", "badge", "clock"),
+    [
+        (0, 90, False, False, "90s AHEAD OF LIVE", "90s ahead of live"),
+        (0, 90, False, True, "PAUSED · 90s AHEAD", "90s ahead of live"),
+        (20, 0, False, False, "20s BEHIND LIVE", "20s behind live"),
+        (0, 0, True, False, "LIVE", "Live · Broadcast Clock"),
+    ],
+)
+def test_live_and_home_clock_labels_show_ahead_behind_and_live(
+    lag, ahead, is_live, paused, badge, clock,
+) -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    engine = QQmlApplicationEngine()
+    video_window = QWindow()
+    engine.rootContext().setContextProperty("channelOS", controller)
+    engine.rootContext().setContextProperty("channelOSVideoWindow", video_window)
+    qml_path = Path(channelos.__file__).resolve().parent / "qml" / "Main.qml"
+    engine.load(QUrl.fromLocalFile(str(qml_path)))
+    root = engine.rootObjects()[0]
+    try:
+        # Publish after creation to exercise the same signal/binding update as playback.
+        controller._playback = {
+            "active": True, "isLive": is_live, "lagSeconds": lag,
+            "aheadSeconds": ahead, "isAhead": ahead > 0, "paused": paused,
+        }
+        controller._home_television = {**controller._playback, "mode": "current"}
+        controller.playbackChanged.emit()
+        controller.homeTelevisionChanged.emit()
+        app.processEvents()
+        assert root.findChild(QObject, "liveClockStatus").property("text") == badge
+        assert clock in root.findChild(QObject, "homeClockStatus").property("text")
+    finally:
+        root.close()
+        engine.deleteLater()
+        app.processEvents()
+
+
+@pytest.mark.parametrize(
     ("key", "expected"),
     [
         (Qt.Key.Key_7, ControlCommand.digit(7)),

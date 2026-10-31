@@ -232,7 +232,6 @@ def test_couch_qml_asset_is_present() -> None:
     assert "root.playbackError.length === 0" not in text
     assert '|| root.screen === "ondemand"' in text
     assert "channelOS ? channelOS.onDemand" in text
-    assert "BEHIND LIVE" in text
     assert "NEXT" in text
     assert "Broadcast Clock" in text
     assert "displaySegments" in text

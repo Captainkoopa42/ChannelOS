@@ -40,6 +40,14 @@ An interrupted copy can be recovered with Open Existing Setup. A setup can be
 open in only one ChannelOS process at a time. Windows and Linux need their own
 compatible native application builds; this download is for Windows x64.
 
+WATCHING AHEAD
+--------------
+Skip Forward can move past Live into upcoming local programs. The TV badge and
+Home show whether you are ahead of Live, behind Live, or Live. Go Live returns to
+the current broadcast from either side and resumes playing. Pause and seeking
+change your viewing position while the channel's broadcast schedule keeps
+running. Continue Watching preserves that position across restarts.
+
 DISPLAY MODE
 ------------
 ChannelOS is fullscreen by default for couch/TV use. Settings > Display Mode can

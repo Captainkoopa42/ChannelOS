@@ -47,6 +47,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ChannelOS-Windows-x64
-          path: dist/windows/ChannelOS-0.0.3-windows-x64.zip
+          path: dist/windows/ChannelOS-0.0.4-windows-x64.zip
           if-no-files-found: error
           compression-level: 0

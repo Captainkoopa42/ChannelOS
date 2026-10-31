@@ -125,11 +125,24 @@ Viewer Clock resumes from its frozen point
 
 SKIP_BACK / SKIP_FORWARD
 Viewer Clock moves on the schedule timeline
-Fast-forward is capped at LIVE
+Fast-forward can move past LIVE into upcoming local programming
 
 GO_LIVE
-Viewer Clock snaps to Broadcast Clock
+Viewer Clock snaps to Broadcast Clock from ahead or behind and resumes playing
 ```
+
+The HUD, Home and Info distinguish Live, ahead of Live and behind Live. Seeking
+changes only the personal Viewer Clock; it does not move the station's epoch,
+schedule or actual broadcast position. A paused viewer remains paused after a
+seek. Restart, Continue Watching and the `resume` return policy preserve ahead
+positions just as they preserve behind positions. The default `live` return
+policy still tunes to the present.
+
+Future programming is projected using the same event timeline as the Guide.
+Projecting or seeking across a future advertisement does not mark it aired or
+watched. Genuine decoder consumption can record a viewing before its scheduled
+airing; its completion timestamp is the actual observation time. Logical aired
+history continues to follow the station's Broadcast Clock.
 
 ## Returning to a channel
 
@@ -205,7 +218,10 @@ The completed Phase 1 reference suite covers:
 - Channel Up / Down and Previous Channel,
 - two channels advancing independently while untuned,
 - current/viewer continuity across runtime restart,
-- fast-forward capped at LIVE,
+- watching ahead across sequential, shuffle and calendar programming,
+- GO_LIVE returning from either side of the station's current broadcast,
+- ahead positions surviving restart and channel return,
+- future ad projection versus actual viewing and aired history,
 - playback routing through a fake backend,
 - CLI Broadcast Clock persistence,
 - CLI television startup,

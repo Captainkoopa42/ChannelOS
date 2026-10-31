@@ -1814,11 +1814,21 @@ class TuneDecision:
     viewer_time_utc: datetime
     viewer_selection: BroadcastSelection
     broadcast_selection: BroadcastSelection
+    # Positive behind the station, negative ahead of its current broadcast.
     lag_seconds: float
+    observed_at_utc: datetime | None = None
 
     @property
     def is_live(self) -> bool:
-        return self.lag_seconds < 0.5
+        return abs(self.lag_seconds) < 0.5
+
+    @property
+    def ahead_seconds(self) -> float:
+        return max(0.0, -self.lag_seconds)
+
+    @property
+    def is_ahead(self) -> bool:
+        return self.lag_seconds <= -0.5
 
 
 class TelevisionRuntime:
@@ -1857,11 +1867,9 @@ class TelevisionRuntime:
             raise ChannelRuntimeError("no channel is currently tuned")
         runtime = self._channel(self.current_channel)
         viewer_time = self._viewer.current(now)
-        if viewer_time > now:
-            viewer_time = self._viewer.go_live(now)
         viewer_selection = runtime.selection_for_viewer_time(viewer_time)
         broadcast_selection = runtime.broadcast_at(now)
-        lag = max(0.0, (now - viewer_time).total_seconds())
+        lag = (now - viewer_time).total_seconds()
         return TuneDecision(
             channel_number=runtime.channel_number,
             channel_name=runtime.channel.definition.name,
@@ -1869,6 +1877,7 @@ class TelevisionRuntime:
             viewer_selection=viewer_selection,
             broadcast_selection=broadcast_selection,
             lag_seconds=lag,
+            observed_at_utc=now,
         )
 
     def _persist_viewer(self, now: datetime) -> None:
@@ -1957,7 +1966,7 @@ class TelevisionRuntime:
         current_time = self._now(now)
         if self._viewer is None:
             raise ChannelRuntimeError("no channel is currently tuned")
-        self._viewer.seek(delta_seconds, current_time, live_ceiling=current_time)
+        self._viewer.seek(delta_seconds, current_time)
         self._persist_viewer(current_time)
         return self._decision(current_time)
 
@@ -1984,12 +1993,10 @@ class TelevisionRuntime:
             return None
 
         viewer_time = saved.current(current_time)
-        if viewer_time > current_time:
-            viewer_time = current_time
 
         viewer_selection = runtime.selection_for_viewer_time(viewer_time)
         broadcast_selection = runtime.broadcast_at(current_time)
-        lag = max(0.0, (current_time - viewer_time).total_seconds())
+        lag = (current_time - viewer_time).total_seconds()
         return TuneDecision(
             channel_number=runtime.channel_number,
             channel_name=runtime.channel.definition.name,
@@ -1997,6 +2004,7 @@ class TelevisionRuntime:
             viewer_selection=viewer_selection,
             broadcast_selection=broadcast_selection,
             lag_seconds=lag,
+            observed_at_utc=current_time,
         )
 
     def continue_watching(

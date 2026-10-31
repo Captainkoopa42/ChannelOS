@@ -53,6 +53,13 @@ uses its saved index. Channels, Studio groups, ad configuration, schedules and
 history travel together through drive-letter and folder changes. See
 [Portable setups](docs/PORTABLE_SETUP.md) for the workflow and format.
 
+Version 0.0.4 restores watching ahead on local television. Skip forward can move
+past the current broadcast into upcoming programs. The HUD and Home distinguish
+ahead, behind and Live; **Go Live** returns to the current broadcast from either
+direction. The station schedule keeps running independently, and saved viewer
+positions retain their ahead/behind state across restart. See
+[Viewer Clock](docs/PERSISTENT_CHANNEL_RUNTIME.md#viewer-clock).
+
 The key runtime rule remains:
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**

@@ -350,6 +350,8 @@ def snapshot_setup(plan: CopyPlan, library: MediaLibrary, runtime_database: Path
         settings = library.database_path.parent / 'settings.json'
         if settings.is_file():
             raw = json.loads(settings.read_text(encoding='utf-8'))
+            if not isinstance(raw, dict):
+                raise PortableSetupError('The saved settings are invalid. Save your preferences in Settings, then retry the copy.')
             raw.pop('audio_output_device_id', None)
             (data / 'settings.json').write_text(json.dumps(raw, indent=2), encoding='utf-8')
         _convert_library(data / 'library.db', plan, library)

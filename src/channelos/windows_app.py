@@ -102,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
     with ExitStack() as lifetime:
         try:
             return _launch(argv, lifetime)
-        except (PortableSetupError, OSError, sqlite3.Error, DatabaseVersionError) as exc:
+        except (ValueError, OSError, sqlite3.Error, DatabaseVersionError) as exc:
             message = f"ChannelOS could not open this setup.\n\n{exc}"
             logging.getLogger(__name__).error(message)
             _show_error(message)

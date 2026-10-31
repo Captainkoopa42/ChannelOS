@@ -158,3 +158,14 @@ def test_future_history_schema_is_rejected_before_migration(portable):
     with pytest.raises(PortableSetupError, match='history'):
         inspect_setup(portable.root)
     assert path.read_bytes() == before
+
+
+def test_invalid_channel_is_reported_before_portable_startup_writes(portable, monkeypatch):
+    channel = next((portable.data_directory / 'channels').glob('*.yaml'))
+    channel.write_text('channel: []\nname: Broken\n')
+    messages = []
+    monkeypatch.setattr(windows_app, '_show_error', messages.append)
+    monkeypatch.setattr(windows_app.couch, 'main', lambda *_: pytest.fail('Invalid channel must not launch'))
+    assert windows_app.main(['--portable-setup', str(portable.root)]) == 6
+    assert messages and 'could not open' in messages[0]
+    assert not (portable.data_directory / 'logs').exists()

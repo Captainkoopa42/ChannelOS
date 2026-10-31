@@ -80,6 +80,7 @@ def run_couch(
             channels_dir,
             library,
         )
+        broadcaster.runtime_database_path = Path(state_db)
     except (BroadcasterError, ChannelValidationError) as exc:
         raise CouchUIError(str(exc)) from exc
 

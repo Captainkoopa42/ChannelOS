@@ -138,6 +138,8 @@ def test_application_surfaces_use_shared_form_controls(
 ) -> None:
     qml = (QML_ROOT / filename).read_text(encoding="utf-8")
 
+    if filename == "ChannelStudioScreen.qml":
+        qml += (QML_ROOT / "AdSettingsEditor.qml").read_text(encoding="utf-8")
     for control, expected in expected_counts.items():
         assert qml.count(f"{control} {{") >= expected
 

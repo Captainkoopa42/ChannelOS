@@ -171,7 +171,8 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
                     include_offline_programs: bool = False) -> ResolvedChannel:
     source_keys = [normalize_path(source.path)[1] for source in channel.sources]
     ad_media: list[IndexedMedia] = []
-    policies = (channel.advertising,) + tuple(item.policy for item in channel.advertising.placements)
+    policies = (channel.advertising,) + (tuple(item.policy for item in channel.advertising.placements)
+                                         if channel.advertising.setup_mode == "advanced" else ())
     configured_ad_ids = {asset_id for policy in policies for asset_id in policy.asset_ids}
     for policy in policies:
         for source in policy.sources:
@@ -180,7 +181,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
                 else library.list_online_media_for_source(source.path)))
     if channel.advertising.enabled:
         active_policies = (tuple(item.policy for item in channel.advertising.placements if item.policy.enabled)
-                           if channel.advertising.placements else (channel.advertising,))
+                           if channel.advertising.placements and channel.advertising.setup_mode == "advanced" else (channel.advertising,))
         seen_ad_assets: set[str] = set()
         for source in (source for policy in active_policies for source in policy.sources):
             for item in library.list_online_media_for_source(source.path):
@@ -213,7 +214,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
                 if asset_id not in seen_ad_assets:
                     seen_ad_assets.add(asset_id)
                     ad_media.append(indexed_ads[asset_id])
-    if not channel.advertising.placements:
+    if not channel.advertising.placements or channel.advertising.setup_mode != "advanced":
         ad_media = [item for item in ad_media if item.asset.asset_id not in channel.advertising.excluded_asset_ids]
     indexed: list[IndexedMedia] = []
     advertising_ids = configured_ad_ids | {item.asset.asset_id for item in ad_media}

@@ -60,6 +60,13 @@ direction. The station schedule keeps running independently, and saved viewer
 positions retain their ahead/behind state across restart. See
 [Viewer Clock](docs/PERSISTENT_CHANNEL_RUNTIME.md#viewer-clock).
 
+Version 0.0.5 adds **Media Bin / Ad Bin** tabs and the shared simple Ad Breaks
+editor in Studio and Classic. Choose one complete ad after each show,
+Sequential/Shuffle rotation, or optional timed breaks/aligned show starts.
+Detailed rules remain under **Advanced Ad Settings**, with all reusable profiles,
+collections and IDs in its **Profiles** tab. See
+[Simple ad controls](docs/SIMPLE_AD_CONTROLS.md) for behavior and compatibility.
+
 The key runtime rule remains:
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**

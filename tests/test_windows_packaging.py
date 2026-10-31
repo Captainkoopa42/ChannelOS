@@ -154,6 +154,9 @@ def test_package_validation_compares_every_frozen_file(tmp_path: Path) -> None:
         "_internal/PySide6/Qt/qml/QtQuick/qmldir",
         "_internal/PySide6/Qt/qml/QtQuick/Controls/qmldir",
         "_internal/PySide6/Qt/qml/QtQuick/Layouts/qmldir",
+        "_internal/channelos/qml/AdSettingsEditor.qml",
+        "_internal/channelos/qml/AdMediaBin.qml",
+        "_internal/channelos/qml/AdSources.js",
     )
     for relative in required_files:
         path = tmp_path / relative

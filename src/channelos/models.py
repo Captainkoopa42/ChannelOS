@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3", "0.4", "0.5"}
+SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3", "0.4", "0.5", "0.6"}
 SUPPORTED_PROGRAMMING_MODES = {"sequential", "shuffle", "calendar"}
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -43,6 +43,7 @@ class CalendarBlockDefinition:
     start_utc: datetime
     asset_id: str
     filler: CalendarFillerDefinition | None = None
+    ad_plan: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +89,10 @@ class AdvertisingDefinition:
     placements: tuple[AdPlacementDefinition, ...] = ()
     collection_membership: str = "fixed"
     excluded_asset_ids: tuple[str, ...] = ()
+    setup_mode: str = "advanced"
+    play_order: str = "shuffle"
+    clock_interval_seconds: float = 900.0
+    clock_offset_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,6 +116,10 @@ def advertising_to_mapping(value: AdvertisingDefinition) -> dict[str, Any]:
                     if key != "placements"}}
         for item in value.placements
     ]
+    if value.setup_mode == "advanced":
+        # Keep legacy policy signatures stable across the application upgrade.
+        for key in ("setup_mode", "play_order", "clock_interval_seconds", "clock_offset_seconds"):
+            result.pop(key)
     return result
 
 
@@ -171,7 +180,7 @@ class ChannelDefinition:
             sources.append(SourceDefinition(path=Path(path_value)))
 
         raw_advertising = raw.get("advertising", {})
-        if version not in {"0.4", "0.5"} and "advertising" in raw:
+        if version not in {"0.4", "0.5", "0.6"} and "advertising" in raw:
             raise ChannelValidationError(
                 "advertising settings require schema_version '0.4'"
             )
@@ -188,8 +197,10 @@ class ChannelDefinition:
             "transition_seconds", "slot_seconds", "schedule_priority", "expand_source", "placements",
             "collection_membership", "excluded_asset_ids",
         }
-        if version == "0.5":
+        if version in {"0.5", "0.6"}:
             allowed_advertising.update(new_ad_keys)
+        if version == "0.6":
+            allowed_advertising.update({"setup_mode", "play_order", "clock_interval_seconds", "clock_offset_seconds"})
         if set(raw_advertising) - allowed_advertising:
             names = ", ".join(sorted(set(raw_advertising) - allowed_advertising))
             raise ChannelValidationError(f"unknown advertising field(s): {names}")
@@ -343,6 +354,22 @@ class ChannelDefinition:
                 "advertising requires indexed sources or canonical asset_ids when enabled"
             )
 
+        setup_mode = raw_advertising.get("setup_mode", "advanced")
+        play_order = raw_advertising.get("play_order", "shuffle")
+        if setup_mode not in {"advanced", "after_show", "timed", "aligned"}:
+            raise ChannelValidationError("unsupported advertising.setup_mode")
+        if play_order not in {"sequential", "shuffle"}:
+            raise ChannelValidationError("advertising.play_order must be sequential or shuffle")
+        try:
+            clock_interval = float(raw_advertising.get("clock_interval_seconds", 900))
+            clock_offset = float(raw_advertising.get("clock_offset_seconds", 0))
+        except (TypeError, ValueError) as exc:
+            raise ChannelValidationError("ad clock values must be numeric") from exc
+        if not math.isfinite(clock_interval) or not 1 <= clock_interval <= 86400:
+            raise ChannelValidationError("ad clock interval must be from 1 second through 24 hours")
+        if not math.isfinite(clock_offset) or abs(clock_offset) > 86400:
+            raise ChannelValidationError("invalid ad clock offset")
+
         raw_programming = raw.get("programming")
         if not isinstance(raw_programming, dict):
             raise ChannelValidationError("programming must be a mapping")
@@ -352,7 +379,7 @@ class ChannelDefinition:
             "preserve_episode_order",
             "avoid_repeat_days",
         }
-        if version in {"0.2", "0.3", "0.4", "0.5"}:
+        if version in {"0.2", "0.3", "0.4", "0.5", "0.6"}:
             allowed_programming.update({"filler_mode", "calendar"})
         unknown_programming = set(raw_programming) - allowed_programming
         if unknown_programming:
@@ -407,7 +434,9 @@ class ChannelDefinition:
         seen_starts: set[datetime] = set()
         for index, item in enumerate(raw_calendar):
             allowed_block = {"start_utc", "asset_id"}
-            if version in {"0.3", "0.4", "0.5"}:
+            if version == "0.6":
+                allowed_block.add("ad_plan")
+            if version in {"0.3", "0.4", "0.5", "0.6"}:
                 allowed_block.add("filler")
             if (
                 not isinstance(item, dict)
@@ -447,7 +476,7 @@ class ChannelDefinition:
             filler: CalendarFillerDefinition | None = None
             raw_filler = item.get("filler")
             if raw_filler is not None:
-                if version not in {"0.3", "0.4", "0.5"}:
+                if version not in {"0.3", "0.4", "0.5", "0.6"}:
                     raise ChannelValidationError(
                         "show-specific filler requires schema_version '0.3' or '0.4'"
                     )
@@ -497,11 +526,19 @@ class ChannelDefinition:
                     asset_ids=tuple(asset_ids),
                 )
 
+            ad_plan = None
+            if item.get("ad_plan") is not None:
+                from .simple_ads import validate_snapshot
+                try:
+                    ad_plan = validate_snapshot(item["ad_plan"])
+                except (ValueError, TypeError, KeyError) as exc:
+                    raise ChannelValidationError(f"invalid calendar ad plan: {exc}") from exc
             calendar.append(
                 CalendarBlockDefinition(
                     start_utc=start,
                     asset_id=asset_id.strip(),
                     filler=filler,
+                    ad_plan=ad_plan,
                 )
             )
             seen_starts.add(start)
@@ -557,5 +594,7 @@ class ChannelDefinition:
                 excluded_asset_ids=tuple(excluded_ids),
                 triggers=tuple(triggers),
                 transition_behavior=transition,
+                setup_mode=setup_mode, play_order=play_order,
+                clock_interval_seconds=clock_interval, clock_offset_seconds=clock_offset,
             ),
         )

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "channelos"
-version = "0.0.4"
+version = "0.0.5"
 description = "A personal broadcasting system for user-owned media."
 readme = "README.md"
 license = "MPL-2.0"
@@ -38,7 +38,7 @@ channelos-couch = "channelos.couch:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-channelos = ["qml/*.qml"]
+channelos = ["qml/*.qml", "qml/*.js"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

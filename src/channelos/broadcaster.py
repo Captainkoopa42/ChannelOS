@@ -114,7 +114,7 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
             for block in definition.programming.calendar
         ]
     if (
-        definition.schema_version in {"0.4", "0.5"}
+        definition.schema_version in {"0.4", "0.5", "0.6"}
         and (definition.advertising.enabled
              or definition.advertising.sources
              or definition.advertising.asset_ids or definition.advertising.placements
@@ -132,7 +132,7 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
             "break_duration_seconds": definition.advertising.break_duration_seconds,
             "priority": definition.advertising.priority,
         }
-        if definition.schema_version == "0.5":
+        if definition.schema_version in {"0.5", "0.6"}:
             mapping["advertising"].update({
                 "asset_ids": list(definition.advertising.asset_ids),
                 "collection_id": definition.advertising.collection_id,
@@ -161,6 +161,8 @@ def _calendar_block_mapping(block: CalendarBlockDefinition) -> dict[str, Any]:
             "mode": block.filler.mode,
             "asset_ids": list(block.filler.asset_ids),
         }
+    if block.ad_plan is not None:
+        result["ad_plan"] = block.ad_plan
     return result
 
 
@@ -223,6 +225,8 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
             "start_utc": str(block.get("startUtc", "")).strip(),
             "asset_id": str(block.get("assetId", "")).strip(),
         }
+        if block.get("adPlan") is not None:
+            item["ad_plan"] = block["adPlan"]
         filler_asset_ids = block.get("fillerAssetIds", [])
         if not isinstance(filler_asset_ids, (list, tuple)):
             raise ChannelValidationError(
@@ -259,7 +263,9 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
     ad_collection_id = str(raw.get("adCollectionId", "") or "").strip()
     ad_profile_id = str(raw.get("adProfileId", "") or "").strip()
     advanced_ads = bool(
-        raw.get("adConfigVersion") == "0.5"
+        raw.get("adSetupMode", "advanced") != "advanced"
+        or
+        raw.get("adConfigVersion") in {"0.5", "0.6"}
         or ad_asset_ids or ad_collection_id or ad_profile_id
         or raw.get("adBreakpointsSeconds")
         or raw.get("adIntervalSeconds")
@@ -271,7 +277,8 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
 
     mapping = {
         "schema_version": (
-            "0.5"
+            "0.6" if (any(block.get("adPlan") for block in calendar_raw)
+                       or has_advertising and raw.get("adSetupMode", "advanced") != "advanced") else "0.5"
             if has_advertising and advanced_ads
             else "0.4"
             if has_advertising
@@ -353,6 +360,11 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
                 "collection_membership": raw.get("adCollectionMembership", "fixed"),
                 "excluded_asset_ids": raw.get("adExcludedAssetIds", []),
             })
+            if mapping["schema_version"] == "0.6":
+                settings.update(setup_mode=raw.get("adSetupMode", "after_show"),
+                                play_order=raw.get("adPlayOrder", "shuffle"),
+                                clock_interval_seconds=raw.get("adClockIntervalSeconds", 900),
+                                clock_offset_seconds=raw.get("adClockOffsetSeconds", 0))
     return ChannelDefinition.from_mapping(mapping)
 
 
@@ -372,6 +384,7 @@ class BroadcasterService:
         library: MediaLibrary,
     ) -> None:
         self.library = library
+        self.runtime_database_path = library.database_path.with_name("runtime.db")
         self.ad_catalog = AdCatalogStore(
             self.library.database_path.with_name("ad_catalog.sqlite")
         )
@@ -803,16 +816,19 @@ class BroadcasterService:
         return self.ad_catalog_snapshot()
 
     def _apply_ad_catalog(self, definition: ChannelDefinition) -> ChannelDefinition:
+        if definition.advertising.setup_mode != "advanced":
+            return definition
         return export_portable_channel(definition, self.ad_catalog, self.library,
-            enabled_override=(definition.advertising.enabled if definition.schema_version in {"0.4", "0.5"} else None))
+            enabled_override=(definition.advertising.enabled if definition.schema_version in {"0.4", "0.5", "0.6"} else None))
 
     def _configured_definition(self, raw: dict[str, Any]) -> ChannelDefinition:
         """Resolve authoring references before validating an enabled snapshot."""
         editor = dict(raw)
         assignment = self.ad_catalog.get_assignment(int(editor.get("channel", 0)))
-        if assignment is not None and editor.get("adBreaksEnabled") and not (
+        if (assignment is not None and editor.get("adSetupMode", "advanced") == "advanced"
+                and editor.get("adBreaksEnabled") and not (
             editor.get("adSources") or editor.get("adAssetIds") or editor.get("adPlacements")
-        ):
+        )):
             editor["adBreaksEnabled"] = False
             base = definition_from_editor(editor)
             return export_portable_channel(base, self.ad_catalog, self.library, enabled_override=True)
@@ -834,6 +850,9 @@ class BroadcasterService:
                 "fillerMode": "sequential",
                 "avoidRepeatDays": 0,
                 "adBreaksEnabled": False,
+                "adSetupMode": "after_show",
+                "adPlayOrder": "shuffle",
+                "adClockIntervalSeconds": 900,
                 "adSources": [],
                 "adSelectionStrategy": "best_fit",
                 "adAssetIds": [],
@@ -891,6 +910,7 @@ class BroadcasterService:
                     "path": str(media.get("path", "")),
                     "sourceRoot": str(media.get("sourceRoot", "")),
                     "durationSeconds": duration,
+                    "adPlan": block.ad_plan,
                     "startUtc": block.start_utc.isoformat(),
                     "endUtc": (
                         block.start_utc + timedelta(seconds=duration)
@@ -929,6 +949,10 @@ class BroadcasterService:
             ),
             "avoidRepeatDays": definition.programming.avoid_repeat_days,
             "adBreaksEnabled": definition.advertising.enabled,
+            "adSetupMode": definition.advertising.setup_mode,
+            "adPlayOrder": definition.advertising.play_order,
+            "adClockIntervalSeconds": definition.advertising.clock_interval_seconds,
+            "adClockOffsetSeconds": definition.advertising.clock_offset_seconds,
             "adSources": [str(source.path) for source in definition.advertising.sources],
             "adSelectionStrategy": definition.advertising.selection_strategy,
             "adConfigVersion": definition.schema_version,
@@ -1018,6 +1042,11 @@ class BroadcasterService:
             ordered = deterministic_shuffle_order(resolved)
         else:
             ordered = resolved.media
+
+        if definition.advertising.enabled and definition.advertising.setup_mode != "advanced":
+            from .simple_ads import auto_fill
+            return auto_fill(resolved, ordered, raw, start, end, self.runtime_database_path,
+                             publish=publish, check_cancelled=check_cancelled)
 
         advertising = definition.advertising
         revision = advertising_signature(resolved)
@@ -1220,6 +1249,8 @@ class BroadcasterService:
         definition: ChannelDefinition,
     ) -> ResolvedChannel:
         resolved = resolve_channel(definition, self.library)
+        if definition.advertising.enabled and definition.advertising.setup_mode != "advanced" and not resolved.ad_media:
+            raise BroadcasterError("No eligible ad clips are selected. Choose clips in the Ad Bin or turn ads off.")
         if not resolved.media:
             raise BroadcasterError(
                 f"Channel {definition.display_number} - {definition.name} "
@@ -1236,11 +1267,16 @@ class BroadcasterService:
             validation_store = RuntimeStore(
                 Path(temporary) / "runtime.db"
             )
-            validated_runtime = ChannelRuntime.open(resolved, validation_store)
-            # Windows locks open SQLite files. Release the temporary ad-plan
-            # connection before TemporaryDirectory tries to remove runtime.db.
-            if validated_runtime.break_store is not None:
-                validated_runtime.break_store.close()
+            validation_at = (definition.programming.calendar[0].start_utc
+                             if definition.programming.mode == "calendar" else None)
+            validated_runtime = ChannelRuntime.open(resolved, validation_store, now=validation_at)
+            try:
+                validated_runtime.validate_schedule()
+            except ChannelRuntimeError as exc:
+                raise ChannelValidationError(str(exc)) from exc
+            finally:
+                if validated_runtime.break_store is not None:
+                    validated_runtime.break_store.close()
 
         return resolved
 

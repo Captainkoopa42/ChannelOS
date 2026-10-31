@@ -342,6 +342,14 @@ def snapshot_setup(plan: CopyPlan, library: MediaLibrary, runtime_database: Path
             resolved = resolve_channel(definition, library, allow_offline_ads=True)
             revisions[definition.channel] = advertising_signature(resolved, path_encoder=plan.encode)
             encoded = path_tree(channel_to_mapping(definition), plan.encode)
+            old_revision = advertising_signature(resolved)
+            for block in encoded.get('programming', {}).get('calendar', []):
+                reserved = block.get('ad_plan')
+                if reserved and reserved.get('revision') == old_revision:
+                    reserved['revision'] = revisions[definition.channel]
+                    for item in reserved['breaks']:
+                        if item.get('policy_revision') == old_revision:
+                            item['policy_revision'] = revisions[definition.channel]
             (channel_dir / f'channel-{definition.channel:04d}.yaml').write_text(
                 yaml.safe_dump(encoded, sort_keys=False, allow_unicode=True), encoding='utf-8')
         studio = channels_directory / 'studio'

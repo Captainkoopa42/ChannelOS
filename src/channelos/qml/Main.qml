@@ -28,6 +28,7 @@ ApplicationWindow {
     property int homeFocusArea: 0
     property int homeCardSelection: 0
     property int settingsSelection: 0
+    property int studioChannelNumber: 0
     property int selectedRow: 0
     property int selectedProgram: 0
     property int selectedLibrary: 0
@@ -77,6 +78,8 @@ ApplicationWindow {
     // Context properties are cleared during engine teardown. Guarding
     // these bindings keeps shutdown quiet without changing runtime behavior.
     property var playback: channelOS ? channelOS.playback : ({ active: false })
+    readonly property string playbackError:
+        playback && playback.error ? String(playback.error) : ""
     property var homeTelevision: channelOS
                                 ? channelOS.homeTelevision
                                 : ({
@@ -212,17 +215,30 @@ ApplicationWindow {
                + "  " + (homeTelevision.channelName || "ChannelOS")
     }
 
+    function televisionClockText(tv) {
+        if (tv.isLive) return "Live · Broadcast Clock"
+        var ahead = Number(tv.aheadSeconds || 0)
+        return (ahead >= 0.5 ? Math.round(ahead) + "s ahead of live"
+                            : Math.round(Number(tv.lagSeconds || 0)) + "s behind live")
+                + " · Viewer Clock"
+    }
+
+    function televisionClockBadge(tv) {
+        var ahead = Number(tv.aheadSeconds || 0)
+        var offset = ahead >= 0.5 ? Math.round(ahead) + "s AHEAD"
+                                : Math.round(Number(tv.lagSeconds || 0)) + "s BEHIND"
+        if (tv.paused) return "PAUSED" + (tv.isLive ? "" : " · " + offset)
+        return tv.isLive ? "LIVE" : offset + (ahead >= 0.5 ? " OF LIVE" : " LIVE")
+    }
+
     function infoRows() {
         var item = infoItem()
         var result = []
         if (screen === "live" || screen === "home") {
             var tv = screen === "live" ? playback : homeTelevision
             var state = tv.paused
-                      ? "Paused"
-                      : (tv.isLive
-                         ? "Live · Broadcast Clock"
-                         : Math.round(Number(tv.lagSeconds || 0))
-                           + "s behind live · Viewer Clock")
+                      ? "Paused · " + televisionClockText(tv)
+                      : televisionClockText(tv)
             result.push({ label: "STATUS", value: state })
             result.push({
                 label: "AIRTIME",
@@ -654,9 +670,71 @@ ApplicationWindow {
                    ? homeVideoSlot.height
                    : guideVideoSlot.height)
 
+        // Keep the native child alive while an error is shown. Destroying or
+        // hiding the target in response to a presentation warning prevents
+        // libVLC from recovering on its existing surface.
         visible: fullPresentation || showHomePreview || showGuidePreview
         window: channelOSVideoWindow
         z: 50
+    }
+
+    Window {
+        id: playbackErrorOverlay
+        transientParent: root
+        flags: Qt.Tool
+               | Qt.FramelessWindowHint
+               | Qt.WindowDoesNotAcceptFocus
+               | Qt.WindowTransparentForInput
+        color: "transparent"
+        x: root.x + Math.round((root.width - width) / 2)
+        y: root.y + Math.round((root.height - height) / 2)
+        width: Math.min(760, root.width - 80)
+        height: 210
+        visible: root.visible
+                 && root.visibility !== Window.Minimized
+                 && root.playbackError.length > 0
+                 && (root.screen === "home"
+                     || root.screen === "guide"
+                     || root.screen === "live"
+                     || root.screen === "ondemand")
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 12
+            color: "#f20a1725"
+            border.color: root.liveRed
+            border.width: 2
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 24
+                spacing: 12
+
+                Text {
+                    text: "PLAYBACK UNAVAILABLE"
+                    color: root.liveRed
+                    font.pixelSize: 22
+                    font.weight: Font.Bold
+                    font.letterSpacing: 2
+                }
+
+                Text {
+                    width: parent.width
+                    text: root.playbackError
+                    color: root.textPrimary
+                    font.pixelSize: 16
+                    wrapMode: Text.Wrap
+                }
+
+                Text {
+                    width: parent.width
+                    text: "Return Home, restore the file if it moved, and re-scan that Library folder."
+                    color: root.textSecondary
+                    font.pixelSize: 14
+                    wrapMode: Text.Wrap
+                }
+            }
+        }
     }
 
     // Windows-safe television HUD architecture.
@@ -842,18 +920,9 @@ ApplicationWindow {
 
                             Text {
                                 id: liveStateText
+                                objectName: "liveClockStatus"
                                 anchors.centerIn: parent
-                                text: root.playback.paused
-                                      ? ("PAUSED"
-                                         + (root.playback.lagSeconds >= 1
-                                            ? " - "
-                                              + Math.round(root.playback.lagSeconds)
-                                              + "s BEHIND"
-                                            : ""))
-                                      : (root.playback.isLive
-                                         ? "LIVE"
-                                         : Math.round(root.playback.lagSeconds)
-                                           + "s BEHIND LIVE")
+                                text: root.televisionClockBadge(root.playback)
                                 color: root.textPrimary
                                 font.pixelSize: 14
                                 font.weight: Font.Bold
@@ -861,12 +930,45 @@ ApplicationWindow {
                         }
                     }
 
-                    Text {
-                        text: root.playback.title || "No Programming"
-                        color: root.textPrimary
-                        font.pixelSize: 30
-                        font.weight: Font.DemiBold
+                    Row {
                         width: parent.width
+                        spacing: 10
+
+                        Rectangle {
+                            visible: Boolean(root.playback.isAdvertisement)
+                            width: 42
+                            height: 30
+                            radius: 5
+                            color: "#9a6a20"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "AD"
+                                color: root.textPrimary
+                                font.pixelSize: 15
+                                font.weight: Font.Bold
+                            }
+                        }
+
+                        Text {
+                            text: root.playback.isAdvertisement
+                                  ? ("Ad break"
+                                     + (root.playback.parentProgramTitle
+                                         ? " • " + root.playback.parentProgramTitle : ""))
+                                  : (root.playback.title || "No Programming")
+                            color: root.textPrimary
+                            font.pixelSize: 30
+                            font.weight: Font.DemiBold
+                            width: parent.width - (root.playback.isAdvertisement ? 52 : 0)
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                    Text {
+                        visible: Boolean(root.playback.isAdvertisement)
+                        text: "Playing: " + (root.playback.title || "Commercial")
+                              + " • " + Math.ceil(root.playback.breakRemainingSeconds || 0) + "s remaining"
+                        color: root.textSecondary
+                        font.pixelSize: 14
                         elide: Text.ElideRight
                     }
 
@@ -1140,73 +1242,130 @@ ApplicationWindow {
                 opacity: 0.72
             }
 
-            Column {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.margins: 54
-                spacing: 12
+            Flickable {
+                id: homeWelcomeScroller
+                objectName: "homeWelcomeScroller"
+                anchors.fill: parent
+                clip: true
+                contentWidth: width
+                contentHeight: Math.max(
+                    height,
+                    homeWelcomeContent.y
+                    + homeWelcomeContent.implicitHeight
+                    + 54
+                )
+                flickableDirection: Flickable.VerticalFlick
+                boundsBehavior: Flickable.StopAtBounds
 
-                Row {
-                    spacing: 2
-                    Text { text: "Channel"; color: root.textPrimary; font.pixelSize: 38; font.weight: Font.DemiBold }
-                    Text { text: "OS"; color: root.accentBright; font.pixelSize: 38; font.weight: Font.DemiBold }
+                function revealMenuItem(item) {
+                    if (!item || height <= 0)
+                        return
+                    var point = item.mapToItem(contentItem, 0, 0)
+                    var targetTop = Math.max(0, point.y - 12)
+                    var targetBottom = point.y + item.height + 12
+                    var maximum = Math.max(0, contentHeight - height)
+                    if (targetTop < contentY)
+                        contentY = Math.min(maximum, targetTop)
+                    else if (targetBottom > contentY + height)
+                        contentY = Math.min(
+                            maximum,
+                            targetBottom - height
+                        )
                 }
 
-                Item { width: 1; height: 18 }
-                Text { text: root.formatClock(root.generatedAtMs); color: root.textPrimary; font.pixelSize: 31 }
-                Text { text: root.formatDate(root.generatedAtMs); color: root.textSecondary; font.pixelSize: 18 }
-                Rectangle { width: parent.width; height: 1; color: root.line }
-                Text { text: "Welcome back."; color: root.textPrimary; font.pixelSize: 28; font.weight: Font.DemiBold }
-                Text {
-                    text: "Your home for live television and\nyour own media library."
-                    color: root.textSecondary
-                    font.pixelSize: 18
-                    lineHeight: 1.25
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AsNeeded
                 }
-                Item { width: 1; height: 12 }
 
-                Repeater {
-                    model: [
-                        root.homeTelevision.continueLabel || "Continue Watching",
-                        "Open Guide",
-                        "Library / On Demand",
-                        "Channels",
-                        "Settings"
-                    ]
-                    delegate: Rectangle {
-                        readonly property bool selected:
-                            root.homeFocusArea === 0
-                            && index === root.homeSelection
-                        width: parent.width
-                        height: 54
-                        radius: 6
-                        color: selected ? "#12396a" : "transparent"
-                        border.color: selected ? root.accentBright : "transparent"
-                        border.width: selected ? 2 : 0
+                Column {
+                    id: homeWelcomeContent
+                    x: 54
+                    y: 54
+                    width: Math.max(1, homeWelcomeScroller.width - 108)
+                    spacing: 12
 
-                        Text {
-                            anchors.left: parent.left
-                            anchors.leftMargin: 22
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: modelData
-                            color: selected ? root.textPrimary : root.textSecondary
-                            font.pixelSize: 20
-                            font.weight: selected ? Font.DemiBold : Font.Normal
-                        }
-                        Text {
-                            anchors.right: parent.right
-                            anchors.rightMargin: 18
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: "›"
-                            color: selected ? root.accentBright : root.textSecondary
-                            font.pixelSize: 28
-                        }
+                    Row {
+                        spacing: 2
+                        Text { text: "Channel"; color: root.textPrimary; font.pixelSize: 38; font.weight: Font.DemiBold }
+                        Text { text: "OS"; color: root.accentBright; font.pixelSize: 38; font.weight: Font.DemiBold }
+                    }
 
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.homeMenuActivated(index)
+                    Item { width: 1; height: 18 }
+                    Text { text: root.formatClock(root.generatedAtMs); color: root.textPrimary; font.pixelSize: 31 }
+                    Text { text: root.formatDate(root.generatedAtMs); color: root.textSecondary; font.pixelSize: 18 }
+                    Rectangle { width: parent.width; height: 1; color: root.line }
+                    Text { text: "Welcome back."; color: root.textPrimary; font.pixelSize: 28; font.weight: Font.DemiBold }
+                    Text {
+                        text: "Your home for live television and\nyour own media library."
+                        color: root.textSecondary
+                        font.pixelSize: 18
+                        lineHeight: 1.25
+                    }
+                    Item { width: 1; height: 12 }
+
+                    Repeater {
+                        id: homeMenuRepeater
+                        model: [
+                            root.homeTelevision.continueLabel || "Continue Watching",
+                            "Open Guide",
+                            "Library / On Demand",
+                            "Channels",
+                            "Settings"
+                        ]
+                        delegate: Rectangle {
+                            id: homeMenuItem
+                            readonly property bool selected:
+                                root.homeFocusArea === 0
+                                && index === root.homeSelection
+                            width: parent.width
+                            height: 54
+                            radius: 6
+                            color: selected ? "#12396a" : "transparent"
+                            border.color: selected ? root.accentBright : "transparent"
+                            border.width: selected ? 2 : 0
+
+                            onSelectedChanged: {
+                                if (selected) {
+                                    Qt.callLater(function() {
+                                        homeWelcomeScroller.revealMenuItem(
+                                            homeMenuItem
+                                        )
+                                    })
+                                }
+                            }
+                            Component.onCompleted: {
+                                if (selected) {
+                                    Qt.callLater(function() {
+                                        homeWelcomeScroller.revealMenuItem(
+                                            homeMenuItem
+                                        )
+                                    })
+                                }
+                            }
+
+                            Text {
+                                anchors.left: parent.left
+                                anchors.leftMargin: 22
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData
+                                color: selected ? root.textPrimary : root.textSecondary
+                                font.pixelSize: 20
+                                font.weight: selected ? Font.DemiBold : Font.Normal
+                            }
+                            Text {
+                                anchors.right: parent.right
+                                anchors.rightMargin: 18
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "›"
+                                color: selected ? root.accentBright : root.textSecondary
+                                font.pixelSize: 28
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.homeMenuActivated(index)
+                            }
                         }
                     }
                 }
@@ -1321,11 +1480,9 @@ ApplicationWindow {
                     font.pixelSize: 17
                 }
                 Text {
+                    objectName: "homeClockStatus"
                     visible: root.homeTelevision.mode === "current"
-                    text: root.homeTelevision.isLive
-                          ? "LIVE • Broadcast Clock"
-                          : Math.round(root.homeTelevision.lagSeconds || 0)
-                            + "s behind live • Viewer Clock"
+                    text: root.televisionClockText(root.homeTelevision)
                     color: root.homeTelevision.isLive
                            ? root.liveRed
                            : root.accentBright
@@ -2210,6 +2367,21 @@ ApplicationWindow {
                                           )
 
                             border.width: selectedSegment ? 2 : 1
+                            property var broadcastSegment: modelData
+                            Repeater {
+                                model: parent.broadcastSegment.breakMarkers || []
+                                delegate: Rectangle {
+                                    required property var modelData
+                                    x: Math.max(0, ((modelData.startMs - root.horizonStartMs)
+                                        / root.horizonSpanMs) * programArea.width - parent.x)
+                                    width: Math.max(2, Math.min(parent.width - x,
+                                        (modelData.endMs - modelData.startMs) / root.horizonSpanMs * programArea.width))
+                                    height: 5
+                                    anchors.bottom: parent.bottom
+                                    color: "#d99b36"
+                                    radius: 2
+                                }
+                            }
 
                             Column {
                                 anchors.left: parent.left

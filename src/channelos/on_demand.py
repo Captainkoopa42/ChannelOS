@@ -6,9 +6,11 @@ from typing import Callable
 
 from .library import IndexedMedia
 from .playback import (
+    AudioOutputDevice,
     LibVLCBackend,
     NativeVideoSurface,
     PlaybackBackend,
+    PlaybackError,
 )
 
 BackendFactory = Callable[[], PlaybackBackend]
@@ -43,6 +45,7 @@ class OnDemandSession:
         self._surface: NativeVideoSurface | None = None
         self._current: IndexedMedia | None = None
         self._paused = False
+        self._audio_output_device_id: str | None = None
 
     @property
     def active(self) -> bool:
@@ -64,6 +67,8 @@ class OnDemandSession:
         backend = self._backend_factory()
         if self._surface is not None:
             backend.attach_video_surface(self._surface)
+        if self._audio_output_device_id is not None:
+            backend.set_audio_output_device(self._audio_output_device_id)
 
         self._backend = backend
         return backend
@@ -132,6 +137,10 @@ class OnDemandSession:
         ended = False
 
         if self._backend is not None:
+            error_probe = getattr(self._backend, "playback_error", None)
+            error = error_probe() if callable(error_probe) else None
+            if error:
+                raise PlaybackError(error)
             ended = bool(self._backend.has_ended())
             position = max(
                 0.0,
@@ -223,6 +232,16 @@ class OnDemandSession:
         value = bool(muted)
         self._ensure_backend().set_muted(value)
         return value
+
+    def list_audio_output_devices(self) -> tuple[AudioOutputDevice, ...]:
+        return self._ensure_backend().list_audio_output_devices()
+
+    def set_audio_output_device(self, device_id: str | None) -> None:
+        self._audio_output_device_id = None if not device_id else str(device_id)
+        if self._backend is not None:
+            self._backend.set_audio_output_device(
+                self._audio_output_device_id
+            )
 
     def stop(self) -> None:
         if self._backend is not None:

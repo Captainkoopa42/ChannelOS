@@ -27,9 +27,11 @@ def test_settings_round_trip_to_separate_json_file(tmp_path) -> None:
     expected = CouchSettings(
         volume_percent=65,
         muted=True,
+        audio_output_device_id="headphones-id",
         skip_back_seconds=15,
         skip_forward_seconds=60,
         display_mode="windowed",
+        controller_enabled=False,
     )
 
     assert store.save(expected) == expected
@@ -37,7 +39,9 @@ def test_settings_round_trip_to_separate_json_file(tmp_path) -> None:
     assert not path.with_name("settings.json.tmp").exists()
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "artwork_cache_limit_mb": 0,
+        "audio_output_device_id": "headphones-id",
         "background_artwork_during_playback": True,
+        "controller_enabled": False,
         "display_mode": "windowed",
         "ffmpeg_threads": 0,
         "generate_video_thumbnails": True,
@@ -66,6 +70,7 @@ def test_invalid_or_corrupt_settings_fall_back_safely(tmp_path) -> None:
                 "skip_back_seconds": 999,
                 "skip_forward_seconds": 1,
                 "display_mode": "floating-space-window",
+                "audio_output_device_id": 42,
             }
         ),
         encoding="utf-8",
@@ -108,6 +113,8 @@ def test_legacy_settings_without_performance_fields_preserve_full_behavior() -> 
 
     assert settings.performance_profile == "standard"
     assert settings.display_mode == "fullscreen"
+    assert settings.audio_output_device_id == ""
+    assert settings.controller_enabled is True
     for name, value in STANDARD_PERFORMANCE.items():
         assert getattr(settings, name) == value
 
@@ -161,3 +168,9 @@ def test_custom_performance_values_are_validated_and_persisted() -> None:
     assert settings.reduced_motion is True
     assert settings.thumbnail_width == 480
     assert settings.ffmpeg_threads == 2
+
+
+def test_invalid_controller_setting_falls_back_to_enabled() -> None:
+    settings = CouchSettings.from_mapping({"controller_enabled": "no"})
+
+    assert settings.controller_enabled is True

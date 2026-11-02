@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import sys
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +26,11 @@ from PySide6.QtQuick import QQuickItem
 from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QFileDialog
 
-from .broadcaster import BroadcasterError, BroadcasterService
+from .broadcaster import (
+    BroadcasterError,
+    BroadcasterService,
+    StudioAutoFillCancelled,
+)
 from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
@@ -34,13 +40,15 @@ from .couch_qt import (
     CouchKeyFilter,
     _start_home_video_when_ready,
 )
-from .guide import GuideService
+from .guide import GuideError, GuideService
 from .library import MediaLibrary, normalize_path
 from .models import ChannelValidationError
-from .playback import NativeVideoSurface
+from .playback import NativeVideoSurface, PlaybackError
 from .resolve import resolve_channel
 from .runtime import ChannelRuntime, ChannelRuntimeError, RuntimeStore, TelevisionRuntime
 from .scanner import MediaScanner, ScanCancelled, ScanProgress, ScanSummary
+
+logger = logging.getLogger(__name__)
 
 
 def _apply_channelos_control_theme(app: QApplication) -> None:
@@ -110,6 +118,7 @@ class _LibraryScanWorker(QObject):
     @Slot()
     def run(self) -> None:
         scanner = MediaScanner(self._library)
+        logger.info("Library scan worker started source=%s", self._source.name)
 
         def publish(progress: ScanProgress) -> None:
             self.progress.emit(
@@ -125,11 +134,75 @@ class _LibraryScanWorker(QObject):
                 should_cancel=self._cancel_event.is_set,
             )
         except ScanCancelled:
+            logger.info("Library scan worker cancelled")
             self.cancelled.emit()
         except Exception as exc:
+            logger.exception("Library scan worker failed")
             self.failed.emit(str(exc))
         else:
+            logger.info(
+                "Library scan worker completed discovered=%d new=%d cached=%d probe_errors=%d",
+                summary.discovered,
+                summary.new_assets,
+                summary.cache_hits,
+                summary.probe_errors,
+            )
             self.completed.emit(summary)
+        finally:
+            self.finished.emit()
+
+
+class _StudioAutoFillWorker(QObject):
+    """Build a detached Studio schedule without blocking the QML GUI thread."""
+
+    progress = Signal(int, int, str)
+    completed = Signal(object)
+    cancelled = Signal()
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(
+        self,
+        broadcaster: BroadcasterService,
+        editor: dict[str, Any],
+        start_utc: str,
+        end_utc: str,
+        cancel_event: threading.Event,
+    ) -> None:
+        super().__init__()
+        self._broadcaster = broadcaster
+        self._editor = dict(editor)
+        self._start_utc = str(start_utc)
+        self._end_utc = str(end_utc)
+        self._cancel_event = cancel_event
+
+    @Slot()
+    def run(self) -> None:
+        logger.info("Studio Auto Fill worker started")
+        try:
+            result = self._broadcaster.auto_fill_studio(
+                self._editor,
+                self._start_utc,
+                self._end_utc,
+                on_progress=self.progress.emit,
+                should_cancel=self._cancel_event.is_set,
+            )
+            if self._cancel_event.is_set():
+                raise StudioAutoFillCancelled("Studio Auto Fill was cancelled")
+        except StudioAutoFillCancelled:
+            logger.info("Studio Auto Fill worker cancelled")
+            self.cancelled.emit()
+        except Exception as exc:
+            logger.exception("Studio Auto Fill worker failed")
+            self.failed.emit(str(exc))
+        else:
+            summary = result if isinstance(result, dict) else {}
+            logger.info(
+                "Studio Auto Fill worker completed blocks=%d ad_windows=%d ad_seconds=%s warnings=%d",
+                len(summary.get("blocks", ())), summary.get("adSlotCount", 0),
+                summary.get("adReservedSeconds", 0), len(summary.get("adWarnings", ())),
+            )
+            self.completed.emit(result)
         finally:
             self.finished.emit()
 
@@ -139,6 +212,8 @@ class BroadcasterCouchController(CouchController):
 
     broadcasterChanged = Signal()
     libraryScanChanged = Signal()
+    studioAutoFillChanged = Signal()
+    studioAutoFillCompleted = Signal("QVariantMap")
 
     def __init__(
         self,
@@ -167,35 +242,34 @@ class BroadcasterCouchController(CouchController):
             "message": "",
         }
 
+        self._studio_auto_fill_thread: QThread | None = None
+        self._studio_auto_fill_worker: _StudioAutoFillWorker | None = None
+        self._studio_auto_fill_cancel_event: threading.Event | None = None
+        self._studio_auto_fill: dict[str, object] = {
+            "active": False,
+            "phase": "idle",
+            "current": 0,
+            "total": 0,
+            "percent": 0,
+            "message": "",
+        }
+
         # CouchController builds an initial library view before the broadcaster
         # service is attached. Rebuild once so source rows can expose channel use.
         self._library_snapshot = self._build_library_snapshot()
+        self._home_television = self._build_home_television_view()
 
-    def _channels_using_source(self, source_path: str | Path) -> list[dict[str, object]]:
+    def _channels_using_source(self, source_path: str | Path, indexed_media=None) -> list[dict[str, object]]:
         broadcaster = getattr(self, "_broadcaster", None)
         if broadcaster is None:
             return []
 
-        _, requested_key = normalize_path(source_path)
-        matches: list[dict[str, object]] = []
-        for record in broadcaster.records:
-            for source in record.definition.sources:
-                _, source_key = normalize_path(source.path)
-                if source_key != requested_key:
-                    continue
-                matches.append(
-                    {
-                        "channelNumber": record.definition.channel,
-                        "displayNumber": record.definition.display_number,
-                        "name": record.definition.name,
-                    }
-                )
-                break
-        return matches
+        return broadcaster.source_dependencies(source_path, indexed_media=indexed_media)
 
     def _build_library_snapshot(self) -> dict[str, object]:
         snapshot = super()._build_library_snapshot()
         sources: list[dict[str, object]] = []
+        indexed_media = self._library.list_cached_media() if getattr(self, "_broadcaster", None) is not None else []
         for source in self._library.list_sources():
             root = source.source_root
             sources.append(
@@ -211,7 +285,7 @@ class BroadcasterCouchController(CouchController):
                     "lastScanStartedAt": source.last_scan_started_at or "",
                     "lastScanFinishedAt": source.last_scan_finished_at or "",
                     "lastError": source.last_error or "",
-                    "usedByChannels": self._channels_using_source(root),
+                    "usedByChannels": self._channels_using_source(root, indexed_media),
                 }
             )
 
@@ -227,6 +301,8 @@ class BroadcasterCouchController(CouchController):
                 if not isinstance(channel, dict):
                     continue
                 number = int(channel.get("channelNumber", 0))
+                channel["available"] = number in self._service.channel_numbers
+                channel["availabilityMessage"] = "" if channel["available"] else "Media unavailable — reconnect or scan its source in Library"
                 try:
                     now_next = self._service.now_next(number)
                 except Exception:
@@ -245,9 +321,38 @@ class BroadcasterCouchController(CouchController):
     def libraryScan(self) -> dict[str, object]:
         return self._library_scan
 
+    @Property("QVariantMap", notify=studioAutoFillChanged)
+    def studioAutoFill(self) -> dict[str, object]:
+        return self._studio_auto_fill
+
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         self._video_surface = surface
         super().attach_video_surface(surface)
+
+    @Slot()
+    def stop(self) -> None:
+        # Set every cancellation flag before joining either worker. Otherwise a
+        # slow Library scan can delay cancellation of Studio Auto Fill (or vice
+        # versa) while the GUI is closing.
+        if self._scan_cancel_event is not None:
+            self._scan_cancel_event.set()
+        if self._studio_auto_fill_cancel_event is not None:
+            self._studio_auto_fill_cancel_event.set()
+
+        # A live QThread being destroyed is a process-fatal Qt error. Request
+        # both event loops to stop, then wait until their current cooperative
+        # operation returns before allowing controller destruction.
+        for thread in (
+            self._scan_thread,
+            self._studio_auto_fill_thread,
+        ):
+            if thread is None or not thread.isRunning():
+                continue
+            logger.info("Waiting for worker shutdown name=%s", thread.objectName())
+            thread.quit()
+            thread.wait()
+            logger.info("Worker shutdown complete name=%s", thread.objectName())
+        super().stop()
 
     @Slot()
     def refreshBroadcaster(self) -> None:
@@ -325,6 +430,7 @@ class BroadcasterCouchController(CouchController):
 
         cancel_event = threading.Event()
         thread = QThread(self)
+        thread.setObjectName("library-scan")
         worker = _LibraryScanWorker(self._library, source, cancel_event)
         worker.moveToThread(thread)
 
@@ -450,14 +556,14 @@ class BroadcasterCouchController(CouchController):
             return {
                 "ok": False,
                 "message": (
-                    "This source is still used by channel definition(s): "
-                    f"{labels}. Edit those channels before removing the source "
+                    "This source is still used by saved channel or ad collection references: "
+                    f"{labels}. Edit those references before removing the source "
                     "from the Library."
                 ),
             }
 
         try:
-            result = self._library.remove_source_from_index(source_path)
+            result = self._broadcaster.remove_library_source(source_path)
             self.refreshLibrary()
             self.refreshBroadcaster()
             return {
@@ -469,29 +575,29 @@ class BroadcasterCouchController(CouchController):
                 "removedLocations": result.removed_locations,
                 "prunedAssets": result.pruned_assets,
             }
-        except (OSError, ValueError) as exc:
+        except (BroadcasterError, OSError, ValueError) as exc:
             return self._error(exc)
 
-    def _reload_lineup(self) -> None:
-        """Rebuild Guide/TV objects from saved portable definitions."""
+    def _reload_lineup(
+        self,
+        *,
+        replacement_channel_number: int | None = None,
+    ) -> None:
+        """Rebuild Guide/TV objects while preserving active playback."""
 
-        runtimes: list[ChannelRuntime] = []
-        for record in self._broadcaster.records:
-            resolved = resolve_channel(record.definition, self._library)
-            if not resolved.media:
-                raise BroadcasterError(
-                    f"Channel {record.definition.display_number} - "
-                    f"{record.definition.name} no longer resolves indexed media"
-                )
-            runtimes.append(ChannelRuntime.open(resolved, self._runtime_store))
+        restore_playback = (
+            bool(self._playback.get("active"))
+            and not self._on_demand.active
+        )
+        prior_channel_number = int(
+            self._playback.get("channelNumber", 0) or 0
+        )
+        prior_paused = bool(self._playback.get("paused", False))
 
-        if not runtimes:
-            raise BroadcasterError("the active television lineup cannot be empty")
+        from .couch import _open_runtimes
+        runtimes = _open_runtimes(self._broadcaster.paths, self._library, self._runtime_store)
 
-        previous_actions = self._actions
-        previous_actions.stop()
-
-        service = GuideService(tuple(runtimes))
+        service = GuideService(tuple(runtimes), definitions=tuple(record.definition for record in self._broadcaster.records))
         television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
 
         if television.current_channel is not None:
@@ -501,8 +607,31 @@ class BroadcasterCouchController(CouchController):
                 television.tune(television.current_channel, return_behavior="live")
 
         actions = CouchActions(service, television)
+        actions.set_audio_output_device(
+            self._settings.audio_output_device_id or None
+        )
         if self._video_surface is not None:
             actions.attach_video_surface(self._video_surface)
+
+        restore_channel_number: int | None = None
+        if restore_playback and television.channel_numbers:
+            if prior_channel_number in television.channels:
+                restore_channel_number = prior_channel_number
+            elif replacement_channel_number in television.channels:
+                restore_channel_number = replacement_channel_number
+                prior_paused = False
+            else:
+                restore_channel_number = television.channel_numbers[0]
+                prior_paused = False
+
+        # Nothing that can invalidate the replacement lineup has touched the
+        # working decoder yet. Retire it only after every definition/runtime
+        # object and presentation target above has been accepted.
+        previous_actions = self._actions
+        previous_actions.stop()
+        for runtime in previous_actions.runtime.channels.values():
+            if runtime.break_store is not None:
+                runtime.break_store.close()
 
         self._service = service
         self._actions = actions
@@ -511,8 +640,22 @@ class BroadcasterCouchController(CouchController):
         self.snapshotChanged.emit()
         self.homeTelevisionChanged.emit()
 
-        self._playback = {"active": False}
-        self.playbackChanged.emit()
+        if restore_channel_number is None:
+            self._playback = {"active": False}
+            self.playbackChanged.emit()
+            return
+
+        try:
+            decision = actions.restore_after_lineup_change(
+                restore_channel_number,
+                paused=prior_paused,
+            )
+            self._publish(decision)
+        except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+            # The saved lineup is valid even if the native decoder cannot be
+            # recreated. Keep its runtime active and show the normal retryable
+            # playback failure instead of silently leaving a blank surface.
+            self._publish_playback_failure(exc)
 
     @staticmethod
     def _editor_mapping(value: object) -> dict[str, Any]:
@@ -533,9 +676,313 @@ class BroadcasterCouchController(CouchController):
         ) as exc:
             return self._error(exc)
 
+    @Slot(int, result="QVariantMap")
+    def loadChannelStudio(self, channel_number: int) -> dict[str, object]:
+        try:
+            draft = self._broadcaster.studio_draft(int(channel_number))
+            return {
+                "ok": True,
+                "message": "Studio draft loaded. Live television is unchanged.",
+                "draft": draft,
+            }
+        except (
+            BroadcasterError,
+            ChannelValidationError,
+            OSError,
+            ValueError,
+        ) as exc:
+            return self._error(exc)
+
+    @Slot(result="QVariantMap")
+    def adCatalogSnapshot(self) -> dict[str, object]:
+        try:
+            return {"ok": True, **self._broadcaster.ad_catalog_snapshot()}
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(int, result="QVariantMap")
+    def adBreakDiagnostics(self, channel_number: int) -> dict[str, object]:
+        try:
+            channel = self._actions.runtime.channels.get(int(channel_number))
+            if channel is None:
+                return {"ok": False, "message": "Channel is not live; apply it first"}
+            if channel.break_store is None:
+                return {"ok": True, "channelNumber": int(channel_number),
+                        "plannedBreaks": 0, "completedAirings": 0,
+                        "completedViewings": 0, "lastAiredUtc": "",
+                        "viewerCounts": {}}
+            return {"ok": True, **channel.break_store.diagnostics(int(channel_number))}
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def saveAdCollection(self, payload: dict[str, object]) -> dict[str, object]:
+        try:
+            return {
+                "ok": True,
+                "message": "Advertisement collection saved",
+                **self._broadcaster.save_ad_collection(dict(payload)),
+            }
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def saveAdBreakProfile(self, payload: dict[str, object]) -> dict[str, object]:
+        try:
+            return {
+                "ok": True,
+                "message": "Reusable break profile saved",
+                **self._broadcaster.save_ad_profile(dict(payload)),
+            }
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot("QVariantMap", result="QVariantMap")
+    def assignAdBreakProfile(self, payload: dict[str, object]) -> dict[str, object]:
+        try:
+            return {
+                "ok": True,
+                "message": "Channel assignment saved; apply Studio draft to activate",
+                **self._broadcaster.assign_ad_profile(dict(payload)),
+            }
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(str, "QVariantList", str, result="QVariantMap")
+    def createStudioGroup(
+        self,
+        name: str,
+        asset_ids: list[object],
+        mode: str,
+    ) -> dict[str, object]:
+        try:
+            group = self._broadcaster.create_studio_group(
+                name,
+                (str(value) for value in asset_ids),
+                mode,
+            )
+            return {
+                "ok": True,
+                "message": (
+                    f"Saved reusable group {group['name']} with "
+                    f"{group['memberCount']} item(s)"
+                ),
+                "group": group,
+                "groups": self._broadcaster.studio_groups(),
+            }
+        except (
+            BroadcasterError,
+            ChannelValidationError,
+            OSError,
+            ValueError,
+        ) as exc:
+            return self._error(exc)
+
+    @Slot(str, result="QVariantMap")
+    def deleteStudioGroup(self, group_id: str) -> dict[str, object]:
+        try:
+            self._broadcaster.delete_studio_group(group_id)
+            return {
+                "ok": True,
+                "message": (
+                    "Reusable group deleted. Existing draft assignments keep "
+                    "their embedded media snapshot."
+                ),
+                "groups": self._broadcaster.studio_groups(),
+            }
+        except (BroadcasterError, OSError, ValueError) as exc:
+            return self._error(exc)
+
+    def _set_studio_auto_fill(self, **changes: object) -> None:
+        updated = dict(self._studio_auto_fill)
+        updated.update(changes)
+        self._studio_auto_fill = updated
+        self.studioAutoFillChanged.emit()
+
+    @Slot("QVariantMap", str, str, result="QVariantMap")
+    def startStudioAutoFill(
+        self,
+        editor: dict[str, object],
+        start_utc: str,
+        end_utc: str,
+    ) -> dict[str, object]:
+        try:
+            if self._studio_auto_fill_thread is not None:
+                return {
+                    "ok": False,
+                    "message": "Studio Auto Fill is already finishing",
+                }
+            mapped_editor = self._editor_mapping(editor)
+            # Validate timestamps on the GUI thread so malformed requests fail
+            # immediately, while all media resolution and schedule generation
+            # remains in the worker.
+            self._broadcaster._studio_timestamp(start_utc, "calendar start")
+            self._broadcaster._studio_timestamp(end_utc, "calendar end")
+        except (ChannelValidationError, ValueError) as exc:
+            return self._error(exc)
+
+        cancel_event = threading.Event()
+        thread = QThread(self)
+        thread.setObjectName("studio-auto-fill")
+        worker = _StudioAutoFillWorker(
+            self._broadcaster,
+            mapped_editor,
+            start_utc,
+            end_utc,
+            cancel_event,
+        )
+        worker.moveToThread(thread)
+
+        worker.progress.connect(self._on_studio_auto_fill_progress)
+        worker.completed.connect(self._on_studio_auto_fill_completed)
+        worker.cancelled.connect(self._on_studio_auto_fill_cancelled)
+        worker.failed.connect(self._on_studio_auto_fill_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_studio_auto_fill_thread_finished)
+        thread.started.connect(worker.run)
+
+        self._studio_auto_fill_thread = thread
+        self._studio_auto_fill_worker = worker
+        self._studio_auto_fill_cancel_event = cancel_event
+        self._set_studio_auto_fill(
+            active=True,
+            phase="preparing",
+            current=0,
+            total=0,
+            percent=0,
+            message="Preparing detached Studio Auto Fill…",
+        )
+        thread.start()
+        return {
+            "ok": True,
+            "message": "Studio Auto Fill started in the background",
+        }
+
+    @Slot(int, int, str)
+    def _on_studio_auto_fill_progress(
+        self,
+        current: int,
+        total: int,
+        message: str,
+    ) -> None:
+        current = max(0, int(current))
+        total = max(0, int(total))
+        percent = (
+            min(100, int(current * 100 / total))
+            if total > 0
+            else 0
+        )
+        self._set_studio_auto_fill(
+            active=True,
+            phase="building" if total > 0 else "preparing",
+            current=current,
+            total=total,
+            percent=percent,
+            message=str(message),
+        )
+
+    @Slot(object)
+    def _on_studio_auto_fill_completed(self, result: object) -> None:
+        if (
+            self._studio_auto_fill_cancel_event is not None
+            and self._studio_auto_fill_cancel_event.is_set()
+        ):
+            self._on_studio_auto_fill_cancelled()
+            return
+        if not isinstance(result, dict):
+            self._on_studio_auto_fill_failed(
+                "Studio Auto Fill returned an invalid result"
+            )
+            return
+        self._set_studio_auto_fill(
+            active=False,
+            phase="ready",
+            current=1,
+            total=1,
+            percent=100,
+            message=str(result.get("message", "Studio Auto Fill is ready")),
+        )
+        self.studioAutoFillCompleted.emit(dict(result))
+
+    @Slot()
+    def _on_studio_auto_fill_cancelled(self) -> None:
+        self._set_studio_auto_fill(
+            active=False,
+            phase="cancelled",
+            current=0,
+            total=0,
+            percent=0,
+            message=(
+                "Studio Auto Fill cancelled. The detached draft was not changed."
+            ),
+        )
+
+    @Slot(str)
+    def _on_studio_auto_fill_failed(self, message: str) -> None:
+        self._set_studio_auto_fill(
+            active=False,
+            phase="error",
+            current=0,
+            total=0,
+            percent=0,
+            message=f"Studio Auto Fill failed — {message}",
+        )
+
+    @Slot()
+    def _on_studio_auto_fill_thread_finished(self) -> None:
+        thread = self._studio_auto_fill_thread
+        self._studio_auto_fill_worker = None
+        self._studio_auto_fill_cancel_event = None
+        self._studio_auto_fill_thread = None
+        if thread is not None:
+            thread.deleteLater()
+
+    @Slot(result="QVariantMap")
+    def cancelStudioAutoFill(self) -> dict[str, object]:
+        if (
+            self._studio_auto_fill_cancel_event is None
+            or not bool(self._studio_auto_fill.get("active"))
+        ):
+            return {"ok": False, "message": "No Studio Auto Fill is active"}
+        self._studio_auto_fill_cancel_event.set()
+        self._set_studio_auto_fill(
+            phase="cancelling",
+            message="Cancelling after the current local operation…",
+        )
+        return {"ok": True, "message": "Cancelling Studio Auto Fill"}
+
+    def _checkpoint_playback_history(self) -> None:
+        checkpoint = getattr(self._actions, "checkpoint_viewing", None)
+        if callable(checkpoint):
+            checkpoint()
+
+    @contextmanager
+    def _deletion_playback_guard(self, channel_number: int):
+        self._checkpoint_playback_history()
+        prior_channel = self._actions.runtime.current_channel
+        prior_paused = bool(self._playback.get("paused"))
+        was_active = bool(self._playback.get("active")) and not self._on_demand.active
+        suspend = getattr(self._actions, "suspend_decoder", None)
+        suspended = False
+        try:
+            if prior_channel == int(channel_number) and callable(suspend):
+                suspended = True
+                suspend()
+            yield
+        except Exception:
+            if suspended and was_active and prior_channel in self._actions.runtime.channels:
+                try:
+                    decision = self._actions.restore_after_lineup_change(prior_channel, paused=prior_paused)
+                    self._publish(decision)
+                except (ChannelRuntimeError, PlaybackError, ValueError) as recovery_error:
+                    self._publish_playback_failure(recovery_error)
+            raise
+
     @Slot("QVariantMap", result="QVariantMap")
     def createChannel(self, editor: dict[str, object]) -> dict[str, object]:
         try:
+            self._checkpoint_playback_history()
             result = self._broadcaster.create(self._editor_mapping(editor))
             self._reload_lineup()
             self.refreshBroadcaster()
@@ -559,12 +1006,31 @@ class BroadcasterCouchController(CouchController):
             return self._error(exc)
 
     @Slot(int, "QVariantMap", result="QVariantMap")
+    def previewAdSettings(self, channel_number: int, editor: dict[str, object]) -> dict[str, object]:
+        try:
+            return {"ok": True, "editor": self._broadcaster.preview_ad_settings(channel_number, editor)}
+        except (BroadcasterError, ChannelValidationError, OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(int, str, str, result="QVariantMap")
+    def addLibraryItemToChannel(self, channel_number: int, asset_id: str, path: str) -> dict[str, object]:
+        try:
+            self._checkpoint_playback_history()
+            result = self._broadcaster.add_library_item(channel_number, asset_id, path)
+            self._reload_lineup()
+            self.refreshBroadcaster()
+            return {"ok": True, "channelNumber": result.record.channel_number}
+        except (BroadcasterError, ChannelRuntimeError, ChannelValidationError, OSError, ValueError) as exc:
+            return self._error(exc)
+
+    @Slot(int, "QVariantMap", result="QVariantMap")
     def updateChannel(
         self,
         original_channel_number: int,
         editor: dict[str, object],
     ) -> dict[str, object]:
         try:
+            self._checkpoint_playback_history()
             result = self._broadcaster.update(
                 int(original_channel_number),
                 self._editor_mapping(editor),
@@ -596,6 +1062,48 @@ class BroadcasterCouchController(CouchController):
         ) as exc:
             return self._error(exc)
 
+    @Slot(int, result="QVariantMap")
+    def deleteChannel(self, channel_number: int) -> dict[str, object]:
+        try:
+            with self._deletion_playback_guard(int(channel_number)):
+                result = self._broadcaster.delete(int(channel_number))
+                try:
+                    self._reload_lineup(
+                        replacement_channel_number=(
+                            result.replacement_channel_number
+                        )
+                    )
+                    self.refreshBroadcaster()
+                except Exception:
+                    # A deletion is not committed unless the replacement lineup
+                    # can take over. Put the definition back and restore the prior
+                    # Guide before returning the original error to the UI.
+                    self._broadcaster.restore_deleted(result)
+                    self._reload_lineup()
+                    self.refreshBroadcaster()
+                    raise
+                definition = result.record.definition
+                return {
+                    "ok": True,
+                    "message": (
+                        f"Deleted Channel {definition.display_number} - "
+                        f"{definition.name}. Its media files were not changed. "
+                        f"Recovery backup: {result.backup_path.name}"
+                    ),
+                    "channelNumber": definition.channel,
+                    "backupPath": str(result.backup_path),
+                }
+        except (
+            BroadcasterError,
+            ChannelRuntimeError,
+            ChannelValidationError,
+            GuideError,
+            OSError,
+            PlaybackError,
+            ValueError,
+        ) as exc:
+            return self._error(exc)
+
 
 class BroadcasterKeyFilter(CouchKeyFilter):
     """Add management navigation without stealing editor/search text input."""
@@ -604,15 +1112,18 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         super().__init__(controller, window)
         self._library_item: QQuickItem | None = None
         self._broadcaster_item: QQuickItem | None = None
+        self._studio_item: QQuickItem | None = None
 
     def bind_management_overlays(
         self,
         *,
         library_item: QQuickItem,
         broadcaster_item: QQuickItem,
+        studio_item: QQuickItem | None = None,
     ) -> None:
         self._library_item = library_item
         self._broadcaster_item = broadcaster_item
+        self._studio_item = studio_item
 
     @staticmethod
     def _invoke_overlay(item: QQuickItem | None, intent: ControlIntent) -> bool:
@@ -628,6 +1139,10 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         )
 
     def dispatch_command(self, command: ControlCommand) -> bool:
+        notice = getattr(self._window, '_channelos_portable_notice', None)
+        if notice is not None and notice.isVisible():
+            self._invoke_overlay(notice, command.intent)
+            return True
         if command.intent is ControlIntent.CHANNELS:
             self._window.setProperty("infoVisible", False)
             self._controller.refreshBroadcaster()
@@ -651,6 +1166,8 @@ class BroadcasterKeyFilter(CouchKeyFilter):
             return self._invoke_overlay(self._library_item, command.intent)
         if screen == "broadcaster" and command.intent in overlay_intents:
             return self._invoke_overlay(self._broadcaster_item, command.intent)
+        if screen == "studio" and command.intent in overlay_intents:
+            return self._invoke_overlay(self._studio_item, command.intent)
         return super().dispatch_command(command)
 
     @staticmethod
@@ -673,9 +1190,15 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         )
 
     def eventFilter(self, watched, event) -> bool:
+        notice = getattr(self._window, '_channelos_portable_notice', None)
+        if notice is not None and notice.isVisible() and event.type() == QEvent.Type.KeyPress:
+            command = self.command_for_key(event.key())
+            if command is not None:
+                return self.dispatch_command(command)
         if (
             event.type() == QEvent.Type.KeyPress
-            and str(self._window.property("screen")) in {"broadcaster", "library"}
+            and str(self._window.property("screen"))
+            in {"broadcaster", "library", "studio"}
         ):
             command = self.command_for_key(event.key())
             if (
@@ -781,6 +1304,7 @@ def run_qt(
     engine.load(QUrl.fromLocalFile(str(qml_path)))
     roots = engine.rootObjects()
     if not roots:
+        logger.error("Main QML failed to create a root window")
         return 7
 
     window = roots[0]
@@ -800,17 +1324,26 @@ def run_qt(
         "BroadcasterScreen.qml",
         z=90,
     )
+    studio_item = _attach_overlay(
+        engine,
+        window,
+        "ChannelStudioScreen.qml",
+        z=92,
+    )
     settings_item = _attach_overlay(
         engine,
         window,
         "SettingsScreen.qml",
         z=95,
     )
+    portable_notice = _attach_overlay(engine, window, "PortableDriveNotice.qml", z=300)
+    window._channelos_portable_notice = portable_notice
 
     key_filter = BroadcasterKeyFilter(controller, window)
     key_filter.bind_management_overlays(
         library_item=library_item,
         broadcaster_item=broadcaster_item,
+        studio_item=studio_item,
     )
     app.installEventFilter(key_filter)
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
@@ -820,10 +1353,17 @@ def run_qt(
     window._channelos_video_window = video_window
     window._channelos_library_item = library_item
     window._channelos_broadcaster_item = broadcaster_item
+    window._channelos_studio_item = studio_item
     window._channelos_settings_item = settings_item
     window._channelos_component_engine = engine
 
-    controller_input = QtControllerInput(window, key_filter.dispatch_command)
+    controller_input = QtControllerInput(
+        window,
+        key_filter.dispatch_command,
+        enabled=lambda: bool(
+            controller.settings.get("controllerEnabled", True)
+        ),
+    )
     window._channelos_controller_input = controller_input
 
     playback_timer = QTimer(window)

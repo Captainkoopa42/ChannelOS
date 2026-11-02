@@ -41,6 +41,15 @@ class FakeChannelOS(QObject):
         self._settings = {
             "volumePercent": 100,
             "muted": False,
+            "audioOutputDeviceId": "",
+            "audioOutputDeviceName": "System Default",
+            "audioOutputDevices": [
+                {
+                    "deviceId": "",
+                    "name": "System Default",
+                    "available": True,
+                }
+            ],
             "skipBackSeconds": 10,
             "skipForwardSeconds": 30,
             "performanceProfile": "standard",
@@ -90,6 +99,14 @@ class FakeChannelOS(QObject):
     def refresh(self) -> None:
         self.snapshotChanged.emit()
 
+    @Slot(result="QVariantMap")
+    def refreshAudioOutputDevices(self):
+        return {
+            "ok": True,
+            "message": "Audio outputs refreshed",
+            "settings": self._settings,
+        }
+
     def skipOnDemand(self, delta_seconds: float):
         self.skips.append(float(delta_seconds))
         return {"ok": True, "message": f"Skipped {delta_seconds:g} seconds"}
@@ -121,6 +138,21 @@ def test_main_qml_instantiates_headlessly() -> None:
     assert roots[0].property("controllerName") == ""
     assert roots[0].property("configuredSkipBackSeconds") == 10
     assert roots[0].property("configuredSkipForwardSeconds") == 30
+
+    home_scroller = roots[0].findChild(QObject, "homeWelcomeScroller")
+    assert home_scroller is not None
+    roots[0].setHeight(650)
+    for _ in range(3):
+        app.processEvents()
+    assert home_scroller.property("clip") is True
+    assert float(home_scroller.property("contentHeight")) > float(
+        home_scroller.property("height")
+    )
+    roots[0].setProperty("homeSelection", 4)
+    for _ in range(4):
+        app.processEvents()
+    assert float(home_scroller.property("contentY")) > 0
+    roots[0].setHeight(900)
     controller._settings.update(
         volumePercent=65,
         muted=True,
@@ -146,6 +178,45 @@ def test_main_qml_instantiates_headlessly() -> None:
     roots[0].setProperty("infoVisible", False)
     roots[0].close()
     app.processEvents()
+
+
+@pytest.mark.parametrize(
+    ("lag", "ahead", "is_live", "paused", "badge", "clock"),
+    [
+        (0, 90, False, False, "90s AHEAD OF LIVE", "90s ahead of live"),
+        (0, 90, False, True, "PAUSED · 90s AHEAD", "90s ahead of live"),
+        (20, 0, False, False, "20s BEHIND LIVE", "20s behind live"),
+        (0, 0, True, False, "LIVE", "Live · Broadcast Clock"),
+    ],
+)
+def test_live_and_home_clock_labels_show_ahead_behind_and_live(
+    lag, ahead, is_live, paused, badge, clock,
+) -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    engine = QQmlApplicationEngine()
+    video_window = QWindow()
+    engine.rootContext().setContextProperty("channelOS", controller)
+    engine.rootContext().setContextProperty("channelOSVideoWindow", video_window)
+    qml_path = Path(channelos.__file__).resolve().parent / "qml" / "Main.qml"
+    engine.load(QUrl.fromLocalFile(str(qml_path)))
+    root = engine.rootObjects()[0]
+    try:
+        # Publish after creation to exercise the same signal/binding update as playback.
+        controller._playback = {
+            "active": True, "isLive": is_live, "lagSeconds": lag,
+            "aheadSeconds": ahead, "isAhead": ahead > 0, "paused": paused,
+        }
+        controller._home_television = {**controller._playback, "mode": "current"}
+        controller.playbackChanged.emit()
+        controller.homeTelevisionChanged.emit()
+        app.processEvents()
+        assert root.findChild(QObject, "liveClockStatus").property("text") == badge
+        assert clock in root.findChild(QObject, "homeClockStatus").property("text")
+    finally:
+        root.close()
+        engine.deleteLater()
+        app.processEvents()
 
 
 @pytest.mark.parametrize(
@@ -298,3 +369,102 @@ def test_info_intent_toggles_context_drawer_and_back_closes_it() -> None:
 
     window.close()
     app.processEvents()
+
+
+@pytest.mark.parametrize('intent', [ControlIntent.HOME, ControlIntent.GUIDE,
+    ControlIntent.TUNE, ControlIntent.CHANNEL_UP, ControlIntent.CHANNEL_DOWN])
+def test_pending_channel_entry_cancelled_by_navigation_and_tuning(monkeypatch, intent):
+    from PySide6.QtCore import QTimer
+    callbacks = []
+    monkeypatch.setattr(QTimer, 'singleShot', lambda ms, callback: callbacks.append((ms, callback)))
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    tunes = []
+    controller.tuneChannel = lambda number: tunes.append(number) or {'ok': True}
+    controller.changeChannel = lambda delta: tunes.append(37 + delta) or {'ok': True}
+    window = QWindow()
+    window.setProperty('screen', 'live')
+    window.setProperty('infoVisible', False)
+    router = CouchKeyFilter(controller, window)
+    router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 1))
+    expired = next(callback for ms, callback in callbacks if ms == 1300)
+    router.dispatch_command(ControlCommand(intent, 37))
+    expected = list(tunes)
+    assert window.property('channelEntry') == ''
+    assert not router._channel_digits
+    window.setProperty('screen', 'live')
+    router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 2))
+    expired()
+    assert window.property('channelEntry') == '2'
+    assert tunes == expected
+    next(callback for ms, callback in reversed(callbacks) if ms == 1300)()
+    assert tunes == expected + [2]
+    assert window.property('channelEntry') == ''
+    window.close()
+
+
+def test_production_filter_clears_numeric_input_for_qml_and_all_tuning_routes(monkeypatch):
+    from PySide6.QtCore import QTimer
+    from channelos import broadcaster_qt as module
+    from channelos.display_mode import install_display_mode_support
+    from channelos.vlc_probe import install_packaged_media_scan_support
+    from channelos.media_resilience import install_media_resilience_support
+    from channelos.portable_qt import install_portable_support
+    from channelos.interaction import install_interaction_support
+    callbacks = []
+    monkeypatch.setattr(QTimer, 'singleShot', lambda ms, callback: callbacks.append((ms, callback)))
+    app = QGuiApplication.instance() or QGuiApplication([])
+    for install in (install_display_mode_support, install_packaged_media_scan_support,
+                    install_media_resilience_support, install_portable_support, install_interaction_support):
+        install(module)
+
+    class Controller(FakeChannelOS):
+        def __init__(self):
+            super().__init__()
+            self.tunes = []
+        @Slot(int, result='QVariantMap')
+        def tuneChannel(self, number):
+            self.tunes.append(number)
+            return {'ok': number in (1, 2, 37, 38), 'message': ''}
+        @Slot(int, result='QVariantMap')
+        def changeChannel(self, delta):
+            return self.tuneChannel(37 + delta)
+        @Slot(result='QVariantMap')
+        def previousChannel(self):
+            return self.tuneChannel(37)
+
+    controller = Controller()
+    engine = QQmlApplicationEngine()
+    video = QWindow()
+    engine.rootContext().setContextProperty('channelOS', controller)
+    engine.rootContext().setContextProperty('channelOSVideoWindow', video)
+    engine.load(QUrl.fromLocalFile(str(Path(channelos.__file__).parent / 'qml/Main.qml')))
+    window = engine.rootObjects()[0]
+    router = module.BroadcasterKeyFilter(controller, window)
+    try:
+        for intent in (ControlIntent.HOME, ControlIntent.GUIDE, ControlIntent.CHANNEL_UP,
+                       ControlIntent.CHANNEL_DOWN, ControlIntent.PREVIOUS_CHANNEL, ControlIntent.TUNE):
+            window.setProperty('screen', 'live')
+            router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 1))
+            expired = next(callback for ms, callback in reversed(callbacks) if ms == 1300)
+            router.dispatch_command(ControlCommand(intent, 37))
+            expected = list(controller.tunes)
+            expired()
+            assert not window.property('channelEntry')
+            assert controller.tunes == expected
+        window.setProperty('screen', 'live')
+        router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 1))
+        window.setProperty('screen', 'settings')  # Direct QML navigation.
+        assert not window.property('channelEntry')
+        window.setProperty('screen', 'live')
+        router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 2))
+        router.dispatch_command(ControlCommand(ControlIntent.SELECT))
+        assert controller.tunes[-1] == 2
+        assert not window.property('channelEntry')
+        for digit in (1, 0, 3, 7):
+            router.dispatch_command(ControlCommand(ControlIntent.DIGIT, digit))
+        assert controller.tunes[-1] == 1037  # Invalid four-digit entry clears too.
+        assert not window.property('channelEntry')
+    finally:
+        window.close()
+        app.processEvents()

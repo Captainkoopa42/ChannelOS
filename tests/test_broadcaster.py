@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -8,6 +9,7 @@ from channelos.broadcaster import (
     BroadcasterError,
     BroadcasterService,
     ChannelConflictError,
+    StudioAutoFillCancelled,
     definition_from_editor,
     serialize_channel,
 )
@@ -135,6 +137,64 @@ def test_explicit_edit_creates_backup_and_locks_channel_identity(tmp_path: Path)
     assert load_channel(updated.record.path).channel == 12
 
 
+def test_delete_managed_channel_keeps_recovery_backup(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    deleted_record = service.create(editor(7, source, name="Delete Me")).record
+    service.create(editor(12, source, name="Keep Me"))
+    original = deleted_record.path.read_text(encoding="utf-8")
+
+    result = service.delete(7)
+
+    assert service.channel_numbers == (12,)
+    assert not deleted_record.path.exists()
+    assert result.backup_path.is_file()
+    assert result.backup_path.read_text(encoding="utf-8") == original
+    assert result.backup_path.name.startswith(
+        "channel-0007.yaml.deleted-"
+    )
+    assert result.backup_path.name.endswith(".bak")
+    assert result.replacement_channel_number == 12
+
+    service.restore_deleted(result)
+
+    assert service.channel_numbers == (7, 12)
+    assert deleted_record.path.is_file()
+    assert deleted_record.path.read_text(encoding="utf-8") == original
+    assert not result.backup_path.exists()
+
+
+def test_delete_refuses_to_remove_the_only_channel(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    created = service.create(editor(7, source)).record
+
+    with pytest.raises(BroadcasterError, match="at least one active channel"):
+        service.delete(7)
+
+    assert created.path.is_file()
+    assert service.channel_numbers == (7,)
+
+
+def test_delete_refuses_external_channel_definition(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    managed = tmp_path / "channels"
+    managed.mkdir()
+    external = tmp_path / "external-channel.yaml"
+    external.write_text(
+        serialize_channel(definition_from_editor(editor(7, source))),
+        encoding="utf-8",
+    )
+    service = BroadcasterService((external,), managed, library)
+    service.create(editor(12, source))
+
+    with pytest.raises(BroadcasterError, match="external definition"):
+        service.delete(7)
+
+    assert external.is_file()
+    assert service.channel_numbers == (7, 12)
+
+
 def test_invalid_unindexed_source_fails_before_any_file_is_written(tmp_path: Path) -> None:
     library, _ = make_library(tmp_path)
     managed = tmp_path / "channels"
@@ -196,3 +256,335 @@ def test_snapshot_lists_external_and_managed_channels_and_indexed_sources(tmp_pa
     assert snapshot["channels"][1]["managed"] is False
     assert snapshot["sourceOptions"] == [str(source)]
     assert snapshot["suggestedChannel"] == 1
+
+
+def test_studio_auto_fill_returns_editable_gapless_blocks(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source, name="Studio TV")
+    raw["fillerMode"] = "sequential"
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    end = start + timedelta(minutes=3)
+
+    result = service.auto_fill_studio(raw, start.isoformat(), end.isoformat())
+
+    assert result["ok"] is True
+    assert len(result["blocks"]) == 6
+    assert result["blocks"][0]["startUtc"] == start.isoformat()
+    for left, right in zip(result["blocks"], result["blocks"][1:]):
+        assert left["endUtc"] == right["startUtc"]
+
+
+def test_studio_auto_fill_preserves_existing_blocks_and_fills_only_gaps(
+    tmp_path: Path,
+) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source, name="Studio TV")
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    raw["calendarBlocks"] = [
+        {
+            "assetId": library.list_online_media()[0].asset.asset_id,
+            "startUtc": (start + timedelta(seconds=60)).isoformat(),
+            "endUtc": (start + timedelta(seconds=90)).isoformat(),
+        }
+    ]
+
+    result = service.auto_fill_studio(
+        raw, start.isoformat(), (start + timedelta(seconds=180)).isoformat()
+    )
+
+    assert len(result["blocks"]) == 5
+    occupied_start = start + timedelta(seconds=60)
+    occupied_end = start + timedelta(seconds=90)
+    for block in result["blocks"]:
+        block_start = datetime.fromisoformat(block["startUtc"])
+        block_end = datetime.fromisoformat(block["endUtc"])
+        assert block_end <= occupied_start or block_start >= occupied_end
+    assert "preserving existing fixed programs" in result["message"]
+
+
+def test_studio_auto_fill_reports_progress_and_can_cancel_safely(
+    tmp_path: Path,
+) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source, name="Studio TV")
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    updates: list[tuple[int, int, str]] = []
+    cancel_requested = False
+
+    def publish(current: int, total: int, message: str) -> None:
+        nonlocal cancel_requested
+        updates.append((current, total, message))
+        if current > 0:
+            cancel_requested = True
+
+    with pytest.raises(StudioAutoFillCancelled):
+        service.auto_fill_studio(
+            raw,
+            start.isoformat(),
+            (start + timedelta(minutes=3)).isoformat(),
+            on_progress=publish,
+            should_cancel=lambda: cancel_requested,
+        )
+
+    assert any(total == 0 for _, total, _ in updates)
+    assert any(current > 0 and total > 0 for current, total, _ in updates)
+
+
+def test_studio_auto_fill_progress_reaches_complete(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source, name="Studio TV")
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    updates: list[tuple[int, int, str]] = []
+
+    service.auto_fill_studio(
+        raw,
+        start.isoformat(),
+        (start + timedelta(minutes=3)).isoformat(),
+        on_progress=lambda current, total, message: updates.append(
+            (current, total, message)
+        ),
+    )
+
+    assert updates[-1][0] == updates[-1][1]
+    assert updates[-1][2] == "Auto Fill schedule ready"
+
+
+def test_studio_calendar_roundtrip_and_preview_use_stable_asset_ids(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    managed = tmp_path / "channels"
+    service = BroadcasterService((), managed, library)
+    media = service.studio_media()
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    raw = editor(44, source, name="Prime Time")
+    raw.update(
+        {
+            "mode": "calendar",
+            "fillerMode": "shuffle",
+            "calendarBlocks": [
+                {
+                    "assetId": media[0]["assetId"],
+                    "startUtc": start.isoformat(),
+                },
+                {
+                    "assetId": media[1]["assetId"],
+                    "startUtc": (start + timedelta(seconds=30)).isoformat(),
+                },
+            ],
+        }
+    )
+
+    preview = service.preview(raw)
+    created = service.create(raw)
+    loaded = load_channel(created.record.path)
+    draft = service.studio_draft(44)
+
+    assert preview["mode"] == "calendar"
+    assert preview["items"][0]["assetId"] == media[0]["assetId"]
+    assert loaded.schema_version == "0.2"
+    assert loaded.programming.mode == "calendar"
+    assert loaded.programming.filler_mode == "shuffle"
+    assert [block.asset_id for block in loaded.programming.calendar] == [
+        media[0]["assetId"],
+        media[1]["assetId"],
+    ]
+    assert draft["editingChannelNumber"] == 44
+    assert draft["calendarBlocks"][0]["title"] == "01-alpha"
+
+
+def test_reusable_group_embeds_safe_show_filler_snapshot(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    managed = tmp_path / "channels"
+    service = BroadcasterService((), managed, library)
+    media = service.studio_media()
+    group = service.create_studio_group(
+        "Cartoon Bumpers",
+        [media[1]["assetId"], media[2]["assetId"]],
+        "shuffle",
+    )
+    assert "media" not in group
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+    raw = editor(45, source, name="Grouped Prime Time")
+    raw.update(
+        {
+            "mode": "calendar",
+            "fillerMode": "sequential",
+            "calendarBlocks": [
+                {
+                    "assetId": media[0]["assetId"],
+                    "startUtc": start.isoformat(),
+                    "fillerMode": group["mode"],
+                    "fillerAssetIds": group["assetIds"],
+                }
+            ],
+        }
+    )
+
+    created = service.create(raw)
+    loaded = load_channel(created.record.path)
+    draft = service.studio_draft(45)
+
+    assert loaded.schema_version == "0.3"
+    assert loaded.programming.calendar[0].filler is not None
+    assert loaded.programming.calendar[0].filler.asset_ids == tuple(
+        group["assetIds"]
+    )
+    assert draft["calendarBlocks"][0]["fillerGroupName"] == "Cartoon Bumpers"
+    assert service._studio_groups_path.parent == managed / "studio"
+
+    service.delete_studio_group(group["groupId"])
+
+    assert service.studio_groups() == []
+    reloaded = load_channel(created.record.path)
+    assert reloaded.programming.calendar[0].filler is not None
+    assert reloaded.programming.calendar[0].filler.asset_ids == tuple(
+        group["assetIds"]
+    )
+
+
+def test_reusable_group_names_are_unique_and_members_must_be_online(
+    tmp_path: Path,
+) -> None:
+    library, _ = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    media = service.studio_media()
+    service.create_studio_group("Bumpers", [media[0]["assetId"]], "sequential")
+
+    with pytest.raises(ChannelConflictError, match="already exists"):
+        service.create_studio_group("bumpers", [media[1]["assetId"]], "shuffle")
+    with pytest.raises(BroadcasterError, match="not currently available"):
+        service.create_studio_group("Missing", ["sha256:missing"], "sequential")
+
+
+def test_studio_auto_fill_leaves_short_range_remainder_to_filler(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / "channels", library)
+    raw = editor(32, source)
+    start = datetime(2026, 9, 7, tzinfo=timezone.utc)
+
+    result = service.auto_fill_studio(
+        raw,
+        start.isoformat(),
+        (start + timedelta(seconds=75)).isoformat(),
+    )
+
+    assert len(result["blocks"]) == 2
+    assert result["blocks"][-1]["endUtc"] == (
+        start + timedelta(seconds=60)
+    ).isoformat()
+    assert "filler covers any short remainder" in result["message"]
+
+
+def test_ad_break_policy_round_trips_through_portable_yaml(tmp_path: Path) -> None:
+    from channelos.models import ChannelDefinition
+
+    raw = {
+        "schema_version": "0.4",
+        "channel": 77,
+        "name": "Policy Test",
+        "sources": [{"path": str(tmp_path / "programs")}],
+        "programming": {
+            "mode": "calendar",
+            "calendar": [{
+                "start_utc": "2026-10-01T12:00:00+00:00",
+                "asset_id": "sha256:program",
+            }],
+        },
+        "advertising": {
+            "enabled": True,
+            "sources": [{"path": str(tmp_path / "ads")}],
+            "selection_strategy": "complete_rotation",
+            "breakpoints_seconds": [300, 900],
+            "interval_seconds": 600,
+            "break_duration_seconds": 45,
+            "priority": 8,
+        },
+    }
+    definition = ChannelDefinition.from_mapping(raw)
+    encoded = serialize_channel(definition)
+    restored = ChannelDefinition.from_mapping(
+        __import__("yaml").safe_load(encoded)
+    )
+    assert restored.advertising.breakpoints_seconds == (300.0, 900.0)
+    assert restored.advertising.interval_seconds == 600.0
+    assert restored.advertising.break_duration_seconds == 45.0
+    assert restored.advertising.priority == 8
+    assert restored.advertising.selection_strategy == "complete_rotation"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("interval_seconds", 0),
+    ("break_duration_seconds", float("inf")),
+    ("breakpoints_seconds", [30, 30]),
+    ("breakpoints_seconds", [-1]),
+    ("priority", 1.5),
+])
+def test_invalid_ad_break_policy_is_rejected(tmp_path: Path, field, value) -> None:
+    from channelos.models import ChannelDefinition, ChannelValidationError
+
+    advertising = {
+        "enabled": True,
+        "sources": [{"path": str(tmp_path / "ads")}],
+        "breakpoints_seconds": [],
+    }
+    advertising[field] = value
+    raw = {
+        "schema_version": "0.4",
+        "channel": 78,
+        "name": "Invalid Policy",
+        "sources": [{"path": str(tmp_path / "programs")}],
+        "programming": {
+            "mode": "calendar",
+            "calendar": [{
+                "start_utc": "2026-10-01T12:00:00+00:00",
+                "asset_id": "sha256:program",
+            }],
+        },
+        "advertising": advertising,
+    }
+    with pytest.raises(ChannelValidationError):
+        ChannelDefinition.from_mapping(raw)
+
+
+@pytest.mark.parametrize("priority", [0.0, 3.0, -2.0, "4"])
+def test_editor_normalizes_integral_qt_ad_priorities(tmp_path: Path, priority) -> None:
+    raw = editor(7, tmp_path / "programs")
+    raw.update(adBreaksEnabled=True, adSources=[str(tmp_path / "ads")],
+               adConfigVersion="0.5", adPriority=priority,
+               adPlacements=[{"id": "gap", "trigger": "calendar_boundary",
+                              "policy": {"priority": priority}}])
+
+    definition = definition_from_editor(raw)
+
+    assert definition.advertising.priority == int(float(priority))
+    assert type(definition.advertising.priority) is int
+    assert type(definition.advertising.placements[0].policy.priority) is int
+
+
+@pytest.mark.parametrize("priority", [True, 0.5, float("nan"), float("inf"), "bad"])
+def test_editor_rejects_invalid_ad_priority_without_truncation(tmp_path: Path, priority) -> None:
+    from channelos.models import ChannelValidationError
+
+    raw = editor(7, tmp_path / "programs")
+    raw.update(adSources=[str(tmp_path / "ads")], adConfigVersion="0.5", adPriority=priority)
+    with pytest.raises(ChannelValidationError, match="advertising.priority must be an integer"):
+        definition_from_editor(raw)
+
+
+def test_studio_media_retains_every_source_for_a_duplicate_asset(tmp_path: Path) -> None:
+    library, source = make_library(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "copied.mp4").write_bytes((source / "01-alpha.mp4").read_bytes())
+    MediaScanner(library, FixedProbe()).scan(other)
+    service = BroadcasterService((), tmp_path / "channels", library)
+
+    media = service.studio_media()
+    duplicated = next(item for item in media if len(item["locations"]) == 2)
+
+    assert len(media) == 3
+    assert {location["sourceRoot"] for location in duplicated["locations"]} == {str(source), str(other)}
+    assert set(service.studio_draft()["sourceOptions"]) == {str(source), str(other)}

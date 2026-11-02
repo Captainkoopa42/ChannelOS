@@ -1,6 +1,7 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
+import QtQuick.Controls
 
 Item {
     id: settingsRoot
@@ -10,8 +11,12 @@ Item {
         channelOS ? channelOS.settings : ({
             volumePercent: 100,
             muted: false,
+            audioOutputDeviceId: "",
+            audioOutputDeviceName: "System Default",
+            audioOutputDevices: [],
             skipBackSeconds: 10,
             skipForwardSeconds: 30,
+            controllerEnabled: true,
             performanceProfile: "standard",
             generateVideoThumbnails: true,
             artworkCacheLimitMb: 0,
@@ -25,6 +30,7 @@ Item {
     readonly property var settingsRows: [
         { title: "Performance Profile", detail: "Standard preserves full artwork behavior. Lightweight reduces optional background work." },
         { title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
+        { title: "Audio Output", detail: "Choose System Default, speakers, headphones, or another destination exposed by VLC." },
         { title: "Volume", detail: "The volume ChannelOS uses now and on its next launch." },
         { title: "Muted", detail: "Remember whether ChannelOS should start muted." },
         { title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
@@ -33,8 +39,11 @@ Item {
         { title: "Generated Artwork Cache", detail: "Limit only ChannelOS-generated thumbnails. Zero means unlimited." },
         { title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
         { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
+        { title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
         { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
-        { title: "Reset Defaults", detail: "Restore Fullscreen, Standard mode, volume 100%, sound on, 10 seconds back, and 30 seconds forward." }
+        { title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
+        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, and 30 seconds forward." },
+        { title: "Portable Setup", detail: "Copy channels, the existing media index, ad configuration and history to a drive, or open a prior setup and save changes there." }
     ]
 
     anchors.fill: parent
@@ -100,22 +109,26 @@ Item {
         if (index === 1)
             return displayModeLabel()
         if (index === 2)
-            return (preferences.volumePercent || 0) + "%"
+            return String(preferences.audioOutputDeviceName || "System Default")
         if (index === 3)
-            return preferences.muted ? "On" : "Off"
+            return (preferences.volumePercent || 0) + "%"
         if (index === 4)
-            return (preferences.skipBackSeconds || 10) + " seconds"
+            return preferences.muted ? "On" : "Off"
         if (index === 5)
-            return (preferences.skipForwardSeconds || 30) + " seconds"
+            return (preferences.skipBackSeconds || 10) + " seconds"
         if (index === 6)
-            return preferences.generateVideoThumbnails ? "On" : "Off"
+            return (preferences.skipForwardSeconds || 30) + " seconds"
         if (index === 7)
-            return cacheLimitLabel()
+            return preferences.generateVideoThumbnails ? "On" : "Off"
         if (index === 8)
-            return preferences.backgroundArtworkDuringPlayback ? "On" : "Off"
+            return cacheLimitLabel()
         if (index === 9)
-            return preferences.reducedMotion ? "On" : "Off"
+            return preferences.backgroundArtworkDuringPlayback ? "On" : "Off"
         if (index === 10)
+            return preferences.reducedMotion ? "On" : "Off"
+        if (index === 11)
+            return preferences.controllerEnabled ? "On" : "Off"
+        if (index === 12)
             return cacheUsageLabel()
         return "Standard"
     }
@@ -123,14 +136,16 @@ Item {
     function settingName(index) {
         var names = ({
             0: "performanceProfile",
-            2: "volume",
-            3: "muted",
-            4: "skipBack",
-            5: "skipForward",
-            6: "generateVideoThumbnails",
-            7: "artworkCacheLimit",
-            8: "backgroundArtworkDuringPlayback",
-            9: "reducedMotion"
+            2: "audioOutput",
+            3: "volume",
+            4: "muted",
+            5: "skipBack",
+            6: "skipForward",
+            7: "generateVideoThumbnails",
+            8: "artworkCacheLimit",
+            9: "backgroundArtworkDuringPlayback",
+            10: "reducedMotion",
+            11: "controllerEnabled"
         })
         return names[index]
     }
@@ -148,7 +163,7 @@ Item {
     }
 
     function adjust(index, direction) {
-        if (index < 0 || index > 9)
+        if (index < 0 || index > 11)
             return
         if (index === 1) {
             changeDisplayMode(direction)
@@ -161,15 +176,23 @@ Item {
     }
 
     function activateAction(index) {
-        if (index === 10) {
+        if (index === 12) {
             showResult(channelOS.clearArtworkCache())
-        } else if (index === 11) {
+        } else if (index === 13) {
+            showResult(channelOS.openDiagnosticLogs())
+        } else if (index === 14) {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
+        } else if (index === 15) {
+            portableSetupDialog.open()
         }
     }
 
     function handleControllerIntent(intent: string): void {
+        if (portableSetupDialog.visible) {
+            portableSetupDialog.handleControllerIntent(intent)
+            return
+        }
         if (!hostWindow || hostWindow.screen !== "settings")
             return
         if (intent === "BACK" || intent === "HOME") {
@@ -196,7 +219,7 @@ Item {
             return
         }
         if (intent === "SELECT") {
-            if (hostWindow.settingsSelection < 10)
+            if (hostWindow.settingsSelection < 12)
                 adjust(hostWindow.settingsSelection, 1)
             else
                 activateAction(hostWindow.settingsSelection)
@@ -305,7 +328,7 @@ Item {
             }
             Text {
                 width: parent.width
-                text: "Settings are local. Display mode is independent of performance; Lightweight changes optional artwork work and motion—not playback quality, schedules, media, or channels."
+                text: "Preferences save to the active setup. Audio device selection stays on this PC. Lightweight reduces optional artwork work and motion."
                 color: "#9fb0c2"
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
@@ -412,7 +435,7 @@ Item {
                     anchors.rightMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
-                    visible: settingRow.index < 10
+                    visible: settingRow.index < 12
 
                     Rectangle {
                         width: 38
@@ -471,14 +494,18 @@ Item {
                     width: 236
                     height: 42
                     radius: 6
-                    visible: settingRow.index >= 10
+                    visible: settingRow.index >= 12
                     color: actionMouse.containsMouse ? "#1a4d82" : "#10283f"
                     border.color: "#1a91ff"
                     Text {
                         anchors.centerIn: parent
-                        text: settingRow.index === 10
+                        text: settingRow.index === 12
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
-                              : "Restore Standard Defaults"
+                              : settingRow.index === 13
+                              ? "Open Log Folder"
+                              : settingRow.index === 14
+                              ? "Restore Standard Defaults"
+                              : "Copy / Open Setup"
                         color: "#f4f7fb"
                         font.pixelSize: 14
                         font.weight: Font.DemiBold
@@ -534,5 +561,10 @@ Item {
             color: "#9fb0c2"
             font.pixelSize: 13
         }
+    }
+
+    PortableSetupDialog {
+        id: portableSetupDialog
+        parent: Overlay.overlay
     }
 }

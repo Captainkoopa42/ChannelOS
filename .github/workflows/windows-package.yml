@@ -1,6 +1,10 @@
 name: windows-package
 
 on:
+  workflow_call:
+  push:
+    branches: ["agent/broadcaster-channel-builder"]
+    tags: ["working-studio-beta-testing-*"]
   pull_request:
   workflow_dispatch:
 
@@ -34,10 +38,16 @@ jobs:
       - name: Build and audit portable package
         run: python tools/windows/package_windows.py
 
+      - name: Verify native Qt and bundled VLC ad playback
+        run: python tools/windows/smoke_ad_playback.py
+
+      - name: Verify packaged portable setup relocation and startup
+        run: python tools/windows/smoke_portable_setup.py
+
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
           name: ChannelOS-Windows-x64
-          path: dist/windows/ChannelOS-0.0.2-windows-x64.zip
+          path: dist/windows/ChannelOS-0.0.6-windows-x64.zip
           if-no-files-found: error
           compression-level: 0

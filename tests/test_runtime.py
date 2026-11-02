@@ -1,21 +1,26 @@
 from __future__ import annotations
 
 import hashlib
+import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from channelos.library import MediaLibrary
-from channelos.models import ChannelDefinition
+from channelos.ad_break_engine import BreakPlan, BreakPlanStore, PlannedSegment
+from channelos.library import IndexedMedia, MediaAsset, MediaLocation, MediaLibrary
+from channelos.models import AdvertisingDefinition, ChannelDefinition, SourceDefinition
 from channelos.probe import MediaProbeResult
 from channelos.resolve import ResolvedChannel, resolve_channel
 from channelos.runtime import (
     ChannelRuntime,
+    advertising_signature,
     ChannelRuntimeError,
     ReturnChoiceRequired,
     RuntimeStore,
     TelevisionRuntime,
+    ViewerClock,
 )
 
 UTC = timezone.utc
@@ -64,6 +69,37 @@ def open_two_channel_tv(tmp_path: Path, epoch: datetime) -> TelevisionRuntime:
     runtime_7 = ChannelRuntime.open(channel_7, store, now=epoch)
     runtime_12 = ChannelRuntime.open(channel_12, store, now=epoch)
     return TelevisionRuntime((runtime_7, runtime_12), store)
+
+
+def calendar_channel(
+    resolved: ResolvedChannel,
+    starts_and_indexes: list[tuple[datetime, int]],
+    *,
+    filler_mode: str = "sequential",
+) -> ResolvedChannel:
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.2",
+            "channel": resolved.definition.channel,
+            "name": resolved.definition.name,
+            "sources": [
+                {"path": str(source.path)}
+                for source in resolved.definition.sources
+            ],
+            "programming": {
+                "mode": "calendar",
+                "filler_mode": filler_mode,
+                "calendar": [
+                    {
+                        "start_utc": start.isoformat(),
+                        "asset_id": resolved.media[index].asset.asset_id,
+                    }
+                    for start, index in starts_and_indexes
+                ],
+            },
+        }
+    )
+    return ResolvedChannel(definition=definition, media=resolved.media)
 
 
 def test_broadcast_clock_selects_program_and_seek_offset(tmp_path: Path) -> None:
@@ -116,6 +152,180 @@ def test_broadcast_clock_is_defined_before_epoch_too(tmp_path: Path) -> None:
     assert selection.cycle_index == -1
 
 
+def test_calendar_blocks_override_and_normal_cycle_fills_gaps(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0, 60.0])
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    fixed_start = epoch + timedelta(seconds=40)
+    calendar = calendar_channel(resolved, [(fixed_start, 2)])
+    runtime = ChannelRuntime.open(
+        calendar,
+        RuntimeStore(tmp_path / "runtime.db"),
+        now=epoch,
+    )
+
+    before = runtime.broadcast_at(epoch + timedelta(seconds=35))
+    fixed = runtime.broadcast_at(fixed_start + timedelta(seconds=12))
+    after = runtime.broadcast_at(fixed_start + timedelta(seconds=65))
+
+    assert before.origin == "filler"
+    assert before.media.location.path.name == "01.mp4"
+    assert before.program_ends_at == fixed_start
+    assert fixed.origin == "calendar"
+    assert fixed.media.location.path.name == "02.mp4"
+    assert fixed.offset_seconds == pytest.approx(12.0)
+    assert after.origin == "filler"
+    assert after.media.location.path.name == "00.mp4"
+    assert after.offset_seconds == pytest.approx(5.0)
+
+
+def test_calendar_show_can_use_its_own_filler_group(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0, 60.0])
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    fixed_start = epoch + timedelta(seconds=40)
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.3",
+            "channel": resolved.definition.channel,
+            "name": resolved.definition.name,
+            "sources": [
+                {"path": str(source.path)}
+                for source in resolved.definition.sources
+            ],
+            "programming": {
+                "mode": "calendar",
+                "filler_mode": "sequential",
+                "calendar": [
+                    {
+                        "start_utc": fixed_start.isoformat(),
+                        "asset_id": resolved.media[2].asset.asset_id,
+                        "filler": {
+                            "mode": "sequential",
+                            "asset_ids": [resolved.media[1].asset.asset_id],
+                        },
+                    }
+                ],
+            },
+        }
+    )
+    runtime = ChannelRuntime.open(
+        ResolvedChannel(definition=definition, media=resolved.media),
+        RuntimeStore(tmp_path / "runtime.db"),
+        now=epoch,
+    )
+
+    before = runtime.broadcast_at(epoch + timedelta(seconds=35))
+    after = runtime.broadcast_at(fixed_start + timedelta(seconds=65))
+
+    assert before.origin == "filler"
+    assert after.origin == "show-filler"
+    assert after.media.location.path.name == "01.mp4"
+    assert after.offset_seconds == pytest.approx(5.0)
+
+
+def test_calendar_show_filler_rejects_media_outside_channel_sources(
+    tmp_path: Path,
+) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
+    start = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.3",
+            "channel": resolved.definition.channel,
+            "name": resolved.definition.name,
+            "sources": [
+                {"path": str(source.path)}
+                for source in resolved.definition.sources
+            ],
+            "programming": {
+                "mode": "calendar",
+                "filler_mode": "sequential",
+                "calendar": [
+                    {
+                        "start_utc": start.isoformat(),
+                        "asset_id": resolved.media[0].asset.asset_id,
+                        "filler": {
+                            "mode": "sequential",
+                            "asset_ids": ["sha256:missing"],
+                        },
+                    }
+                ],
+            },
+        }
+    )
+
+    with pytest.raises(ChannelRuntimeError, match="show-specific filler"):
+        ChannelRuntime.open(
+            ResolvedChannel(definition=definition, media=resolved.media),
+            RuntimeStore(tmp_path / "runtime.db"),
+            now=start,
+        )
+
+
+def test_calendar_runtime_rejects_overlapping_fixed_blocks(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [60.0, 45.0])
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    calendar = calendar_channel(
+        resolved,
+        [(epoch, 0), (epoch + timedelta(seconds=30), 1)],
+    )
+
+    with pytest.raises(ChannelRuntimeError, match="calendar blocks overlap"):
+        ChannelRuntime.open(
+            calendar,
+            RuntimeStore(tmp_path / "runtime.db"),
+            now=epoch,
+        )
+
+
+def test_calendar_edit_preserves_epoch_and_viewer_clock(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    store = RuntimeStore(tmp_path / "runtime.db")
+    first = ChannelRuntime.open(
+        calendar_channel(resolved, [(epoch + timedelta(hours=1), 0)]),
+        store,
+        now=epoch,
+    )
+    viewer = ViewerClock(
+        schedule_time_utc=epoch + timedelta(seconds=12),
+        observed_at_utc=epoch + timedelta(seconds=12),
+        running=False,
+    )
+    store.save_viewer(resolved.definition.channel, viewer, now=epoch)
+    changed_at = epoch + timedelta(minutes=5)
+    changed = ChannelRuntime.open(
+        calendar_channel(resolved, [(epoch + timedelta(hours=2), 0)]),
+        store,
+        now=changed_at,
+    )
+
+    assert changed.signature != first.signature
+    assert changed.epoch_utc == first.epoch_utc
+    assert store.load_viewer(resolved.definition.channel) == viewer
+
+
+def test_delete_channel_clears_clocks_and_only_matching_tuning(tmp_path: Path) -> None:
+    store = RuntimeStore(tmp_path / "runtime.db")
+    now = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    store.ensure_channel(7, "schedule-seven", now=now)
+    store.save_viewer(
+        7,
+        ViewerClock(now, now, running=False),
+        now=now,
+    )
+    store.set_tuning(7, 12)
+
+    store.delete_channel(7)
+
+    assert store.load_viewer(7) is None
+    assert store.get_tuning() == (None, 12)
+    with store.connect() as connection:
+        row = connection.execute(
+            "SELECT 1 FROM channel_runtime WHERE channel_number = 7"
+        ).fetchone()
+    assert row is None
+
+
 def test_channel_epoch_survives_runtime_restart(tmp_path: Path) -> None:
     resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
@@ -148,6 +358,42 @@ def test_schedule_change_creates_new_epoch(tmp_path: Path) -> None:
 
     assert second.signature != first.signature
     assert second.epoch_utc == changed_at
+
+
+def test_calendar_support_preserves_legacy_schedule_signature(tmp_path: Path) -> None:
+    resolved = build_resolved_channel(tmp_path, [30.0, 45.0])
+    programming = resolved.definition.programming
+    legacy_payload = {
+        "schema": 2,
+        "channel": resolved.definition.channel,
+        "programming": {
+            "mode": programming.mode,
+            "preserve_episode_order": programming.preserve_episode_order,
+            "avoid_repeat_days": programming.avoid_repeat_days,
+        },
+        "media": [
+            {
+                "asset_id": item.asset.asset_id,
+                "duration_seconds": item.asset.duration_seconds,
+            }
+            for item in resolved.media
+        ],
+    }
+    expected = hashlib.sha256(
+        json.dumps(
+            legacy_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    runtime = ChannelRuntime.open(
+        resolved,
+        RuntimeStore(tmp_path / "runtime.db"),
+        now=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    assert runtime.signature == expected
 
 
 def test_runtime_refuses_unknown_media_duration(tmp_path: Path) -> None:
@@ -347,7 +593,7 @@ def test_tuning_and_viewer_clock_survive_runtime_restart(tmp_path: Path) -> None
     assert restored.is_live
 
 
-def test_seek_cannot_fast_forward_past_live(tmp_path: Path) -> None:
+def test_seek_can_watch_ahead_while_paused_and_go_live_returns_to_now(tmp_path: Path) -> None:
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     tv = open_two_channel_tv(tmp_path, epoch)
     tv.tune(7, now=epoch)
@@ -355,5 +601,255 @@ def test_seek_cannot_fast_forward_past_live(tmp_path: Path) -> None:
 
     decision = tv.seek(999, now=epoch + timedelta(seconds=20))
 
-    assert decision.is_live
-    assert decision.viewer_time_utc == epoch + timedelta(seconds=20)
+    assert not decision.is_live
+    assert decision.is_ahead
+    assert decision.ahead_seconds == pytest.approx(989)
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=1009)
+    assert not tv._viewer.running
+    live = tv.go_live(now=epoch + timedelta(seconds=25))
+    assert live.is_live and not live.is_ahead
+    assert live.viewer_time_utc == epoch + timedelta(seconds=25)
+    assert tv._viewer.running
+
+
+@pytest.mark.parametrize('mode', ['sequential', 'shuffle', 'calendar'])
+def test_watch_ahead_keeps_broadcast_epoch_and_station_position(tmp_path, mode):
+    from dataclasses import replace
+    epoch = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    resolved = build_resolved_channel(tmp_path, [30.0, 30.0], channel_number=7)
+    if mode == 'calendar':
+        resolved = calendar_channel(resolved, [(epoch, 0), (epoch + timedelta(seconds=60), 1)])
+    else:
+        resolved = replace(resolved, definition=replace(resolved.definition,
+            programming=replace(resolved.definition.programming, mode=mode)))
+    store = RuntimeStore(tmp_path / 'ahead.db')
+    channel = ChannelRuntime.open(resolved, store, now=epoch)
+    tv = TelevisionRuntime((channel,), store)
+    tv.tune(7, now=epoch + timedelta(seconds=10))
+    decision = tv.seek(60, now=epoch + timedelta(seconds=10))
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=70)
+    assert decision.broadcast_selection == channel.project_at(epoch + timedelta(seconds=10))
+    assert decision.viewer_selection == channel.project_at(epoch + timedelta(seconds=70))
+    assert store.load_channel(7).epoch_utc == epoch
+    assert decision.ahead_seconds == 60
+
+
+def test_watch_ahead_survives_restart_saved_peek_and_channel_return(tmp_path):
+    epoch = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+    tv.tune(7, now=epoch)
+    tv.seek(90, now=epoch + timedelta(seconds=10))
+    restarted = open_two_channel_tv(tmp_path, epoch + timedelta(seconds=20))
+    decision = restarted.status(now=epoch + timedelta(seconds=20))
+    assert decision.viewer_time_utc == epoch + timedelta(seconds=110)
+    assert decision.ahead_seconds == 90
+    assert restarted.saved_status(7, now=epoch + timedelta(seconds=20)).ahead_seconds == 90
+    restarted.tune(12, now=epoch + timedelta(seconds=20))
+    returned = restarted.tune(7, now=epoch + timedelta(seconds=30), return_behavior='resume')
+    assert returned.viewer_time_utc == epoch + timedelta(seconds=110)
+    assert returned.ahead_seconds == 80
+
+
+@pytest.mark.parametrize('offset', [-40, 40])
+def test_go_live_returns_from_either_side_of_broadcast(tmp_path, offset):
+    epoch = datetime(2026, 1, 1, 12, tzinfo=UTC)
+    tv = open_two_channel_tv(tmp_path, epoch)
+    tv.tune(7, now=epoch)
+    tv.seek(offset, now=epoch)
+    live = tv.go_live(now=epoch + timedelta(seconds=5))
+    assert live.is_live
+    assert live.lag_seconds == 0 and live.ahead_seconds == 0
+    assert live.viewer_time_utc == epoch + timedelta(seconds=5)
+
+
+
+@pytest.mark.parametrize("mode", ["sequential", "shuffle"])
+def test_ad_break_pauses_program_clock_and_recovers_committed_plan(
+    tmp_path: Path, mode: str
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    base = build_resolved_channel(tmp_path, [30.0, 30.0], channel_number=71)
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.4",
+            "channel": 71,
+            "name": "Ad-supported",
+            "sources": [{"path": str(source.path)} for source in base.definition.sources],
+            "advertising": {
+                "enabled": True,
+                "sources": [{"path": str(tmp_path / "ads")}],
+                "breakpoints_seconds": [10.0],
+                "break_duration_seconds": 5.0,
+            },
+            "programming": {"mode": mode},
+        }
+    )
+    ad_path = tmp_path / "ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:ad-spot", content_sha256="ad-spot", size_bytes=1,
+        duration_seconds=5.0, container_format="mp4",
+    )
+    ad_media = IndexedMedia(
+        ad_asset,
+        MediaLocation(
+            path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+            source_root=ad_path.parent, online=True,
+        ),
+    )
+    resolved = ResolvedChannel(definition, base.media, (ad_media,))
+    database = tmp_path / "ad-runtime.db"
+    store = RuntimeStore(database)
+    runtime = ChannelRuntime.open(resolved, store, now=epoch)
+
+    ad = runtime.broadcast_at(epoch + timedelta(seconds=12))
+    assert ad.origin == "advertisement"
+    assert ad.offset_seconds == pytest.approx(2.0)
+    assert ad.event.event_type == "advertisement"
+    assert ad.event.parent_program_id
+    assert ad.event.break_id
+
+    resumed = runtime.broadcast_at(epoch + timedelta(seconds=15))
+    assert resumed.origin != "advertisement"
+    assert resumed.offset_seconds == pytest.approx(10.0)
+    assert resumed.program_started_at == epoch
+
+    plans = runtime.break_store.plans_for_channel(
+        71, start=epoch, end=epoch + timedelta(seconds=20)
+    )
+    assert len(plans) == 1
+    plan_id = plans[0].plan_id
+    runtime.break_store.close()
+
+    # A newly opened runtime reads the committed plan instead of reshuffling it.
+    recovered = ChannelRuntime.open(
+        resolved, RuntimeStore(database), now=epoch + timedelta(seconds=12)
+    )
+    recovered_ad = recovered.broadcast_at(epoch + timedelta(seconds=12))
+    assert recovered_ad.origin == "advertisement"
+    assert recovered.break_store.load_opportunity(plans[0].opportunity_id).plan_id == plan_id
+    assert recovered.break_store.record_aired(
+        plan_id, 0, ad_asset.asset_id, aired_at=epoch + timedelta(seconds=12)
+    ) is False
+    recovered.break_store.close()
+
+
+
+def test_ad_policy_revision_does_not_reset_program_broadcast_clock(tmp_path: Path) -> None:
+    base = build_resolved_channel(tmp_path, [30.0, 45.0], channel_number=72)
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = RuntimeStore(tmp_path / "policy-revision.db")
+    original = ChannelRuntime.open(base, store, now=epoch)
+
+    ad_policy = AdvertisingDefinition(
+        enabled=True,
+        sources=(SourceDefinition(tmp_path / "ads"),),
+        selection_strategy="best_fit",
+        breakpoints_seconds=(10.0,),
+        break_duration_seconds=5.0,
+    )
+    changed_definition = replace(base.definition, advertising=ad_policy)
+    changed = ResolvedChannel(changed_definition, base.media, ())
+    revised = ChannelRuntime.open(changed, store, now=epoch + timedelta(minutes=5))
+
+    assert revised.signature == original.signature
+    assert revised.epoch_utc == original.epoch_utc
+    assert advertising_signature(changed) != advertising_signature(base)
+
+
+def test_ad_policy_revision_preserves_active_plan_and_invalidates_future_plan(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    store = BreakPlanStore(tmp_path / "policy-plans.db")
+    store.apply_policy_revision(73, "revision-a", at=epoch)
+
+    def make_plan(name: str, starts_at: datetime) -> BreakPlan:
+        return BreakPlan(
+            plan_id=f"plan-{name}",
+            opportunity_id=f"opportunity-{name}",
+            occurrence_id="program-occurrence",
+            channel_number=73,
+            scheduled_at=starts_at,
+            reserved_seconds=5.0,
+            segments=(PlannedSegment(
+                asset_id=f"ad-{name}",
+                start_offset_seconds=0.0,
+                source_offset_seconds=0.0,
+                duration_seconds=5.0,
+            ),),
+            strategy="best_fit",
+            timing_policy="strict_fit",
+        )
+
+    active = make_plan("active", epoch + timedelta(seconds=5))
+    future = make_plan("future", epoch + timedelta(seconds=20))
+    store.commit(active)
+    store.commit(future)
+    changed = store.apply_policy_revision(
+        73, "revision-b", at=epoch + timedelta(seconds=7)
+    )
+
+    assert changed is True
+    assert store.load_opportunity(active.opportunity_id) is not None
+    assert store.load_opportunity(future.opportunity_id) is None
+    store.close()
+
+
+def test_policy_edit_keeps_current_break_and_only_replans_future_content_positions(
+    tmp_path: Path,
+) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    base = build_resolved_channel(tmp_path, [30.0, 30.0], channel_number=74)
+    definition = ChannelDefinition.from_mapping({
+        "schema_version": "0.4",
+        "channel": 74,
+        "name": "Policy Revision TV",
+        "sources": [{"path": str(source.path)} for source in base.definition.sources],
+        "advertising": {
+            "enabled": True,
+            "sources": [{"path": str(tmp_path / "policy-ads")}],
+            "selection_strategy": "best_fit",
+            "breakpoints_seconds": [10.0, 20.0],
+            "break_duration_seconds": 5.0,
+        },
+        "programming": {"mode": "sequential"},
+    })
+    ad_path = tmp_path / "policy-ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:policy-ad", content_sha256="policy-ad", size_bytes=1,
+        duration_seconds=5.0, container_format="mp4",
+    )
+    ad = IndexedMedia(
+        ad_asset,
+        MediaLocation(
+            path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+            source_root=ad_path.parent, online=True,
+        ),
+    )
+    original = ResolvedChannel(definition, base.media, (ad,))
+    database = tmp_path / "policy-edit-runtime.db"
+    first = ChannelRuntime.open(original, RuntimeStore(database), now=epoch)
+    assert first.broadcast_at(epoch + timedelta(seconds=12)).origin == "advertisement"
+    first.break_store.close()
+
+    revised_advertising = replace(
+        definition.advertising, selection_strategy="smallest"
+    )
+    revised_definition = replace(definition, advertising=revised_advertising)
+    revised = ResolvedChannel(revised_definition, base.media, (ad,))
+    second = ChannelRuntime.open(
+        revised, RuntimeStore(database), now=epoch + timedelta(seconds=12)
+    )
+
+    assert second.broadcast_at(epoch + timedelta(seconds=12)).origin == "advertisement"
+    resumed = second.broadcast_at(epoch + timedelta(seconds=15))
+    assert resumed.origin != "advertisement"
+    assert resumed.program_started_at == epoch
+    next_ad = second.broadcast_at(epoch + timedelta(seconds=25))
+    assert next_ad.origin == "advertisement"
+    assert next_ad.event.parent_program_id == resumed.event.event_id
+    plans = second.break_store.plans_for_channel(
+        74, start=epoch, end=epoch + timedelta(seconds=40)
+    )
+    assert len(plans) == 2
+    second.break_store.close()

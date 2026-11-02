@@ -81,9 +81,16 @@ schedule signature
 schedule epoch
 ```
 
-If ChannelOS restarts and the signature is unchanged, the original epoch survives. If resolved programming inputs change, ChannelOS deliberately creates a new epoch rather than pretending the old timeline still maps cleanly onto different media.
+If ChannelOS restarts and the signature is unchanged, the original epoch
+survives. If resolved sequential/shuffle inputs change, ChannelOS deliberately
+creates a new epoch rather than pretending the old cycle still maps cleanly
+onto different media. Calendar edits preserve the existing filler epoch and
+Viewer Clock because their fixed blocks already carry absolute UTC intent.
 
-This also provides the current missing-file recovery behavior: after a rescan marks a missing location offline, the resolved online media set changes, the schedule signature changes, and the channel re-anchors using surviving media.
+For repeating channels this also provides missing-file recovery: after a rescan
+marks a location offline, the signature changes and the channel re-anchors using
+surviving media. Calendar channels preserve their filler clock and reject an
+unavailable explicitly scheduled asset during validation.
 
 ## Viewer Clock
 
@@ -118,11 +125,24 @@ Viewer Clock resumes from its frozen point
 
 SKIP_BACK / SKIP_FORWARD
 Viewer Clock moves on the schedule timeline
-Fast-forward is capped at LIVE
+Fast-forward can move past LIVE into upcoming local programming
 
 GO_LIVE
-Viewer Clock snaps to Broadcast Clock
+Viewer Clock snaps to Broadcast Clock from ahead or behind and resumes playing
 ```
+
+The HUD, Home and Info distinguish Live, ahead of Live and behind Live. Seeking
+changes only the personal Viewer Clock; it does not move the station's epoch,
+schedule or actual broadcast position. A paused viewer remains paused after a
+seek. Restart, Continue Watching and the `resume` return policy preserve ahead
+positions just as they preserve behind positions. The default `live` return
+policy still tunes to the present.
+
+Future programming is projected using the same event timeline as the Guide.
+Projecting or seeking across a future advertisement does not mark it aired or
+watched. Genuine decoder consumption can record a viewing before its scheduled
+airing; its completion timestamp is the actual observation time. Logical aired
+history continues to follow the station's Broadcast Clock.
 
 ## Returning to a channel
 
@@ -198,7 +218,10 @@ The completed Phase 1 reference suite covers:
 - Channel Up / Down and Previous Channel,
 - two channels advancing independently while untuned,
 - current/viewer continuity across runtime restart,
-- fast-forward capped at LIVE,
+- watching ahead across sequential, shuffle and calendar programming,
+- GO_LIVE returning from either side of the station's current broadcast,
+- ahead positions surviving restart and channel return,
+- future ad projection versus actual viewing and aired history,
 - playback routing through a fake backend,
 - CLI Broadcast Clock persistence,
 - CLI television startup,
@@ -230,3 +253,14 @@ The Phase 1 gate passed on Windows with genuine indexed NVIDIA-recorded MP4 medi
 11. Channel 012 was changed from sequential to shuffle and real playback opened a shuffled program rather than source order.
 
 That validates the fundamental ChannelOS television runtime on a real decoder and real user media. Phase 2 now exposes this truth through Guide and UI-facing data rather than changing the underlying clock model.
+
+## Runtime schema 3 — 0.0.6
+
+Opening an existing schema-2 database creates a consistent backup before migration.
+Schema 3 retains valid epochs, viewer positions, history and plan IDs. Program clocks
+carry their resolved schedule signature, isolating temporary partial-source lineups.
+Deleted channels move their state into `deleted_channel_archives`; active queries
+do not include a predecessor after its number is reused. Future calendar edits
+archive superseded reservations and preserve actual airing/viewing evidence. An older
+ChannelOS build refuses the newer runtime schema. To roll back the build, restore
+the matching pre-upgrade setup/database backup rather than opening schema 3 in 0.0.5.

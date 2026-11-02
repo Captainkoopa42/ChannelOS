@@ -346,19 +346,8 @@ Item {
             }
         }
 
-        var updatedSources = existingSources.slice(0)
-        updatedSources.push(targetPath)
-        var editor = {
-            channel: channel.channelNumber,
-            name: String(channel.name || ""),
-            description: String(channel.description || ""),
-            sources: updatedSources,
-            mode: String(channel.mode || "sequential"),
-            preserveEpisodeOrder: Boolean(channel.preserveEpisodeOrder),
-            avoidRepeatDays: channel.avoidRepeatDays || 0,
-            numberWidth: channel.numberWidth || 3
-        }
-        var result = channelOS.updateChannel(channel.channelNumber, editor)
+        var result = channelOS.addLibraryItemToChannel(
+                    channel.channelNumber, String(item.assetId), targetPath)
         if (!result || !result.ok) {
             addToChannelError = true
             addToChannelMessage = result && result.message
@@ -886,7 +875,7 @@ Item {
                 }
             }
 
-            TextField {
+            ChannelTextField {
                 id: searchField
                 anchors.right: manageButton.left
                 anchors.rightMargin: 12
@@ -906,7 +895,7 @@ Item {
                 }
             }
 
-            Button {
+            ChannelButton {
                 id: manageButton
                 anchors.right: parent.right
                 anchors.rightMargin: 28
@@ -971,7 +960,7 @@ Item {
                 }
             }
 
-            Button {
+            ChannelButton {
                 id: addChannelButton
                 anchors.right: playButton.left
                 anchors.verticalCenter: parent.verticalCenter
@@ -982,7 +971,7 @@ Item {
                 onClicked: libraryRoot.openAddToChannel()
             }
 
-            Button {
+            ChannelButton {
                 id: playButton
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
@@ -1306,7 +1295,7 @@ Item {
                 color: textSecondary
                 font.pixelSize: 14
             }
-            Button {
+            ChannelButton {
                 anchors.horizontalCenter: parent.horizontalCenter
                 visible: allItems.length === 0
                 text: "Manage Media Sources"

@@ -1,0 +1,3237 @@
+pragma ComponentBehavior: Bound
+
+import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
+
+Item {
+    id: studioRoot
+    anchors.fill: parent
+    z: 92
+
+    readonly property color appBackground: "#050c15"
+    readonly property color panel: "#081625"
+    readonly property color panelRaised: "#0d2035"
+    readonly property color panelSoft: "#10283f"
+    readonly property color line: "#1a3550"
+    readonly property color textPrimary: "#f4f7fb"
+    readonly property color textSecondary: "#9fb0c2"
+    readonly property color accent: "#1a91ff"
+    readonly property color accentBright: "#42adff"
+    readonly property color liveGreen: "#2bcf75"
+    readonly property color warning: "#ffb84a"
+    readonly property color danger: "#ff6666"
+
+    component StudioButton: Button {
+        id: studioButton
+
+        property bool destructive: false
+
+        implicitWidth: Math.max(72, buttonLabel.implicitWidth + 28)
+        implicitHeight: 38
+        leftPadding: 14
+        rightPadding: 14
+        topPadding: 8
+        bottomPadding: 8
+        focusPolicy: Qt.StrongFocus
+        hoverEnabled: true
+
+        contentItem: Text {
+            id: buttonLabel
+            text: studioButton.text
+            color: !studioButton.enabled
+                   ? "#607489"
+                   : studioButton.destructive
+                   ? studioRoot.danger
+                   : studioButton.highlighted || studioButton.checked
+                   ? "#ffffff" : studioRoot.textPrimary
+            font.pixelSize: 12
+            font.weight: studioButton.highlighted || studioButton.checked
+                         ? Font.DemiBold : Font.Medium
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        background: Rectangle {
+            id: buttonBackground
+            radius: 7
+            color: !studioButton.enabled
+                   ? "#091522"
+                   : studioButton.down
+                   ? (studioButton.destructive ? "#54212a" : "#0a66ad")
+                   : studioButton.destructive
+                   ? (studioButton.hovered ? "#351b24" : "#21151c")
+                   : studioButton.highlighted
+                   ? (studioButton.hovered ? studioRoot.accentBright
+                                           : studioRoot.accent)
+                   : studioButton.checked
+                   ? (studioButton.hovered ? "#176aa6" : "#12527f")
+                   : studioButton.hovered
+                   ? "#143a5c" : studioRoot.panelRaised
+            border.color: !studioButton.enabled
+                          ? "#14283b"
+                          : studioButton.destructive
+                          ? studioRoot.danger
+                          : studioButton.activeFocus
+                            || studioButton.highlighted
+                            || studioButton.checked
+                          ? studioRoot.accentBright : studioRoot.line
+            border.width: studioButton.activeFocus
+                          || studioButton.highlighted
+                          || studioButton.checked ? 2 : 1
+
+            Behavior on color {
+                ColorAnimation { duration: 90 }
+            }
+            Behavior on border.color {
+                ColorAnimation { duration: 90 }
+            }
+        }
+    }
+
+    component StudioDialog: Dialog {
+        modal: true
+        dim: true
+        padding: 24
+        palette.window: studioRoot.panelRaised
+        palette.windowText: studioRoot.textPrimary
+        palette.button: studioRoot.panelRaised
+        palette.buttonText: studioRoot.textPrimary
+
+        background: Rectangle {
+            radius: 10
+            color: studioRoot.panelRaised
+            border.color: studioRoot.line
+            border.width: 1
+        }
+
+        Overlay.modal: Rectangle {
+            color: "#aa02070d"
+        }
+    }
+
+    property var hostWindow: null
+    property string activeBin: "media"
+    property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
+    property var mediaLibrary: draftData.media || []
+    property var mediaByAssetId: ({})
+    property var expandedMediaSources: ({})
+    readonly property var mediaBinGroups: selectedSourceMedia()
+    readonly property int mediaBinAssetCount: selectedMediaCount()
+    property var groupsLibrary: draftData.groups || []
+    property var blocksByDay: ({})
+    property string viewMode: "week"
+    property int snapMinutes: 15
+    property bool dayMediaBinVisible: false
+    property date anchorDate: new Date()
+    property string selectedDayKey: dayKey(new Date())
+    property int editingChannelNumber: 0
+    property int selectedBlockIndex: -1
+    property bool dirty: false
+    property bool loading: false
+    property string pendingExitDestination: ""
+    property string feedbackMessage: ""
+    property bool feedbackIsError: false
+    property bool autoFillApplying: false
+    property var pendingAutoFillBlocks: []
+    property int pendingAutoFillIndex: 0
+    property string pendingAutoFillMessage: ""
+    property string pendingScheduleOperation: ""
+    readonly property int maximumCalendarBlocks: 10000
+    readonly property int autoFillApplyBatchSize: 512
+    readonly property int calendarBlockCount: calendarBlocks.count
+    readonly property var autoFillState: channelOS
+            ? channelOS.studioAutoFill
+            : ({ active: false, phase: "idle", current: 0, total: 0,
+                 percent: 0, message: "" })
+    readonly property bool autoFillBusy: Boolean(autoFillState.active)
+                                         || autoFillApplying
+    readonly property int autoFillApplyPercent: pendingAutoFillBlocks.length > 0
+            ? Math.min(100, Math.floor(pendingAutoFillIndex * 100
+                                      / pendingAutoFillBlocks.length))
+            : 0
+
+    onSelectedBlockIndexChanged: {
+        exactTimeField.text = selectedBlockTimeText()
+        dayExactTimeField.text = selectedBlockTimeText()
+    }
+    onBlocksByDayChanged: {
+        exactTimeField.text = selectedBlockTimeText()
+        dayExactTimeField.text = selectedBlockTimeText()
+    }
+
+    function pad(value) {
+        return Number(value) < 10 ? "0" + Number(value) : String(value)
+    }
+
+    function dayKey(value) {
+        var day = new Date(value)
+        return day.getFullYear() + "-" + pad(day.getMonth() + 1)
+                + "-" + pad(day.getDate())
+    }
+
+    function dateAtLocalMidnight(value) {
+        var day = new Date(value)
+        day.setHours(0, 0, 0, 0)
+        return day
+    }
+
+    function startOfWeek(value) {
+        var day = dateAtLocalMidnight(value)
+        var weekday = day.getDay()
+        var mondayOffset = weekday === 0 ? -6 : 1 - weekday
+        day.setDate(day.getDate() + mondayOffset)
+        return day
+    }
+
+    function addDays(value, count) {
+        var result = new Date(value)
+        result.setDate(result.getDate() + Number(count))
+        return result
+    }
+
+    function visibleStart() {
+        if (viewMode === "month")
+            return new Date(anchorDate.getFullYear(), anchorDate.getMonth(), 1)
+        if (viewMode === "day")
+            return dateAtLocalMidnight(
+                        new Date(selectedDayKey + "T00:00:00"))
+        return startOfWeek(anchorDate)
+    }
+
+    function visibleEnd() {
+        if (viewMode === "month")
+            return new Date(anchorDate.getFullYear(), anchorDate.getMonth() + 1, 1)
+        if (viewMode === "day")
+            return addDays(visibleStart(), 1)
+        return addDays(startOfWeek(anchorDate), 7)
+    }
+
+    function monthGridStart() {
+        return startOfWeek(new Date(anchorDate.getFullYear(),
+                                    anchorDate.getMonth(), 1))
+    }
+
+    function rangeLabel() {
+        if (viewMode === "month")
+            return Qt.formatDate(anchorDate, "MMMM yyyy")
+        if (viewMode === "day")
+            return Qt.formatDate(visibleStart(), "dddd, MMMM d, yyyy")
+        var start = startOfWeek(anchorDate)
+        var end = addDays(start, 6)
+        return Qt.formatDate(start, "MMM d") + " — "
+                + Qt.formatDate(end, "MMM d, yyyy")
+    }
+
+    function durationLabel(seconds) {
+        var total = Math.max(0, Math.round(Number(seconds || 0)))
+        var hours = Math.floor(total / 3600)
+        var minutes = Math.floor((total % 3600) / 60)
+        var secs = total % 60
+        if (hours > 0)
+            return hours + "h " + pad(minutes) + "m"
+        if (minutes > 0)
+            return minutes + "m " + pad(secs) + "s"
+        return secs + "s"
+    }
+
+    function formatTime(isoText) {
+        return Qt.formatTime(new Date(String(isoText)), "h:mm AP")
+    }
+
+    function editorObject() {
+        var sources = []
+        for (var sourceIndex = 0;
+             sourceIndex < draftSources.count;
+             ++sourceIndex) {
+            sources.push(draftSources.get(sourceIndex).path)
+        }
+
+        var blocks = []
+        for (var blockIndex = 0;
+             blockIndex < calendarBlocks.count;
+             ++blockIndex) {
+            var block = calendarBlocks.get(blockIndex)
+            var item = {
+                assetId: String(block.assetId),
+                startUtc: String(block.startUtc),
+                adPlan: block.adPlanJson ? JSON.parse(block.adPlanJson) : null
+            }
+            var fillerIds = parseAssetIds(block.fillerAssetIdsJson)
+            if (fillerIds.length) {
+                item.fillerMode = String(block.fillerMode || "sequential")
+                item.fillerAssetIds = fillerIds
+            }
+            blocks.push(item)
+        }
+
+        return Object.assign({
+            channel: channelNumberField.text,
+            name: channelNameField.text,
+            description: descriptionField.text,
+            mode: "calendar",
+            fillerMode: fillerModeBox.currentText.toLowerCase(),
+            preserveEpisodeOrder: false,
+            avoidRepeatDays: repeatDays.value,
+            numberWidth: 3,
+            sources: sources,
+            calendarBlocks: blocks
+        }, adSettings.editorObject())
+    }
+
+    function mediaForAsset(assetId) {
+        var target = String(assetId || "")
+        if (mediaByAssetId[target])
+            return mediaByAssetId[target]
+        return ({
+            assetId: target,
+            title: "Unavailable media",
+            path: "",
+            sourceRoot: "",
+            durationSeconds: 0,
+            containerFormat: "MEDIA"
+        })
+    }
+
+    function rebuildMediaIndex() {
+        var byAssetId = ({})
+        for (var index = 0; index < mediaLibrary.length; ++index) {
+            var item = mediaLibrary[index]
+            byAssetId[String(item.assetId || "")] = item
+        }
+        mediaByAssetId = byAssetId
+    }
+
+    function appendSource(sourceRoot, expand) {
+        var value = String(sourceRoot || "").trim()
+        if (!value.length)
+            return false
+        for (var index = 0; index < draftSources.count; ++index) {
+            if (sourcePathKey(draftSources.get(index).path) === sourcePathKey(value))
+                return false
+        }
+        draftSources.append({ path: value })
+        if (expand) {
+            var next = Object.assign({}, expandedMediaSources)
+            next[value] = true
+            expandedMediaSources = next
+        }
+        return true
+    }
+
+    function removeMediaSource(path) {
+        for (var index = 0; index < draftSources.count; ++index) {
+            if (sourcePathKey(draftSources.get(index).path) === sourcePathKey(path)) {
+                draftSources.remove(index)
+                var next = Object.assign({}, expandedMediaSources)
+                delete next[path]
+                expandedMediaSources = next
+                dirty = true
+                return
+            }
+        }
+    }
+
+    function clearMediaSources() {
+        draftSources.clear()
+        expandedMediaSources = ({})
+        dirty = true
+    }
+
+    function toggleMediaSource(path) {
+        var next = Object.assign({}, expandedMediaSources)
+        next[path] = !next[path]
+        expandedMediaSources = next
+    }
+
+    function expandMediaSearchResults() {
+        if (!String(mediaSearch.text || "").trim().length)
+            return
+        var next = Object.assign({}, expandedMediaSources)
+        for (var index = 0; index < mediaBinGroups.length; ++index)
+            next[mediaBinGroups[index].path] = true
+        expandedMediaSources = next
+    }
+
+    function appendBlock(block) {
+        calendarBlocks.append(blockObject(block))
+    }
+
+    function effectiveBlockEnd(block) {
+        var natural = new Date(String(block.startUtc)).getTime()
+                + Number(block.durationSeconds || mediaForAsset(block.assetId).durationSeconds || 0) * 1000
+        var saved = block.adPlan || null
+        try {
+            if (block.adPlanJson)
+                saved = JSON.parse(String(block.adPlanJson))
+        } catch (error) { saved = null }
+        if (saved && new Date(saved.start_utc).getTime() === new Date(block.startUtc).getTime())
+            return Math.max(natural, new Date(saved.end_utc).getTime())
+        return natural
+    }
+
+    function invalidateReservationsFrom(startMs) {
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            if (new Date(block.startUtc).getTime() >= startMs) {
+                calendarBlocks.setProperty(index, "adPlanJson", "null")
+                calendarBlocks.setProperty(index, "endUtc", new Date(
+                    new Date(block.startUtc).getTime() + Number(block.durationSeconds || 0) * 1000).toISOString())
+            }
+        }
+    }
+
+    function blockObject(block) {
+        var media = mediaForAsset(block.assetId)
+        var duration = Number(block.durationSeconds
+                              || media.durationSeconds
+                              || 0)
+        var start = new Date(String(block.startUtc))
+        var end = new Date(effectiveBlockEnd(block))
+        return {
+            assetId: String(block.assetId),
+            title: String(block.title || media.title || "Untitled"),
+            path: String(block.path || media.path || ""),
+            sourceRoot: String(block.sourceRoot || media.sourceRoot || ""),
+            durationSeconds: duration,
+            startUtc: start.toISOString(),
+            endUtc: end.toISOString(),
+            adPlanJson: String(block.adPlanJson || JSON.stringify(block.adPlan || null)),
+            fillerMode: String(block.fillerMode || ""),
+            fillerAssetIdsJson: String(block.fillerAssetIdsJson
+                                       || JSON.stringify(block.fillerAssetIds || [])),
+            fillerGroupName: String(block.fillerGroupName || "")
+        }
+    }
+
+    function sortBlocks() {
+        var blocks = []
+        for (var currentIndex = 0;
+             currentIndex < calendarBlocks.count;
+             ++currentIndex) {
+            var current = calendarBlocks.get(currentIndex)
+            blocks.push({
+                assetId: current.assetId,
+                title: current.title,
+                path: current.path,
+                sourceRoot: current.sourceRoot,
+                durationSeconds: current.durationSeconds,
+                startUtc: current.startUtc,
+                endUtc: current.endUtc,
+                adPlanJson: current.adPlanJson,
+                fillerMode: current.fillerMode,
+                fillerAssetIdsJson: current.fillerAssetIdsJson,
+                fillerGroupName: current.fillerGroupName
+            })
+        }
+        blocks.sort(function(left, right) {
+            return new Date(left.startUtc).getTime()
+                    - new Date(right.startUtc).getTime()
+        })
+        calendarBlocks.clear()
+        if (blocks.length)
+            calendarBlocks.append(blocks)
+        rebuildBlockIndex()
+    }
+
+    function rebuildBlockIndex() {
+        var indexByDay = ({})
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            var key = dayKey(new Date(block.startUtc))
+            if (!indexByDay[key])
+                indexByDay[key] = []
+            indexByDay[key].push({
+                modelIndex: index,
+                assetId: block.assetId,
+                title: block.title,
+                startUtc: block.startUtc,
+                endUtc: block.endUtc,
+                durationSeconds: block.durationSeconds
+            })
+        }
+        // Replacing the object gives every calendar cell one predictable
+        // binding update instead of making 42 cells rescan the complete model.
+        blocksByDay = indexByDay
+    }
+
+    function loadDraft() {
+        if (!channelOS || loading || autoFillBusy)
+            return
+        loading = true
+        feedbackMessage = "Loading detached Studio draft…"
+        feedbackIsError = false
+        var target = hostWindow
+                ? Number(hostWindow.studioChannelNumber || 0)
+                : 0
+        var result = channelOS.loadChannelStudio(target)
+        loading = false
+        if (!result || !result.ok) {
+            feedbackMessage = result && result.message
+                    ? String(result.message)
+                    : "Channel Studio could not load this channel."
+            feedbackIsError = true
+            return
+        }
+
+        draftData = result.draft || ({})
+        mediaLibrary = draftData.media || []
+        rebuildMediaIndex()
+        groupsLibrary = draftData.groups || []
+        editingChannelNumber = Number(draftData.editingChannelNumber || 0)
+        channelNumberField.text = String(draftData.channel || 1)
+        channelNameField.text = String(draftData.name || "")
+        descriptionField.text = String(draftData.description || "")
+        fillerModeBox.currentIndex = String(draftData.fillerMode) === "shuffle"
+                ? 1 : 0
+        repeatDays.value = Number(draftData.avoidRepeatDays || 0)
+        adSettings.load(draftData)
+
+        draftSources.clear()
+        expandedMediaSources = ({})
+        mediaSearch.text = ""
+        var sources = draftData.sources || []
+        for (var sourceIndex = 0; sourceIndex < sources.length; ++sourceIndex)
+            appendSource(sources[sourceIndex])
+
+        calendarBlocks.clear()
+        var blocks = draftData.calendarBlocks || []
+        var normalizedBlocks = []
+        for (var blockIndex = 0; blockIndex < blocks.length; ++blockIndex)
+            normalizedBlocks.push(blockObject(blocks[blockIndex]))
+        normalizedBlocks.sort(function(left, right) {
+            return new Date(left.startUtc).getTime()
+                    - new Date(right.startUtc).getTime()
+        })
+        if (normalizedBlocks.length)
+            calendarBlocks.append(normalizedBlocks)
+        rebuildBlockIndex()
+
+        selectedBlockIndex = calendarBlocks.count ? 0 : -1
+        anchorDate = calendarBlocks.count
+                ? new Date(calendarBlocks.get(0).startUtc)
+                : new Date()
+        selectedDayKey = dayKey(anchorDate)
+        dirty = false
+        feedbackMessage = editingChannelNumber > 0
+                ? (calendarBlocks.count > 0
+                   ? "Calendar draft loaded. Live television is unchanged until Apply."
+                   : "Classic channel loaded. Auto Fill or add media to convert it to an editable calendar.")
+                : "New detached channel draft. Auto Fill a range, then reshape it."
+        feedbackIsError = false
+    }
+
+    function sourcePathKey(value) {
+        var path = String(value || "").replace(/\\/g, "/")
+        if (path !== "/")
+            path = path.replace(/\/+$/, "")
+        // Windows paths are case-insensitive; Linux source names are not.
+        return /^[a-z]:/i.test(path) || path.indexOf("//") === 0
+                ? path.toLowerCase() : path
+    }
+
+    function sourceContainsMedia(path, source) {
+        var candidate = sourcePathKey(path)
+        var root = sourcePathKey(source)
+        return root.length > 0 && (candidate === root
+                || candidate.indexOf(root === "/" ? "/" : root + "/") === 0)
+    }
+
+    function mediaLocations(item) {
+        return item.locations && item.locations.length
+                ? item.locations : [{path: item.path, sourceRoot: item.sourceRoot}]
+    }
+
+    function selectedSourceMedia() {
+        var groups = []
+        for (var sourceIndex = 0; sourceIndex < draftSources.count; ++sourceIndex) {
+            var path = String(draftSources.get(sourceIndex).path)
+            var parts = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/")
+            groups.push({path: path, name: parts[parts.length - 1] || path, media: []})
+        }
+        // Match the runtime's separate advertising scope, including disabled
+        // policies and alternate copies of a canonical asset.
+        var adRoots = adSettings.selectedSources.slice()
+        var adIds = ({})
+        adSettings.selectedIds.forEach(function(value) {
+            if (value.trim().length) adIds[value.trim()] = true
+        })
+        for (var placementIndex = 0; adSettings.setupMode === "advanced" && placementIndex < adSettings.adPlacementSnapshots.length; ++placementIndex) {
+            var policy = adSettings.adPlacementSnapshots[placementIndex].policy || ({})
+            var policyAssets = policy.asset_ids || []
+            var policySources = policy.sources || []
+            policyAssets.forEach(function(assetId) { adIds[assetId] = true })
+            policySources.forEach(function(source) { adRoots.push(String(source.path || "")) })
+        }
+        for (var mediaIndex = 0; mediaIndex < mediaLibrary.length; ++mediaIndex) {
+            var item = mediaLibrary[mediaIndex]
+            var locations = mediaLocations(item)
+            var advertising = Boolean(adIds[String(item.assetId || "")])
+            for (var locationIndex = 0; !advertising && locationIndex < locations.length; ++locationIndex) {
+                for (var adIndex = 0; adIndex < adRoots.length; ++adIndex) {
+                    if (sourceContainsMedia(locations[locationIndex].path, adRoots[adIndex])) {
+                        advertising = true
+                        break
+                    }
+                }
+            }
+            if (advertising)
+                continue
+            for (var groupIndex = 0; groupIndex < groups.length; ++groupIndex) {
+                for (var copyIndex = 0; copyIndex < locations.length; ++copyIndex) {
+                    if (sourceContainsMedia(locations[copyIndex].path, groups[groupIndex].path)) {
+                        groups[groupIndex].media.push(Object.assign({}, item, locations[copyIndex]))
+                        break
+                    }
+                }
+            }
+        }
+        return groups
+    }
+
+    function selectedMediaCount() {
+        var seen = ({})
+        for (var index = 0; index < mediaBinGroups.length; ++index) {
+            mediaBinGroups[index].media.forEach(function(item) { seen[item.assetId] = true })
+        }
+        return Object.keys(seen).length
+    }
+
+    function mediaMatchesSearch(item) {
+        var needle = String(mediaSearch.text || "").toLowerCase().trim()
+        var haystack = (String(item.title || "") + " "
+                        + String(item.path || "") + " "
+                        + String(item.containerFormat || "")).toLowerCase()
+        return !needle.length || haystack.indexOf(needle) >= 0
+    }
+
+    function mediaBinRows() {
+        var result = []
+        for (var index = 0; index < mediaBinGroups.length; ++index) {
+            var group = mediaBinGroups[index]
+            var matching = group.media.filter(mediaMatchesSearch)
+            var expanded = Boolean(expandedMediaSources[group.path])
+            result.push({kind: "source", path: group.path, name: group.name,
+                         count: group.media.length, matchCount: matching.length, expanded: expanded})
+            if (expanded) {
+                for (var mediaIndex = 0; mediaIndex < matching.length; ++mediaIndex)
+                    result.push({kind: "media", media: matching[mediaIndex]})
+            }
+        }
+        return result
+    }
+
+    function sourceChoices() {
+        var result = []
+        var seen = ({})
+        var roots = draftData.sourceOptions || []
+        function addRoot(source) {
+            var key = sourcePathKey(source)
+            if (key.length && !seen[key]) {
+                seen[key] = true
+                result.push(source)
+            }
+        }
+        for (var rootIndex = 0; rootIndex < roots.length; ++rootIndex)
+            addRoot(String(roots[rootIndex]))
+        for (var index = 0; index < mediaLibrary.length; ++index) {
+            mediaLocations(mediaLibrary[index]).forEach(function(location) {
+                addRoot(String(location.sourceRoot || ""))
+            })
+        }
+        result.sort()
+        return result
+    }
+
+    function parseAssetIds(value) {
+        try {
+            var parsed = JSON.parse(String(value || "[]"))
+            return Array.isArray(parsed) ? parsed : []
+        } catch (error) {
+            return []
+        }
+    }
+
+    function selectedDayAssetIds() {
+        var ids = []
+        var seen = ({})
+        var blocks = blocksByDay[selectedDayKey] || []
+        for (var index = 0; index < blocks.length; ++index) {
+            var assetId = String(blocks[index].assetId || "")
+            if (assetId.length && !seen[assetId]) {
+                seen[assetId] = true
+                ids.push(assetId)
+            }
+        }
+        return ids
+    }
+
+    function createGroupFromSelectedDay() {
+        var ids = selectedDayAssetIds()
+        if (!ids.length) {
+            feedbackMessage = "The selected day has no fixed programs to save as a group."
+            feedbackIsError = true
+            return
+        }
+        var result = channelOS.createStudioGroup(
+                    groupNameField.text,
+                    ids,
+                    groupModeBox.currentText.toLowerCase())
+        if (!result || !result.ok) {
+            feedbackMessage = result && result.message
+                    ? String(result.message) : "Program group could not be saved."
+            feedbackIsError = true
+            return
+        }
+        groupsLibrary = result.groups || []
+        groupNameField.text = ""
+        feedbackMessage = String(result.message)
+        feedbackIsError = false
+    }
+
+    function assignSelectedGroupAsFiller() {
+        if (selectedBlockIndex < 0 || selectedBlockIndex >= calendarBlocks.count) {
+            feedbackMessage = "Select a show on the timeline first."
+            feedbackIsError = true
+            return
+        }
+        if (groupChoiceBox.currentIndex < 0
+                || groupChoiceBox.currentIndex >= groupsLibrary.length) {
+            feedbackMessage = "Create or select a reusable group first."
+            feedbackIsError = true
+            return
+        }
+        var group = groupsLibrary[groupChoiceBox.currentIndex]
+        if (Number(group.availableCount || 0) !== Number(group.memberCount || 0)) {
+            feedbackMessage = "Every item in this group must be locally available before assignment."
+            feedbackIsError = true
+            return
+        }
+        var assetIds = group.assetIds || []
+        for (var assetIndex = 0; assetIndex < assetIds.length; ++assetIndex)
+            appendSource(mediaForAsset(assetIds[assetIndex]).sourceRoot)
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerMode",
+                                   String(group.mode || "sequential"))
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerAssetIdsJson",
+                                   JSON.stringify(group.assetIds || []))
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerGroupName",
+                                   String(group.name || "Program group"))
+        dirty = true
+        feedbackMessage = "“" + group.name + "” will fill the gap after the selected show."
+        feedbackIsError = false
+    }
+
+    function clearSelectedShowFiller() {
+        if (selectedBlockIndex < 0 || selectedBlockIndex >= calendarBlocks.count)
+            return
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerMode", "")
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerAssetIdsJson", "[]")
+        calendarBlocks.setProperty(selectedBlockIndex, "fillerGroupName", "")
+        dirty = true
+        feedbackMessage = "The selected show now returns to normal channel filler."
+        feedbackIsError = false
+    }
+
+    function deleteSelectedGroup() {
+        if (groupChoiceBox.currentIndex < 0
+                || groupChoiceBox.currentIndex >= groupsLibrary.length)
+            return
+        var group = groupsLibrary[groupChoiceBox.currentIndex]
+        var result = channelOS.deleteStudioGroup(String(group.groupId))
+        if (!result || !result.ok) {
+            feedbackMessage = result && result.message
+                    ? String(result.message) : "Program group could not be deleted."
+            feedbackIsError = true
+            return
+        }
+        groupsLibrary = result.groups || []
+        feedbackMessage = String(result.message)
+        feedbackIsError = false
+    }
+
+    function blocksForDay(day) {
+        return blocksByDay[dayKey(day)] || []
+    }
+
+    function openDay(value) {
+        var day = dateAtLocalMidnight(value)
+        anchorDate = day
+        selectedDayKey = dayKey(day)
+        dayMediaBinVisible = false
+        viewMode = "day"
+        Qt.callLater(function() { scrollDayToHour(12) })
+    }
+
+    function goToday() {
+        var today = dateAtLocalMidnight(new Date())
+        anchorDate = today
+        selectedDayKey = dayKey(today)
+        if (viewMode === "day")
+            Qt.callLater(function() { scrollDayToHour(new Date().getHours()) })
+    }
+
+    function dayBlocks() {
+        return blocksForDay(new Date(selectedDayKey + "T00:00:00"))
+    }
+
+    function minuteOfDay(value) {
+        var date = new Date(value)
+        return date.getHours() * 60 + date.getMinutes()
+                + date.getSeconds() / 60
+    }
+
+    function minuteForTrackPosition(position, trackWidth) {
+        var raw = Number(position) / Math.max(1, Number(trackWidth)) * 1440
+        var step = Math.max(1, Number(snapMinutes))
+        return Math.max(0, Math.min(1440 - step,
+                                    Math.round(raw / step) * step))
+    }
+
+    function scrollDayToHour(hour) {
+        if (viewMode !== "day" || dayTimeline.width <= 0)
+            return
+        var target = Math.max(0, Math.min(24, Number(hour))) / 24
+                * dayTimeline.contentWidth - dayTimeline.width * 0.18
+        dayTimeline.contentX = Math.max(
+                    0, Math.min(dayTimeline.contentWidth - dayTimeline.width,
+                                target))
+    }
+
+    function placementConflict(start, end, ignoredBlockIndex) {
+        var startMs = new Date(start).getTime()
+        var endMs = new Date(end).getTime()
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            if (index === Number(ignoredBlockIndex))
+                continue
+            var block = calendarBlocks.get(index)
+            var blockStartMs = new Date(block.startUtc).getTime()
+            var blockEndMs = new Date(block.endUtc).getTime()
+            if (blockStartMs < endMs && blockEndMs > startMs)
+                return true
+        }
+        return false
+    }
+
+    function blockIndexAt(assetId, startUtc) {
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            if (String(block.assetId) === String(assetId)
+                    && String(block.startUtc) === String(startUtc))
+                return index
+        }
+        return -1
+    }
+
+    function startAtMinute(day, minute) {
+        var start = dateAtLocalMidnight(day)
+        start.setMinutes(Math.max(0, Math.min(1425, Number(minute))), 0, 0)
+        return start
+    }
+
+    function addAssetAtMinute(asset, day, minute) {
+        var duration = Number(asset ? asset.durationSeconds : 0)
+        if (!asset || duration <= 0) {
+            feedbackMessage = "This media needs a positive indexed duration before it can be scheduled."
+            feedbackIsError = true
+            return false
+        }
+        var start = startAtMinute(day, minute)
+        var end = new Date(start.getTime() + duration * 1000)
+        if (end.getTime() > addDays(dateAtLocalMidnight(day), 1).getTime()) {
+            feedbackMessage = "That program would run past the end of the selected day."
+            feedbackIsError = true
+            return false
+        }
+        if (placementConflict(start, end, -1)) {
+            feedbackMessage = "That time overlaps another fixed program. Choose an open part of the Day track."
+            feedbackIsError = true
+            return false
+        }
+        invalidateReservationsFrom(start.getTime())
+        appendSource(asset.sourceRoot)
+        appendBlock({
+            assetId: asset.assetId,
+            title: asset.title,
+            path: asset.path,
+            sourceRoot: asset.sourceRoot,
+            durationSeconds: duration,
+            startUtc: start.toISOString()
+        })
+        sortBlocks()
+        selectedDayKey = dayKey(day)
+        selectedBlockIndex = blockIndexAt(asset.assetId, start.toISOString())
+        dirty = true
+        feedbackMessage = "Placed “" + asset.title + "” at "
+                + Qt.formatTime(start, "h:mm AP") + "."
+        feedbackIsError = false
+        return true
+    }
+
+    function moveBlockToMinute(blockIndex, day, minute) {
+        if (blockIndex < 0 || blockIndex >= calendarBlocks.count)
+            return false
+        var block = calendarBlocks.get(blockIndex)
+        var start = startAtMinute(day, minute)
+        var end = new Date(start.getTime()
+                           + Number(block.durationSeconds || 0) * 1000)
+        if (end.getTime() > addDays(dateAtLocalMidnight(day), 1).getTime()) {
+            feedbackMessage = "That program would run past the end of the selected day."
+            feedbackIsError = true
+            return false
+        }
+        if (placementConflict(start, end, blockIndex)) {
+            feedbackMessage = "That time overlaps another fixed program. The draft was not changed."
+            feedbackIsError = true
+            return false
+        }
+        var assetId = String(block.assetId)
+        invalidateReservationsFrom(Math.min(new Date(block.startUtc).getTime(), start.getTime()))
+        calendarBlocks.setProperty(blockIndex, "startUtc", start.toISOString())
+        calendarBlocks.setProperty(blockIndex, "endUtc", end.toISOString())
+        sortBlocks()
+        selectedDayKey = dayKey(day)
+        selectedBlockIndex = blockIndexAt(assetId, start.toISOString())
+        dirty = true
+        feedbackMessage = "Program moved to "
+                + Qt.formatDateTime(start, "ddd MMM d, h:mm AP") + "."
+        feedbackIsError = false
+        return true
+    }
+
+    function visibleBlocks() {
+        var startMs = visibleStart().getTime()
+        var endMs = visibleEnd().getTime()
+        var result = []
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            var blockMs = new Date(block.startUtc).getTime()
+            if (blockMs >= startMs && blockMs < endMs) {
+                result.push({
+                    modelIndex: index,
+                    assetId: block.assetId,
+                    title: block.title,
+                    path: block.path,
+                    sourceRoot: block.sourceRoot,
+                    durationSeconds: block.durationSeconds,
+                    startUtc: block.startUtc,
+                    endUtc: block.endUtc
+                })
+            }
+        }
+        return result
+    }
+
+    function weekProgramCount(value) {
+        var start = startOfWeek(value)
+        var count = 0
+        for (var offset = 0; offset < 7; ++offset) {
+            var rows = blocksByDay[dayKey(addDays(start, offset))] || []
+            count += rows.length
+        }
+        return count
+    }
+
+    function weekBlocks(value) {
+        var startMs = startOfWeek(value).getTime()
+        var endMs = addDays(startOfWeek(value), 7).getTime()
+        var result = []
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            var blockMs = new Date(block.startUtc).getTime()
+            if (blockMs >= startMs && blockMs < endMs)
+                result.push(blockObject(block))
+        }
+        result.sort(function(left, right) {
+            return new Date(left.startUtc).getTime()
+                    - new Date(right.startUtc).getTime()
+        })
+        return result
+    }
+
+    function localDayDistance(fromDate, toDate) {
+        var from = new Date(fromDate)
+        var to = new Date(toDate)
+        var fromOrdinal = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate())
+        var toOrdinal = Date.UTC(to.getFullYear(), to.getMonth(), to.getDate())
+        return Math.round((toOrdinal - fromOrdinal) / 86400000)
+    }
+
+    function copyBlockToWeek(block, sourceWeekStart, targetWeekStart) {
+        var oldStart = new Date(block.startUtc)
+        var dayOffset = localDayDistance(sourceWeekStart, oldStart)
+        var newStart = addDays(targetWeekStart, dayOffset)
+        // setHours uses the machine's local zone. This deliberately preserves
+        // the broadcaster's wall-clock time when a copy crosses a DST boundary.
+        newStart.setHours(oldStart.getHours(), oldStart.getMinutes(),
+                          oldStart.getSeconds(), oldStart.getMilliseconds())
+        var copy = blockObject(block)
+        copy.startUtc = newStart.toISOString()
+        copy.endUtc = new Date(
+                    newStart.getTime()
+                    + Number(copy.durationSeconds || 0) * 1000).toISOString()
+        return copy
+    }
+
+    function blocksOverlapping(start, end) {
+        var startMs = new Date(start).getTime()
+        var endMs = new Date(end).getTime()
+        var count = 0
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            var blockStartMs = new Date(block.startUtc).getTime()
+            var blockEndMs = new Date(block.endUtc).getTime()
+            if (blockStartMs < endMs && blockEndMs > startMs)
+                ++count
+        }
+        return count
+    }
+
+    function copyWeekPattern(firstWeekOffset, copyCount, replaceExisting) {
+        if (autoFillBusy)
+            return false
+        var offset = Math.floor(Number(firstWeekOffset))
+        var count = Math.floor(Number(copyCount))
+        if (offset < 1 || offset > 52 || count < 1 || count > 52) {
+            feedbackMessage = "Weekly copies require a 1–52 week offset and 1–52 copies."
+            feedbackIsError = true
+            return false
+        }
+
+        var sourceWeekStart = startOfWeek(anchorDate)
+        var source = weekBlocks(sourceWeekStart)
+        if (!source.length) {
+            feedbackMessage = "The displayed week has no fixed programs to copy."
+            feedbackIsError = true
+            return false
+        }
+
+        var targetStart = addDays(sourceWeekStart, offset * 7)
+        var targetEnd = addDays(targetStart, count * 7)
+        var collisions = blocksOverlapping(targetStart, targetEnd)
+        if (collisions > 0 && !replaceExisting) {
+            feedbackMessage = "Target weeks contain " + collisions
+                    + " fixed block" + (collisions === 1 ? "" : "s")
+                    + ". Choose Replace Target Weeks or move the destination."
+            feedbackIsError = true
+            return false
+        }
+
+        var retainedCount = calendarBlocks.count - collisions
+        if (retainedCount + source.length * count > maximumCalendarBlocks) {
+            feedbackMessage = "This pattern would exceed the 10,000-block calendar limit."
+            feedbackIsError = true
+            return false
+        }
+
+        var copies = []
+        for (var copyIndex = 0; copyIndex < count; ++copyIndex) {
+            var targetWeek = addDays(targetStart, copyIndex * 7)
+            for (var sourceIndex = 0; sourceIndex < source.length; ++sourceIndex) {
+                copies.push(copyBlockToWeek(source[sourceIndex],
+                                            sourceWeekStart, targetWeek))
+            }
+        }
+
+        pendingScheduleOperation = count === 1
+                ? "Adding the copied week to the detached draft…"
+                : "Materializing " + count + " weekly pattern copies…"
+        acceptAutoFillResult({
+            ok: true,
+            message: count === 1
+                     ? "Copied " + source.length + " fixed blocks into the target week"
+                     : "Repeated " + source.length + " fixed blocks across "
+                       + count + " target weeks",
+            startUtc: targetStart.toISOString(),
+            endUtc: targetEnd.toISOString(),
+            blocks: copies, rebuildFromUtc: targetStart.toISOString()
+        })
+        anchorDate = targetStart
+        selectedDayKey = dayKey(targetStart)
+        return true
+    }
+
+    function requestWeekCopy() {
+        var offset = weekCopyOffset.value
+        var count = weekCopyCount.value
+        var sourceWeekStart = startOfWeek(anchorDate)
+        var targetStart = addDays(sourceWeekStart, offset * 7)
+        var targetEnd = addDays(targetStart, count * 7)
+        var replaceExisting = weekCollisionPolicy.currentIndex === 1
+        if (replaceExisting && blocksOverlapping(targetStart, targetEnd) > 0) {
+            replaceWeeksDialog.open()
+            return
+        }
+        if (copyWeekPattern(offset, count, replaceExisting))
+            weeklyPatternDialog.close()
+    }
+
+    function nextStartForDay(day) {
+        var midnight = dateAtLocalMidnight(day)
+        var latest = midnight.getTime()
+        var target = dayKey(midnight)
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            if (dayKey(new Date(block.startUtc)) !== target)
+                continue
+            latest = Math.max(latest, new Date(block.endUtc).getTime())
+        }
+        return new Date(latest)
+    }
+
+    function addAssetToDay(asset, day) {
+        if (!asset || Number(asset.durationSeconds || 0) <= 0) {
+            feedbackMessage = "This media needs a positive indexed duration before it can be scheduled."
+            feedbackIsError = true
+            return
+        }
+        appendSource(asset.sourceRoot)
+        var start = nextStartForDay(day)
+        invalidateReservationsFrom(start.getTime())
+        appendBlock({
+            assetId: asset.assetId,
+            title: asset.title,
+            path: asset.path,
+            sourceRoot: asset.sourceRoot,
+            durationSeconds: asset.durationSeconds,
+            startUtc: start.toISOString()
+        })
+        sortBlocks()
+        dirty = true
+        selectedDayKey = dayKey(day)
+        feedbackMessage = "Added “" + asset.title + "” at "
+                + Qt.formatTime(start, "h:mm AP") + "."
+        feedbackIsError = false
+    }
+
+    function moveBlockToDay(blockIndex, day) {
+        if (blockIndex < 0 || blockIndex >= calendarBlocks.count)
+            return
+        var start = nextStartForDay(day)
+        var duration = Number(calendarBlocks.get(blockIndex).durationSeconds || 0)
+        invalidateReservationsFrom(Math.min(new Date(calendarBlocks.get(blockIndex).startUtc).getTime(), start.getTime()))
+        calendarBlocks.setProperty(blockIndex, "startUtc", start.toISOString())
+        calendarBlocks.setProperty(blockIndex, "endUtc",
+                                   new Date(start.getTime() + duration * 1000).toISOString())
+        sortBlocks()
+        dirty = true
+        selectedDayKey = dayKey(day)
+        feedbackMessage = "Program moved to " + Qt.formatDate(day, "dddd, MMM d") + "."
+        feedbackIsError = false
+    }
+
+    function swapPrograms(firstIndex, secondIndex) {
+        if (firstIndex === secondIndex
+                || firstIndex < 0 || secondIndex < 0
+                || firstIndex >= calendarBlocks.count
+                || secondIndex >= calendarBlocks.count)
+            return
+        var first = calendarBlocks.get(firstIndex)
+        var second = calendarBlocks.get(secondIndex)
+        invalidateReservationsFrom(Math.min(new Date(first.startUtc).getTime(), new Date(second.startUtc).getTime()))
+        var fields = ["assetId", "title", "path", "sourceRoot", "durationSeconds",
+                      "fillerMode", "fillerAssetIdsJson", "fillerGroupName"]
+        for (var fieldIndex = 0; fieldIndex < fields.length; ++fieldIndex) {
+            var field = fields[fieldIndex]
+            var firstValue = first[field]
+            calendarBlocks.setProperty(firstIndex, field, second[field])
+            calendarBlocks.setProperty(secondIndex, field, firstValue)
+        }
+        var firstDuration = Number(calendarBlocks.get(firstIndex).durationSeconds || 0)
+        var secondDuration = Number(calendarBlocks.get(secondIndex).durationSeconds || 0)
+        var firstStart = new Date(calendarBlocks.get(firstIndex).startUtc)
+        var secondStart = new Date(calendarBlocks.get(secondIndex).startUtc)
+        calendarBlocks.setProperty(firstIndex, "endUtc",
+                                   new Date(firstStart.getTime() + firstDuration * 1000).toISOString())
+        calendarBlocks.setProperty(secondIndex, "endUtc",
+                                   new Date(secondStart.getTime() + secondDuration * 1000).toISOString())
+        resolveOverlaps()
+        selectedBlockIndex = secondIndex
+        dirty = true
+    }
+
+    function resolveOverlaps() {
+        sortBlocks()
+        var previousEnd = 0
+        var overlaps = false
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            var startMs = new Date(block.startUtc).getTime()
+            if (startMs < previousEnd)
+                overlaps = true
+            previousEnd = effectiveBlockEnd(block)
+            calendarBlocks.setProperty(index, "endUtc", new Date(previousEnd).toISOString())
+        }
+        rebuildBlockIndex()
+        if (overlaps) {
+            feedbackMessage = "Programs overlap. Move a show to an open time before saving."
+            feedbackIsError = true
+        }
+        return !overlaps
+    }
+
+    function selectedBlockTimeText() {
+        if (selectedBlockIndex < 0
+                || selectedBlockIndex >= calendarBlocks.count)
+            return ""
+        return Qt.formatTime(
+                    new Date(calendarBlocks.get(selectedBlockIndex).startUtc),
+                    "HH:mm")
+    }
+
+    function setSelectedTime(value) {
+        if (selectedBlockIndex < 0
+                || selectedBlockIndex >= calendarBlocks.count)
+            return
+        var match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(
+                    String(value || "").trim())
+        if (!match) {
+            feedbackMessage = "Enter an exact local time as HH:MM, for example 20:00."
+            feedbackIsError = true
+            return
+        }
+        var block = calendarBlocks.get(selectedBlockIndex)
+        var start = new Date(block.startUtc)
+        start.setHours(Number(match[1]), Number(match[2]), 0, 0)
+        invalidateReservationsFrom(Math.min(new Date(block.startUtc).getTime(), start.getTime()))
+        calendarBlocks.setProperty(selectedBlockIndex,
+                                   "startUtc", start.toISOString())
+        calendarBlocks.setProperty(
+                    selectedBlockIndex,
+                    "endUtc",
+                    new Date(start.getTime()
+                             + Number(block.durationSeconds || 0) * 1000).toISOString())
+        resolveOverlaps()
+        dirty = true
+        exactTimeField.text = selectedBlockTimeText()
+        feedbackMessage = "Selected program moved to "
+                + Qt.formatDateTime(start, "ddd MMM d, h:mm AP") + "."
+        feedbackIsError = false
+    }
+
+    function nudgeSelected(seconds) {
+        if (selectedBlockIndex < 0
+                || selectedBlockIndex >= calendarBlocks.count)
+            return
+        var block = calendarBlocks.get(selectedBlockIndex)
+        var start = new Date(block.startUtc)
+        start = new Date(start.getTime() + Number(seconds) * 1000)
+        invalidateReservationsFrom(Math.min(new Date(block.startUtc).getTime(), start.getTime()))
+        calendarBlocks.setProperty(selectedBlockIndex, "startUtc", start.toISOString())
+        calendarBlocks.setProperty(
+                    selectedBlockIndex,
+                    "endUtc",
+                    new Date(start.getTime()
+                             + Number(block.durationSeconds || 0) * 1000).toISOString())
+        resolveOverlaps()
+        dirty = true
+        feedbackMessage = "Selected program moved to "
+                + Qt.formatDateTime(start, "ddd MMM d, h:mm AP") + "."
+        feedbackIsError = false
+    }
+
+    function removeBlock(blockIndex) {
+        if (blockIndex < 0 || blockIndex >= calendarBlocks.count)
+            return
+        invalidateReservationsFrom(new Date(calendarBlocks.get(blockIndex).startUtc).getTime())
+        calendarBlocks.remove(blockIndex)
+        rebuildBlockIndex()
+        selectedBlockIndex = Math.min(blockIndex, calendarBlocks.count - 1)
+        dirty = true
+        feedbackMessage = "Program removed from the draft. Uncovered time will use filler."
+        feedbackIsError = false
+    }
+
+    function autoFillVisibleRange() {
+        if (autoFillBusy)
+            return
+        if (!channelNameField.text.trim().length) {
+            channelNameField.text = "Channel " + channelNumberField.text
+        }
+        var result = channelOS.startStudioAutoFill(
+                    editorObject(),
+                    visibleStart().toISOString(),
+                    visibleEnd().toISOString())
+        if (!result || !result.ok) {
+            feedbackMessage = result && result.message
+                    ? String(result.message)
+                    : "Auto Fill failed."
+            feedbackIsError = true
+            return
+        }
+
+        feedbackMessage = String(result.message)
+        feedbackIsError = false
+    }
+
+    function acceptAutoFillResult(result) {
+        if (!result || !result.ok)
+            return
+        var startMs = new Date(result.startUtc).getTime()
+        var endMs = new Date(result.endUtc).getTime()
+        if (!isFinite(startMs) || !isFinite(endMs) || endMs <= startMs) {
+            feedbackMessage = "Auto Fill returned an invalid calendar range. The draft was not changed."
+            feedbackIsError = true
+            pendingScheduleOperation = ""
+            return
+        }
+        // Auto Fill now returns only empty-gap blocks. Keep every existing
+        // fixed program, including those inside the selected range.
+        var replacement = []
+        var updates = result.updatedBlocks || []
+        var updatedByStart = ({})
+        for (var updateIndex = 0; updateIndex < updates.length; ++updateIndex) {
+            var update = updates[updateIndex]
+            updatedByStart[new Date(update.startUtc).getTime() + "|" + update.assetId] = update
+        }
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var current = blockObject(calendarBlocks.get(index))
+            var revised = updatedByStart[new Date(current.startUtc).getTime() + "|" + current.assetId]
+            if (revised) {
+                current = Object.assign(current, revised)
+                current.adPlanJson = JSON.stringify(revised.adPlan || null)
+            }
+            replacement.push(blockObject(current))
+        }
+        var blocks = result.blocks || []
+        if (typeof blocks.length !== "number"
+                || replacement.length + blocks.length > maximumCalendarBlocks) {
+            feedbackMessage = "This result would exceed the 10,000-block calendar limit. The draft was not changed."
+            feedbackIsError = true
+            pendingScheduleOperation = ""
+            return
+        }
+        for (var blockIndex = 0; blockIndex < blocks.length; ++blockIndex)
+            replacement.push(blockObject(blocks[blockIndex]))
+        if (result.rebuildFromUtc) {
+            var rebuildFrom = new Date(result.rebuildFromUtc).getTime()
+            for (var replayIndex = 0; replayIndex < replacement.length; ++replayIndex) {
+                var replayBlock = replacement[replayIndex]
+                if (new Date(replayBlock.startUtc).getTime() >= rebuildFrom) {
+                    replayBlock.adPlanJson = "null"
+                    replayBlock.endUtc = new Date(new Date(replayBlock.startUtc).getTime()
+                        + Number(replayBlock.durationSeconds || 0) * 1000).toISOString()
+                }
+            }
+        }
+        replacement.sort(function(left, right) {
+            return new Date(left.startUtc).getTime()
+                    - new Date(right.startUtc).getTime()
+        })
+        // Reject a malformed result rather than ever publishing overlapping
+        // fixed blocks to the detached Studio draft.
+        for (var checkIndex = 1; checkIndex < replacement.length; ++checkIndex) {
+            var previousEnd = new Date(replacement[checkIndex - 1].endUtc).getTime()
+            var currentStart = new Date(replacement[checkIndex].startUtc).getTime()
+            if (!isFinite(previousEnd) || !isFinite(currentStart)
+                    || currentStart < previousEnd) {
+                feedbackMessage = "Auto Fill detected an existing schedule overlap. No draft changes were made."
+                feedbackIsError = true
+                pendingScheduleOperation = ""
+                return
+            }
+        }
+
+        // ListModel insertion is intentionally chunked. A two-month range can
+        // contain thousands of short clips, and appending them in one JavaScript
+        // turn would freeze the same GUI thread the background worker protects.
+        pendingAutoFillBlocks = replacement
+        pendingAutoFillIndex = 0
+        pendingAutoFillMessage = String(result.message)
+        autoFillApplying = true
+        if (!pendingScheduleOperation.length)
+            pendingScheduleOperation = "Adding prepared blocks to the detached draft…"
+        calendarBlocks.clear()
+        // Queue each batch explicitly instead of relying on a zero-interval
+        // repeating Timer. The Windows packaged runtime can leave that timer
+        // armed without ever delivering its first trigger, trapping Studio at
+        // "Adding prepared blocks" and 0%. Qt.callLater always crosses an
+        // event-loop boundary, so insertion remains responsive and portable.
+        Qt.callLater(studioRoot.applyAutoFillBatch)
+    }
+
+    function applyAutoFillBatch() {
+        if (!autoFillApplying)
+            return
+        var endIndex = Math.min(pendingAutoFillIndex + autoFillApplyBatchSize,
+                                pendingAutoFillBlocks.length)
+        if (endIndex > pendingAutoFillIndex) {
+            calendarBlocks.append(
+                        pendingAutoFillBlocks.slice(pendingAutoFillIndex, endIndex))
+        }
+        pendingAutoFillIndex = endIndex
+        if (pendingAutoFillIndex < pendingAutoFillBlocks.length) {
+            Qt.callLater(studioRoot.applyAutoFillBatch)
+            return
+        }
+
+        pendingAutoFillBlocks = []
+        pendingAutoFillIndex = 0
+        autoFillApplying = false
+        rebuildBlockIndex()
+        selectedBlockIndex = calendarBlocks.count ? 0 : -1
+        dirty = true
+        feedbackMessage = pendingAutoFillMessage
+                + ". Drag, reorder, or remove anything before Apply."
+        pendingAutoFillMessage = ""
+        pendingScheduleOperation = ""
+        feedbackIsError = false
+        if (pendingExitDestination.length)
+            requestExit(pendingExitDestination)
+    }
+
+    function clearVisibleRange() {
+        if (autoFillBusy)
+            return
+        var startMs = visibleStart().getTime()
+        var endMs = visibleEnd().getTime()
+        var removed = 0
+        for (var index = calendarBlocks.count - 1; index >= 0; --index) {
+            var existing = calendarBlocks.get(index)
+            var blockMs = new Date(existing.startUtc).getTime()
+            var blockEndMs = new Date(existing.endUtc).getTime()
+            if (blockMs < endMs && blockEndMs > startMs) {
+                calendarBlocks.remove(index)
+                ++removed
+            }
+        }
+        if (removed > 0) invalidateReservationsFrom(startMs)
+        rebuildBlockIndex()
+        dirty = dirty || removed > 0
+        selectedBlockIndex = -1
+        feedbackMessage = removed > 0
+                ? "Cleared " + removed + " fixed program blocks. The channel filler will cover those gaps."
+                : "There were no fixed programs in this range."
+        feedbackIsError = false
+    }
+
+    function applyDraft() {
+        if (autoFillBusy) {
+            feedbackMessage = "Wait for Auto Fill to finish, or cancel it, before applying."
+            feedbackIsError = true
+            return
+        }
+        if (calendarBlocks.count === 0) {
+            feedbackMessage = "Add or Auto Fill at least one program before applying a calendar channel."
+            feedbackIsError = true
+            return
+        }
+        var result = editingChannelNumber > 0
+                ? channelOS.updateChannel(editingChannelNumber, editorObject())
+                : channelOS.createChannel(editorObject())
+        if (!result || !result.ok) {
+            feedbackMessage = result && result.message
+                    ? String(result.message)
+                    : "Channel could not be applied."
+            feedbackIsError = true
+            return
+        }
+        editingChannelNumber = Number(result.channelNumber || editingChannelNumber)
+        if (hostWindow)
+            hostWindow.studioChannelNumber = editingChannelNumber
+        dirty = false
+        feedbackMessage = String(result.message)
+        feedbackIsError = false
+    }
+
+    function navigateRange(amount) {
+        if (viewMode === "month")
+            anchorDate = new Date(anchorDate.getFullYear(),
+                                  anchorDate.getMonth() + Number(amount), 1)
+        else if (viewMode === "day") {
+            var day = addDays(new Date(selectedDayKey + "T00:00:00"),
+                              Number(amount))
+            anchorDate = day
+            selectedDayKey = dayKey(day)
+            Qt.callLater(function() { scrollDayToHour(12) })
+        } else
+            anchorDate = addDays(anchorDate, Number(amount) * 7)
+    }
+
+    function requestExit(destination) {
+        pendingExitDestination = String(destination)
+        if (autoFillApplying) {
+            feedbackMessage = "Finishing the prepared schedule before leaving Studio…"
+            feedbackIsError = false
+            return
+        }
+        if (autoFillState.active) {
+            channelOS.cancelStudioAutoFill()
+            feedbackMessage = "Cancelling Auto Fill before leaving Studio…"
+            feedbackIsError = false
+            return
+        }
+        if (dirty) {
+            discardDraftDialog.open()
+            return
+        }
+        finishExit()
+    }
+
+    function finishExit() {
+        var destination = pendingExitDestination || "home"
+        pendingExitDestination = ""
+        dirty = false
+        if (hostWindow)
+            hostWindow.screen = destination
+    }
+
+    function leaveStudio() {
+        requestExit("home")
+    }
+
+    function openBroadcaster() {
+        requestExit("broadcaster")
+    }
+
+    function handleControllerIntent(intent) {
+        if (adSettings.dialogOpen) { if (intent === "BACK") adSettings.cancelActive(); return }
+        if (!hostWindow || hostWindow.screen !== "studio")
+            return
+        if (autoFillBusy) {
+            if (intent === "BACK")
+                requestExit("home")
+            return
+        }
+        if (intent === "BACK")
+            leaveStudio()
+        else if (intent === "LEFT")
+            navigateRange(-1)
+        else if (intent === "RIGHT")
+            navigateRange(1)
+    }
+
+    onHostWindowChanged: {
+        if (hostWindow && hostWindow.screen === "studio")
+            loadDraft()
+    }
+
+    Connections {
+        target: studioRoot.hostWindow || null
+        function onScreenChanged() {
+            if (studioRoot.hostWindow.screen === "studio")
+                studioRoot.loadDraft()
+            else if (studioRoot.autoFillBusy)
+                channelOS.cancelStudioAutoFill()
+        }
+    }
+
+    Connections {
+        target: channelOS
+        function onStudioAutoFillChanged() {
+            var state = channelOS.studioAutoFill
+            if (!state)
+                return
+            if (state.message)
+                studioRoot.feedbackMessage = String(state.message)
+            studioRoot.feedbackIsError = state.phase === "error"
+            if (!state.active && state.phase === "cancelled"
+                    && studioRoot.pendingExitDestination.length)
+                studioRoot.requestExit(studioRoot.pendingExitDestination)
+        }
+        function onStudioAutoFillCompleted(result) {
+            studioRoot.acceptAutoFillResult(result)
+        }
+    }
+
+    FocusScope {
+        id: studioSurface
+        anchors.fill: parent
+        visible: Boolean(studioRoot.hostWindow && studioRoot.hostWindow.screen === "studio")
+        focus: visible
+
+        Shortcut {
+            sequence: "Esc"
+            enabled: studioSurface.visible && !discardDraftDialog.visible && !adSettings.dialogOpen
+                     && !studioRoot.autoFillBusy
+            onActivated: studioRoot.leaveStudio()
+        }
+
+        Shortcut {
+            sequence: "Ctrl+S"
+            enabled: studioSurface.visible && !discardDraftDialog.visible && !adSettings.dialogOpen
+                     && !studioRoot.autoFillBusy
+            onActivated: studioRoot.applyDraft()
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            color: studioRoot.appBackground
+        }
+
+        Rectangle {
+            id: studioHeader
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 146
+            color: "#071322"
+            border.color: studioRoot.line
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 24
+                anchors.rightMargin: 24
+                anchors.topMargin: 14
+                anchors.bottomMargin: 12
+                spacing: 10
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 12
+
+                    StudioButton {
+                        text: "‹ Home"
+                        onClicked: studioRoot.leaveStudio()
+                    }
+
+                    StudioButton {
+                        text: "Channels"
+                        onClicked: studioRoot.openBroadcaster()
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 0
+                        Text {
+                            text: editingChannelNumber > 0
+                                  ? "CHANNEL STUDIO  /  EDIT " + channelNumberField.text
+                                  : "CHANNEL STUDIO  /  NEW CHANNEL"
+                            color: studioRoot.textPrimary
+                            font.pixelSize: 22
+                            font.weight: Font.DemiBold
+                        }
+                        Text {
+                            text: "Calendar programming with editable Broadcast Clock blocks"
+                            color: studioRoot.textSecondary
+                            font.pixelSize: 12
+                        }
+                    }
+
+                    Rectangle {
+                        visible: dirty
+                        radius: 12
+                        color: "#4b3717"
+                        border.color: studioRoot.warning
+                        implicitWidth: unsavedText.implicitWidth + 20
+                        implicitHeight: 28
+                        Text {
+                            id: unsavedText
+                            anchors.centerIn: parent
+                            text: "UNAPPLIED DRAFT"
+                            color: studioRoot.warning
+                            font.pixelSize: 11
+                            font.weight: Font.Bold
+                        }
+                    }
+
+                    StudioButton {
+                        text: "Apply to Channel"
+                        highlighted: true
+                        enabled: !studioRoot.autoFillBusy
+                        onClicked: studioRoot.applyDraft()
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    Label { text: "CH"; color: studioRoot.textSecondary }
+                    ChannelTextField {
+                        id: channelNumberField
+                        Layout.preferredWidth: 72
+                        placeholderText: "001"
+                        inputMethodHints: Qt.ImhDigitsOnly
+                        onTextEdited: studioRoot.dirty = true
+                    }
+                    ChannelTextField {
+                        id: channelNameField
+                        Layout.preferredWidth: 230
+                        placeholderText: "Channel name"
+                        onTextEdited: studioRoot.dirty = true
+                    }
+                    ChannelTextField {
+                        id: descriptionField
+                        Layout.fillWidth: true
+                        placeholderText: "Optional description"
+                        onTextEdited: studioRoot.dirty = true
+                    }
+                    Label { text: "GAPS"; color: studioRoot.textSecondary }
+                    ChannelComboBox {
+                        id: fillerModeBox
+                        model: ["Sequential", "Shuffle"]
+                        Layout.preferredWidth: 130
+                        onActivated: studioRoot.dirty = true
+                    }
+                    Label {
+                        visible: fillerModeBox.currentIndex === 1
+                        text: "NO REPEAT (DAYS)"
+                        color: studioRoot.textSecondary
+                    }
+                    ChannelSpinBox {
+                        id: repeatDays
+                        visible: fillerModeBox.currentIndex === 1
+                        from: 0
+                        to: 365
+                        editable: true
+                        onValueModified: studioRoot.dirty = true
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            id: mediaPanel
+            anchors.left: parent.left
+            anchors.top: studioHeader.bottom
+            anchors.bottom: studioRoot.viewMode === "day"
+                            ? studioFooter.top : timelinePanel.top
+            width: Math.max(250, parent.width * 0.20)
+            visible: studioRoot.viewMode !== "day"
+                     || studioRoot.dayMediaBinVisible
+            color: studioRoot.panel
+            border.color: studioRoot.line
+
+            RowLayout {
+                id: binTabs
+                anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+                anchors.margins: 14
+                StudioButton { text: "MEDIA BIN"; Layout.fillWidth: true; checked: studioRoot.activeBin === "media"; onClicked: studioRoot.activeBin = "media" }
+                StudioButton { objectName: "studioAdBinTab"; text: "AD BIN"; Layout.fillWidth: true; checked: studioRoot.activeBin === "ads"; onClicked: studioRoot.activeBin = "ads" }
+            }
+            AdMediaBin {
+                objectName: "studioAdBin"
+                anchors.top: binTabs.bottom; anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                anchors.margins: 14
+                visible: studioRoot.activeBin === "ads"
+                mediaLibrary: studioRoot.mediaLibrary; sourceOptions: studioRoot.sourceChoices()
+                sources: adSettings.binScope.sources; assetIds: adSettings.binScope.ids; excludedIds: adSettings.binScope.excluded
+                readOnly: adSettings.managedBin
+                onSourcesEdited: function(paths) { adSettings.setSources(paths) }
+                onExclusionsEdited: function(ids) { adSettings.setExcluded(ids) }
+            }
+            ColumnLayout {
+                visible: studioRoot.activeBin === "media"
+                anchors.top: binTabs.bottom; anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                anchors.margins: 14
+                spacing: 10
+
+                Text {
+                    Layout.fillWidth: true
+                    text: studioRoot.mediaBinAssetCount + " program videos in "
+                          + draftSources.count + " selected sources"
+                    color: studioRoot.textSecondary
+                    font.pixelSize: 11
+                    wrapMode: Text.Wrap
+                }
+                ChannelTextField {
+                    id: mediaSearch
+                    Layout.fillWidth: true
+                    placeholderText: "Search selected sources…"
+                    onTextChanged: studioRoot.expandMediaSearchResults()
+                }
+
+                Text {
+                    text: "ADD INDEXED SOURCE"
+                    color: studioRoot.textSecondary
+                    font.pixelSize: 10
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 5
+                    ChannelComboBox {
+                        id: fillerSourceBox
+                        Layout.fillWidth: true
+                        model: studioRoot.sourceChoices()
+                        ToolTip.visible: hovered
+                        ToolTip.text: currentText
+                    }
+                    StudioButton {
+                        text: "Add"
+                        enabled: fillerSourceBox.count > 0
+                        onClicked: {
+                            if (studioRoot.appendSource(fillerSourceBox.currentText, true))
+                                studioRoot.dirty = true
+                        }
+                    }
+                    StudioButton {
+                        text: "Clear"
+                        enabled: draftSources.count > 0
+                        onClicked: studioRoot.clearMediaSources()
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Expand a source to browse. Selected sources feed Auto Fill and gap filler. Select ad clips in the Ad Bin tab."
+                    color: studioRoot.textSecondary
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
+                }
+
+                ListView {
+                    id: mediaList
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    clip: true
+                    spacing: 7
+                    model: studioRoot.mediaBinRows()
+
+                    Text {
+                        anchors.centerIn: parent
+                        width: parent.width - 20
+                        visible: draftSources.count === 0
+                        text: "No sources selected.\nAdd an indexed source above."
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.Wrap
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 12
+                    }
+
+                    delegate: Rectangle {
+                        id: mediaCard
+                        required property var modelData
+                        width: mediaList.width
+                        height: isSource ? 70 : 76
+                        radius: 7
+                        color: mediaMouse.containsMouse
+                               ? "#14304a" : studioRoot.panelRaised
+                        border.color: mediaMouse.containsMouse
+                                      ? studioRoot.accentBright : studioRoot.line
+
+                        property bool isSource: modelData.kind === "source"
+                        property var assetData: modelData.media || ({})
+
+                        Item {
+                            anchors.fill: parent
+                            visible: mediaCard.isSource
+
+                            StudioButton {
+                                id: sourceToggle
+                                anchors.left: parent.left
+                                anchors.right: removeBinSource.left
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                anchors.rightMargin: 4
+                                checked: Boolean(mediaCard.modelData.expanded)
+                                onClicked: studioRoot.toggleMediaSource(mediaCard.modelData.path)
+                                ToolTip.visible: hovered
+                                ToolTip.text: String(mediaCard.modelData.path || "")
+                                Accessible.name: String(mediaCard.modelData.name || "")
+                                                 + ", " + mediaCard.modelData.count + " videos"
+                                Accessible.description: checked ? "Collapse source" : "Expand source"
+
+                                contentItem: Column {
+                                    spacing: 5
+                                    Row {
+                                        width: parent.width
+                                        spacing: 6
+                                        Text {
+                                            width: parent.width - sourceCount.implicitWidth - parent.spacing
+                                            text: (mediaCard.modelData.expanded ? "▾  " : "▸  ")
+                                                  + String(mediaCard.modelData.name || "")
+                                            color: studioRoot.textPrimary
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            id: sourceCount
+                                            text: String(mediaSearch.text || "").trim().length
+                                                  ? mediaCard.modelData.matchCount + "/" + mediaCard.modelData.count
+                                                  : String(mediaCard.modelData.count || 0)
+                                            color: studioRoot.accentBright
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                        }
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        text: String(mediaCard.modelData.path || "")
+                                        color: studioRoot.textSecondary
+                                        font.pixelSize: 10
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                            }
+                            StudioButton {
+                                id: removeBinSource
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.rightMargin: 5
+                                width: 30
+                                height: 32
+                                text: "×"
+                                destructive: true
+                                onClicked: studioRoot.removeMediaSource(mediaCard.modelData.path)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "Remove source from this draft"
+                                Accessible.name: "Remove " + String(mediaCard.modelData.name || "source")
+                            }
+                        }
+
+                        Item {
+                            id: mediaDragProxy
+                            width: 1
+                            height: 1
+                            Drag.active: !mediaCard.isSource && mediaMouse.drag.active
+                            Drag.keys: ["channelos-media"]
+                            Drag.hotSpot.x: 0
+                            Drag.hotSpot.y: 0
+                            Drag.source: mediaCard
+                        }
+
+                        Column {
+                            visible: !mediaCard.isSource
+                            anchors.left: parent.left
+                            anchors.right: addMediaButton.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.leftMargin: 12
+                            anchors.rightMargin: 8
+                            spacing: 4
+                            Text {
+                                width: parent.width
+                                text: String(mediaCard.assetData.title || "Untitled")
+                                color: studioRoot.textPrimary
+                                font.pixelSize: 13
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                width: parent.width
+                                text: String(mediaCard.assetData.containerFormat || "MEDIA")
+                                      + "  •  "
+                                      + studioRoot.durationLabel(mediaCard.assetData.durationSeconds)
+                                color: studioRoot.textSecondary
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+                        }
+
+                        StudioButton {
+                            id: addMediaButton
+                            visible: !mediaCard.isSource
+                            anchors.right: parent.right
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.rightMargin: 8
+                            width: 34
+                            height: 34
+                            text: "+"
+                            onClicked: studioRoot.addAssetToDay(
+                                           mediaCard.assetData,
+                                           new Date(studioRoot.selectedDayKey + "T00:00:00"))
+                        }
+
+                        MouseArea {
+                            id: mediaMouse
+                            visible: !mediaCard.isSource
+                            anchors.left: parent.left
+                            anchors.right: addMediaButton.left
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            hoverEnabled: true
+                            cursorShape: Qt.OpenHandCursor
+                            drag.target: mediaDragProxy
+                            onReleased: {
+                                mediaDragProxy.Drag.drop()
+                                mediaDragProxy.x = 0
+                                mediaDragProxy.y = 0
+                            }
+                            onDoubleClicked: studioRoot.addAssetToDay(
+                                                 mediaCard.assetData,
+                                                 new Date(studioRoot.selectedDayKey + "T00:00:00"))
+                        }
+                    }
+
+                    ScrollBar.vertical: ScrollBar { }
+                }
+            }
+        }
+
+        Rectangle {
+            id: calendarPanel
+            anchors.left: studioRoot.viewMode === "day"
+                          && !studioRoot.dayMediaBinVisible
+                          ? parent.left : mediaPanel.right
+            anchors.right: parent.right
+            anchors.top: studioHeader.bottom
+            anchors.bottom: studioRoot.viewMode === "day"
+                            ? studioFooter.top : timelinePanel.top
+            color: "#091827"
+            border.color: studioRoot.line
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 10
+
+                Flow {
+                    id: calendarToolbar
+                    objectName: "studioCalendarToolbar"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    Layout.preferredHeight: implicitHeight
+                    spacing: 8
+
+                    StudioButton { text: "‹"; width: 38; onClicked: studioRoot.navigateRange(-1) }
+                    StudioButton { text: "Today"; onClicked: studioRoot.goToday() }
+                    Row {
+                        spacing: 8
+                        height: 38
+                        Label {
+                            text: "SNAP"; height: 38
+                            verticalAlignment: Text.AlignVCenter
+                            color: studioRoot.textSecondary; font.pixelSize: 10
+                        }
+                        ChannelComboBox {
+                            id: snapIntervalBox
+                            width: 92; height: 38
+                            model: ["5 min", "10 min", "15 min", "30 min"]
+                            currentIndex: 2
+                            onActivated: studioRoot.snapMinutes = [5, 10, 15, 30][currentIndex]
+                        }
+                    }
+                    StudioButton { text: "›"; width: 38; onClicked: studioRoot.navigateRange(1) }
+
+                    Text {
+                        width: Math.min(230, calendarPanel.width - 28)
+                        height: 38
+                        verticalAlignment: Text.AlignVCenter
+                        text: studioRoot.rangeLabel()
+                        elide: Text.ElideRight
+                        color: studioRoot.textPrimary
+                        font.pixelSize: 20
+                        font.weight: Font.DemiBold
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    StudioButton {
+                        text: "Day"
+                        checkable: true
+                        checked: studioRoot.viewMode === "day"
+                        onClicked: studioRoot.openDay(
+                                           new Date(studioRoot.selectedDayKey
+                                                    + "T00:00:00"))
+                    }
+                    StudioButton {
+                        text: "Week"
+                        checkable: true
+                        checked: studioRoot.viewMode === "week"
+                        onClicked: studioRoot.viewMode = "week"
+                    }
+                    StudioButton {
+                        text: "Month"
+                        checkable: true
+                        checked: studioRoot.viewMode === "month"
+                        onClicked: studioRoot.viewMode = "month"
+                    }
+                    StudioButton {
+                        text: "Copy / Repeat Week"
+                        enabled: !studioRoot.autoFillBusy
+                                 && studioRoot.viewMode === "week"
+                        onClicked: weeklyPatternDialog.open()
+                    }
+                    StudioButton {
+                        text: "Clear Range"
+                        destructive: true
+                        enabled: !studioRoot.autoFillBusy
+                        onClicked: studioRoot.clearVisibleRange()
+                    }
+                    StudioButton {
+                        text: adSettings.adEnabled ? "Auto Fill + Ads" : "Auto Fill Range"
+                        highlighted: true
+                        enabled: !studioRoot.autoFillBusy
+                        onClicked: studioRoot.autoFillVisibleRange()
+                    }
+                    StudioButton {
+                        objectName: "studioAdBreaksButton"
+                        text: "Ad Breaks"
+                        highlighted: true
+                        enabled: !studioRoot.autoFillBusy
+                        onClicked: adSettings.openBasic()
+                    }
+                    StudioButton {
+                        objectName: "studioAdvancedAdsButton"
+                        text: "Advanced Ad Settings…"
+                        enabled: !studioRoot.autoFillBusy
+                        onClicked: adSettings.openAdvanced()
+                    }
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    Row {
+                        id: weekGrid
+                        anchors.fill: parent
+                        spacing: 7
+                        visible: studioRoot.viewMode === "week"
+
+                        Repeater {
+                            model: 7
+
+                            Rectangle {
+                                id: weekDay
+                                objectName: "studioWeekDay" + index
+                                required property int index
+                                property date columnDate: studioRoot.addDays(
+                                                              studioRoot.startOfWeek(studioRoot.anchorDate),
+                                                              index)
+                                width: (weekGrid.width - weekGrid.spacing * 6) / 7
+                                height: weekGrid.height
+                                radius: 7
+                                color: studioRoot.selectedDayKey === studioRoot.dayKey(columnDate)
+                                       ? "#102d49" : studioRoot.panel
+                                border.color: studioRoot.dayKey(columnDate) === studioRoot.dayKey(new Date())
+                                              ? studioRoot.accentBright : studioRoot.line
+                                border.width: studioRoot.dayKey(columnDate) === studioRoot.dayKey(new Date()) ? 2 : 1
+
+                                DropArea {
+                                    anchors.fill: parent
+                                    keys: ["channelos-media", "channelos-block"]
+                                    onDropped: function(drop) {
+                                        if (!drop.source)
+                                            return
+                                        if (drop.keys.indexOf("channelos-media") >= 0)
+                                            studioRoot.addAssetToDay(drop.source.assetData, weekDay.columnDate)
+                                        else if (drop.keys.indexOf("channelos-block") >= 0)
+                                            studioRoot.moveBlockToDay(drop.source.blockIndex, weekDay.columnDate)
+                                        drop.acceptProposedAction()
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+                                    spacing: 7
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: Qt.formatDate(weekDay.columnDate, "ddd").toUpperCase()
+                                        color: studioRoot.textSecondary
+                                        font.pixelSize: 11
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: Qt.formatDate(weekDay.columnDate, "d")
+                                        color: studioRoot.textPrimary
+                                        font.pixelSize: 20
+                                        font.weight: Font.DemiBold
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+
+                                    StudioButton {
+                                        Layout.fillWidth: true
+                                        text: "Open Day"
+                                        onClicked: studioRoot.openDay(weekDay.columnDate)
+                                    }
+
+                                    ListView {
+                                        id: dayPrograms
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+                                        spacing: 5
+                                        model: studioRoot.blocksForDay(weekDay.columnDate)
+
+                                        delegate: Rectangle {
+                                            id: dayProgram
+                                            required property var modelData
+                                            width: dayPrograms.width
+                                            height: 55
+                                            radius: 5
+                                            color: Number(modelData.modelIndex) === studioRoot.selectedBlockIndex
+                                                   ? "#14558a" : studioRoot.panelRaised
+                                            border.color: Number(modelData.modelIndex) === studioRoot.selectedBlockIndex
+                                                          ? studioRoot.accentBright : studioRoot.line
+                                            Text {
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.top: parent.top
+                                                anchors.margins: 6
+                                                text: studioRoot.formatTime(dayProgram.modelData.startUtc)
+                                                      + "  " + String(dayProgram.modelData.title)
+                                                color: studioRoot.textPrimary
+                                                font.pixelSize: 10
+                                                elide: Text.ElideRight
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                onClicked: {
+                                                    studioRoot.selectedDayKey = studioRoot.dayKey(weekDay.columnDate)
+                                                    studioRoot.selectedBlockIndex = Number(dayProgram.modelData.modelIndex)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "+ DROP MEDIA"
+                                        color: studioRoot.textSecondary
+                                        font.pixelSize: 9
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    z: -1
+                                    onClicked: studioRoot.selectedDayKey = studioRoot.dayKey(parent.columnDate)
+                                }
+                            }
+                        }
+                    }
+
+                    Grid {
+                        id: monthGrid
+                        anchors.fill: parent
+                        columns: 7
+                        rows: 6
+                        spacing: 6
+                        visible: studioRoot.viewMode === "month"
+
+                        Repeater {
+                            model: 42
+
+                            Rectangle {
+                                id: monthDay
+                                required property int index
+                                property date cellDate: studioRoot.addDays(
+                                                            studioRoot.monthGridStart(), index)
+                                property var cellBlocks: studioRoot.blocksForDay(cellDate)
+                                width: (monthGrid.width - monthGrid.spacing * 6) / 7
+                                height: (monthGrid.height - monthGrid.spacing * 5) / 6
+                                radius: 6
+                                color: studioRoot.selectedDayKey === studioRoot.dayKey(cellDate)
+                                       ? "#123b60" : studioRoot.panel
+                                opacity: cellDate.getMonth() === studioRoot.anchorDate.getMonth()
+                                         ? 1.0 : 0.52
+                                border.color: studioRoot.dayKey(cellDate) === studioRoot.dayKey(new Date())
+                                              ? studioRoot.accentBright : studioRoot.line
+
+                                DropArea {
+                                    anchors.fill: parent
+                                    keys: ["channelos-media", "channelos-block"]
+                                    onDropped: function(drop) {
+                                        if (!drop.source)
+                                            return
+                                        if (drop.keys.indexOf("channelos-media") >= 0)
+                                            studioRoot.addAssetToDay(drop.source.assetData, monthDay.cellDate)
+                                        else if (drop.keys.indexOf("channelos-block") >= 0)
+                                            studioRoot.moveBlockToDay(drop.source.blockIndex, monthDay.cellDate)
+                                        drop.acceptProposedAction()
+                                    }
+                                }
+
+                                Column {
+                                    anchors.fill: parent
+                                    anchors.margins: 7
+                                    spacing: 4
+                                    Text {
+                                        text: Qt.formatDate(monthDay.cellDate, "ddd d")
+                                        color: studioRoot.textPrimary
+                                        font.pixelSize: 11
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        text: monthDay.cellBlocks.length
+                                              ? monthDay.cellBlocks.length + " programs"
+                                              : "Filler"
+                                        color: monthDay.cellBlocks.length
+                                               ? studioRoot.accentBright : studioRoot.textSecondary
+                                        font.pixelSize: 10
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        visible: monthDay.cellBlocks.length > 0
+                                        text: visible
+                                              ? String(monthDay.cellBlocks[0].title)
+                                              : ""
+                                        color: studioRoot.textSecondary
+                                        font.pixelSize: 9
+                                        elide: Text.ElideRight
+                                    }
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        studioRoot.openDay(monthDay.cellDate)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Item {
+                        id: dayEditor
+                        anchors.fill: parent
+                        visible: studioRoot.viewMode === "day"
+
+                        ColumnLayout {
+                            anchors.fill: parent
+                            spacing: 10
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                Text {
+                                    text: "FULL DAY EDITOR"
+                                    color: studioRoot.accentBright
+                                    font.pixelSize: 12
+                                    font.weight: Font.Bold
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: studioRoot.dayBlocks().length
+                                          + " fixed program"
+                                          + (studioRoot.dayBlocks().length === 1 ? "" : "s")
+                                          + " • uncovered time uses filler"
+                                    color: studioRoot.textSecondary
+                                    font.pixelSize: 11
+                                }
+                                StudioButton {
+                                    text: studioRoot.dayMediaBinVisible
+                                          ? "Hide Media Bin" : "Show Media Bin"
+                                    onClicked: studioRoot.dayMediaBinVisible
+                                               = !studioRoot.dayMediaBinVisible
+                                }
+                                StudioButton { text: "Start"; onClicked: studioRoot.scrollDayToHour(0) }
+                                StudioButton { text: "Midday"; onClicked: studioRoot.scrollDayToHour(12) }
+                                StudioButton { text: "Evening"; onClicked: studioRoot.scrollDayToHour(18) }
+                                StudioButton { text: "End"; onClicked: studioRoot.scrollDayToHour(24) }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 54
+                                radius: 7
+                                color: studioRoot.panel
+                                border.color: studioRoot.line
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 12
+                                    anchors.rightMargin: 12
+                                    spacing: 8
+
+                                    Text {
+                                        text: studioRoot.selectedBlockIndex >= 0
+                                              ? "SELECTED  •  "
+                                                + studioRoot.selectedBlockTimeText()
+                                              : "SELECT A PROGRAM"
+                                        color: studioRoot.textPrimary
+                                        font.pixelSize: 12
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                    StudioButton {
+                                        text: "Groups & Show Filler"
+                                        onClicked: programGroupDialog.open()
+                                    }
+                                    StudioButton {
+                                        text: "−15 min"
+                                        enabled: studioRoot.selectedBlockIndex >= 0
+                                        onClicked: studioRoot.nudgeSelected(-900)
+                                    }
+                                    StudioButton {
+                                        text: "+15 min"
+                                        enabled: studioRoot.selectedBlockIndex >= 0
+                                        onClicked: studioRoot.nudgeSelected(900)
+                                    }
+                                    ChannelTextField {
+                                        id: dayExactTimeField
+                                        Layout.preferredWidth: 88
+                                        enabled: studioRoot.selectedBlockIndex >= 0
+                                        placeholderText: "HH:MM"
+                                        text: studioRoot.selectedBlockTimeText()
+                                        validator: RegularExpressionValidator {
+                                            regularExpression: /^([01]?\d|2[0-3]):[0-5]\d$/
+                                        }
+                                        onAccepted: studioRoot.setSelectedTime(text)
+                                        ToolTip.visible: hovered
+                                        ToolTip.text: "Exact local start time"
+                                    }
+                                }
+                            }
+
+                            Flickable {
+                                id: dayTimeline
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                clip: true
+                                contentWidth: Math.max(width, 2880)
+                                contentHeight: height
+                                boundsBehavior: Flickable.StopAtBounds
+
+                                Rectangle {
+                                    id: dayTrack
+                                    width: dayTimeline.contentWidth
+                                    height: dayTimeline.height
+                                    color: "#06111e"
+                                    border.color: studioRoot.line
+
+                                    DropArea {
+                                        anchors.fill: parent
+                                        keys: ["channelos-media", "channelos-block"]
+                                        z: 3
+                                        onDropped: function(drop) {
+                                            if (!drop.source)
+                                                return
+                                            var minute = studioRoot.minuteForTrackPosition(
+                                                        drop.x, dayTrack.width)
+                                            var day = new Date(studioRoot.selectedDayKey
+                                                               + "T00:00:00")
+                                            if (drop.keys.indexOf("channelos-media") >= 0)
+                                                studioRoot.addAssetAtMinute(
+                                                            drop.source.assetData,
+                                                            day, minute)
+                                            else if (drop.keys.indexOf("channelos-block") >= 0)
+                                                studioRoot.moveBlockToMinute(
+                                                            drop.source.blockIndex,
+                                                            day, minute)
+                                            drop.acceptProposedAction()
+                                        }
+                                    }
+
+                                    Repeater {
+                                        model: 25
+                                        delegate: Item {
+                                            id: hourMark
+                                            required property int index
+                                            x: index / 24 * dayTrack.width
+                                            width: 1
+                                            height: dayTrack.height
+                                            z: 1
+
+                                            Rectangle {
+                                                anchors.top: parent.top
+                                                anchors.bottom: parent.bottom
+                                                width: 1
+                                                color: hourMark.index % 6 === 0
+                                                       ? studioRoot.accent : studioRoot.line
+                                                opacity: hourMark.index === 24 ? 0.0 : 0.8
+                                            }
+                                            Text {
+                                                anchors.top: parent.top
+                                                anchors.topMargin: 9
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: hourMark.index < 24
+                                                      ? studioRoot.pad(hourMark.index) + ":00"
+                                                      : "24:00"
+                                                color: hourMark.index % 6 === 0
+                                                       ? studioRoot.accentBright
+                                                       : studioRoot.textSecondary
+                                                font.pixelSize: 10
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        x: 0
+                                        y: 48
+                                        width: parent.width
+                                        height: Math.max(120, parent.height - 82)
+                                        color: "#091827"
+                                        border.color: studioRoot.line
+                                    }
+
+                                    Repeater {
+                                        model: studioRoot.dayBlocks()
+
+                                        delegate: Rectangle {
+                                            id: dayBlock
+                                            required property var modelData
+                                            property int blockIndex: Number(modelData.modelIndex)
+                                            property var blockData: modelData
+                                            x: studioRoot.minuteOfDay(modelData.startUtc)
+                                               / 1440 * dayTrack.width
+                                            y: 62
+                                            width: Math.max(18,
+                                                      Number(modelData.durationSeconds || 0)
+                                                      / 86400 * dayTrack.width)
+                                            height: Math.max(92, dayTrack.height - 110)
+                                            radius: 7
+                                            color: blockIndex === studioRoot.selectedBlockIndex
+                                                   ? "#14558a" : studioRoot.panelRaised
+                                            border.color: blockIndex === studioRoot.selectedBlockIndex
+                                                          ? studioRoot.accentBright
+                                                          : studioRoot.line
+                                            border.width: blockIndex === studioRoot.selectedBlockIndex
+                                                          ? 2 : 1
+                                            z: 4
+
+                                            Item {
+                                                id: dayBlockDragProxy
+                                                width: 1
+                                                height: 1
+                                                Drag.active: dayBlockMouse.drag.active
+                                                Drag.keys: ["channelos-block"]
+                                                Drag.hotSpot.x: 0
+                                                Drag.hotSpot.y: 0
+                                                Drag.source: dayBlock
+                                            }
+
+                                            Column {
+                                                anchors.left: parent.left
+                                                anchors.right: dayBlockRemove.visible
+                                                               ? dayBlockRemove.left
+                                                               : parent.right
+                                                anchors.top: parent.top
+                                                anchors.bottom: parent.bottom
+                                                anchors.margins: 9
+                                                spacing: 5
+                                                Text {
+                                                    width: parent.width
+                                                    text: studioRoot.formatTime(dayBlock.blockData.startUtc)
+                                                          + " — "
+                                                          + studioRoot.formatTime(dayBlock.blockData.endUtc)
+                                                    color: studioRoot.accentBright
+                                                    font.pixelSize: 10
+                                                    elide: Text.ElideRight
+                                                }
+                                                Text {
+                                                    width: parent.width
+                                                    text: String(dayBlock.blockData.title)
+                                                    color: studioRoot.textPrimary
+                                                    font.pixelSize: 13
+                                                    font.weight: Font.DemiBold
+                                                    elide: Text.ElideRight
+                                                }
+                                                Text {
+                                                    width: parent.width
+                                                    text: studioRoot.durationLabel(
+                                                              dayBlock.blockData.durationSeconds)
+                                                    color: studioRoot.textSecondary
+                                                    font.pixelSize: 10
+                                                    elide: Text.ElideRight
+                                                }
+                                            }
+
+                                            StudioButton {
+                                                id: dayBlockRemove
+                                                anchors.right: parent.right
+                                                anchors.top: parent.top
+                                                anchors.margins: 6
+                                                visible: dayBlock.width >= 72
+                                                width: 28
+                                                height: 28
+                                                text: "×"
+                                                destructive: true
+                                                onClicked: studioRoot.removeBlock(dayBlock.blockIndex)
+                                            }
+
+                                            MouseArea {
+                                                id: dayBlockMouse
+                                                anchors.left: parent.left
+                                                anchors.right: dayBlockRemove.visible
+                                                               ? dayBlockRemove.left : parent.right
+                                                anchors.top: parent.top
+                                                anchors.bottom: parent.bottom
+                                                hoverEnabled: true
+                                                cursorShape: Qt.OpenHandCursor
+                                                drag.target: dayBlockDragProxy
+                                                onPressed: studioRoot.selectedBlockIndex
+                                                           = dayBlock.blockIndex
+                                                onReleased: {
+                                                    dayBlockDragProxy.Drag.drop()
+                                                    dayBlockDragProxy.x = 0
+                                                    dayBlockDragProxy.y = 0
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        visible: studioRoot.dayBlocks().length === 0
+                                        text: "No fixed programs — filler remains on air.\nShow the Media Bin, then drag a program to an exact time."
+                                        color: studioRoot.textSecondary
+                                        font.pixelSize: 14
+                                        horizontalAlignment: Text.AlignHCenter
+                                    }
+                                }
+
+                                ScrollBar.horizontal: ScrollBar { }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: studioRoot.snapMinutes + "-minute snap • drag a block to reschedule • conflicts are refused without changing the draft"
+                                color: studioRoot.textSecondary
+                                font.pixelSize: 10
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            id: timelinePanel
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: studioFooter.top
+            height: 210
+            visible: studioRoot.viewMode !== "day"
+            color: "#06111e"
+            border.color: studioRoot.line
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 8
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Text {
+                        text: "PROGRAM TIMELINE"
+                        color: studioRoot.textPrimary
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        elide: Text.ElideRight
+                        text: "Drag cards to swap their slots • drag into calendar to move days • × removes a fixed block"
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 11
+                    }
+                    Text {
+                        text: studioRoot.visibleBlocks().length + " fixed blocks in range"
+                        color: studioRoot.accentBright
+                        font.pixelSize: 11
+                    }
+                    StudioButton {
+                        text: "Groups & Show Filler"
+                        onClicked: programGroupDialog.open()
+                    }
+                    StudioButton {
+                        text: "−" + studioRoot.snapMinutes + " min"
+                        enabled: studioRoot.selectedBlockIndex >= 0
+                        onClicked: studioRoot.nudgeSelected(-studioRoot.snapMinutes * 60)
+                    }
+                    StudioButton {
+                        text: "+" + studioRoot.snapMinutes + " min"
+                        enabled: studioRoot.selectedBlockIndex >= 0
+                        onClicked: studioRoot.nudgeSelected(studioRoot.snapMinutes * 60)
+                    }
+                    ChannelTextField {
+                        id: exactTimeField
+                        Layout.preferredWidth: 88
+                        enabled: studioRoot.selectedBlockIndex >= 0
+                        placeholderText: "HH:MM"
+                        text: studioRoot.selectedBlockTimeText()
+                        validator: RegularExpressionValidator {
+                            regularExpression: /^([01]?\d|2[0-3]):[0-5]\d$/
+                        }
+                        onAccepted: studioRoot.setSelectedTime(text)
+                        ToolTip.visible: hovered
+                        ToolTip.text: "Exact local start time"
+                    }
+                }
+
+                ListView {
+                    id: programTimeline
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    orientation: ListView.Horizontal
+                    spacing: 8
+                    clip: true
+                    model: studioRoot.visibleBlocks()
+
+                    delegate: Rectangle {
+                        id: timelineCard
+                        required property var modelData
+                        property int blockIndex: Number(modelData.modelIndex)
+                        property var blockData: modelData
+                        width: Math.max(150, Math.min(300,
+                                  130 + Math.log(Math.max(2, Number(modelData.durationSeconds))) * 12))
+                        height: programTimeline.height - 12
+                        radius: 7
+                        color: blockIndex === studioRoot.selectedBlockIndex
+                               ? "#14558a" : studioRoot.panelRaised
+                        border.color: timelineDrop.containsDrag
+                                      ? studioRoot.warning
+                                      : (blockIndex === studioRoot.selectedBlockIndex
+                                         ? studioRoot.accentBright : studioRoot.line)
+                        border.width: timelineDrop.containsDrag ? 2 : 1
+
+                        Item {
+                            id: timelineDragProxy
+                            width: 1
+                            height: 1
+                            Drag.active: timelineMouse.drag.active
+                            Drag.keys: ["channelos-block"]
+                            Drag.hotSpot.x: 0
+                            Drag.hotSpot.y: 0
+                            Drag.source: timelineCard
+                        }
+
+                        DropArea {
+                            id: timelineDrop
+                            anchors.fill: parent
+                            keys: ["channelos-block"]
+                            onDropped: function(drop) {
+                                if (drop.source)
+                                    studioRoot.swapPrograms(drop.source.blockIndex,
+                                                            timelineCard.blockIndex)
+                                drop.acceptProposedAction()
+                            }
+                        }
+
+                        Column {
+                            anchors.left: parent.left
+                            anchors.right: removeProgram.left
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.margins: 10
+                            spacing: 5
+                            Text {
+                                width: parent.width
+                                text: studioRoot.formatTime(timelineCard.blockData.startUtc)
+                                      + "  •  "
+                                      + Qt.formatDate(new Date(timelineCard.blockData.startUtc), "ddd MMM d")
+                                color: studioRoot.accentBright
+                                font.pixelSize: 10
+                            }
+                            Text {
+                                width: parent.width
+                                text: String(timelineCard.blockData.title)
+                                color: studioRoot.textPrimary
+                                font.pixelSize: 13
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+                            Text {
+                                width: parent.width
+                                text: studioRoot.durationLabel(timelineCard.blockData.durationSeconds)
+                                color: studioRoot.textSecondary
+                                font.pixelSize: 10
+                            }
+                            Text {
+                                width: parent.width
+                                visible: String(timelineCard.blockData.fillerGroupName || "").length > 0
+                                text: "AFTER SHOW  •  "
+                                      + String(timelineCard.blockData.fillerGroupName || "")
+                                color: studioRoot.warning
+                                font.pixelSize: 9
+                                font.weight: Font.DemiBold
+                                elide: Text.ElideRight
+                            }
+                            Rectangle {
+                                width: parent.width
+                                height: 4
+                                radius: 2
+                                color: studioRoot.accent
+                            }
+                        }
+
+                        StudioButton {
+                            id: removeProgram
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 6
+                            width: 30
+                            height: 30
+                            text: "×"
+                            destructive: true
+                            onClicked: studioRoot.removeBlock(timelineCard.blockIndex)
+                        }
+
+                        MouseArea {
+                            id: timelineMouse
+                            anchors.left: parent.left
+                            anchors.right: removeProgram.left
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            hoverEnabled: true
+                            cursorShape: Qt.OpenHandCursor
+                            drag.target: timelineDragProxy
+                            onPressed: studioRoot.selectedBlockIndex = timelineCard.blockIndex
+                            onReleased: {
+                                timelineDragProxy.Drag.drop()
+                                timelineDragProxy.x = 0
+                                timelineDragProxy.y = 0
+                            }
+                        }
+                    }
+
+                    ScrollBar.horizontal: ScrollBar { }
+
+                    Text {
+                        anchors.centerIn: parent
+                        visible: programTimeline.count === 0
+                        text: "No fixed programs in this range — filler remains on air.\nAuto Fill the range or drag media onto a day."
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 13
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            id: studioFooter
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            height: 54
+            color: studioRoot.feedbackIsError ? "#32151b" : "#071322"
+            border.color: studioRoot.feedbackIsError
+                          ? studioRoot.danger : studioRoot.line
+
+            Text {
+                anchors.left: parent.left
+                anchors.right: footerHints.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 20
+                text: studioRoot.feedbackMessage
+                      || "Studio is a detached draft. Apply validates, backs up, and reloads the live lineup."
+                color: studioRoot.feedbackIsError
+                       ? studioRoot.danger : studioRoot.textSecondary
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
+                elide: Text.ElideRight
+            }
+            Text {
+                id: footerHints
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 20
+                text: "CTRL+S  Apply     ESC  Back"
+                color: studioRoot.textSecondary
+                font.pixelSize: 11
+            }
+        }
+
+        Rectangle {
+            id: autoFillOverlay
+            anchors.fill: parent
+            visible: studioRoot.autoFillBusy
+            z: 200
+            color: "#cc02070d"
+
+            MouseArea {
+                anchors.fill: parent
+                acceptedButtons: Qt.AllButtons
+                hoverEnabled: true
+            }
+
+            Rectangle {
+                anchors.centerIn: parent
+                width: Math.min(parent.width - 80, 540)
+                height: 230
+                radius: 12
+                color: studioRoot.panelRaised
+                border.color: studioRoot.accent
+                border.width: 2
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 28
+                    spacing: 16
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: "BUILDING DETACHED SCHEDULE"
+                        color: studioRoot.accentBright
+                        font.pixelSize: 13
+                        font.weight: Font.Bold
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: studioRoot.autoFillApplying
+                              ? studioRoot.pendingScheduleOperation
+                              : String(studioRoot.autoFillState.message
+                                       || "Preparing Studio Auto Fill…")
+                        color: studioRoot.textPrimary
+                        font.pixelSize: 16
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    ChannelProgressBar {
+                        Layout.fillWidth: true
+                        from: 0
+                        to: 100
+                        value: studioRoot.autoFillApplying
+                               ? studioRoot.autoFillApplyPercent
+                               : Number(studioRoot.autoFillState.percent || 0)
+                        indeterminate: !studioRoot.autoFillApplying
+                                       && Number(studioRoot.autoFillState.total || 0) <= 0
+                    }
+
+                    Text {
+                        Layout.fillWidth: true
+                        text: studioRoot.autoFillApplying
+                              ? studioRoot.autoFillApplyPercent + "%"
+                              : Number(studioRoot.autoFillState.total || 0) > 0
+                              ? Number(studioRoot.autoFillState.percent || 0) + "%"
+                              : "Checking local media…"
+                        color: studioRoot.textSecondary
+                        font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    StudioButton {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: studioRoot.autoFillApplying
+                              ? "Applying schedule…"
+                              : studioRoot.autoFillState.phase === "cancelling"
+                              ? "Cancelling…" : "Cancel Auto Fill"
+                        destructive: true
+                        enabled: !studioRoot.autoFillApplying
+                                 && studioRoot.autoFillState.phase !== "cancelling"
+                        onClicked: channelOS.cancelStudioAutoFill()
+                    }
+                }
+            }
+        }
+    }
+
+    StudioDialog {
+        id: weeklyPatternDialog
+        anchors.centerIn: parent
+        width: Math.min(studioRoot.width - 80, 600)
+        title: "Copy or Repeat This Week"
+
+        footer: Rectangle {
+            implicitHeight: 58
+            color: studioRoot.panel
+            border.color: studioRoot.line
+            StudioButton {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                text: "Close"
+                onClicked: weeklyPatternDialog.close()
+            }
+        }
+
+        contentItem: ColumnLayout {
+            width: 540
+            spacing: 14
+
+            Text {
+                Layout.fillWidth: true
+                text: "Source: " + studioRoot.rangeLabel() + "  •  "
+                      + studioRoot.weekProgramCount(studioRoot.anchorDate)
+                      + " fixed blocks"
+                color: studioRoot.textPrimary
+                font.weight: Font.DemiBold
+                wrapMode: Text.Wrap
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Copies preserve each program's weekday, local start time, order, "
+                      + "and show-specific filler. Every generated week remains independently editable."
+                color: studioRoot.textSecondary
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "START"; color: studioRoot.textSecondary }
+                ChannelSpinBox {
+                    id: weekCopyOffset
+                    from: 1
+                    to: 52
+                    value: 1
+                    editable: true
+                }
+                Label {
+                    text: "week(s) after the displayed week"
+                    color: studioRoot.textPrimary
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "COPIES"; color: studioRoot.textSecondary }
+                ChannelSpinBox {
+                    id: weekCopyCount
+                    from: 1
+                    to: 52
+                    value: 1
+                    editable: true
+                }
+                Label {
+                    text: weekCopyCount.value === 1
+                          ? "target week" : "consecutive target weeks"
+                    color: studioRoot.textPrimary
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label { text: "IF OCCUPIED"; color: studioRoot.textSecondary }
+                ChannelComboBox {
+                    id: weekCollisionPolicy
+                    Layout.fillWidth: true
+                    model: ["Require Empty Target Weeks", "Replace Target Weeks"]
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: weekCollisionPolicy.currentIndex === 1
+                text: "Replace removes every fixed block overlapping the target range. "
+                      + "Nothing changes until you confirm, and live television remains untouched until Apply."
+                color: studioRoot.warning
+                wrapMode: Text.Wrap
+            }
+
+            StudioButton {
+                Layout.alignment: Qt.AlignHCenter
+                text: weekCopyCount.value === 1
+                      ? "Copy Week" : "Create Weekly Pattern"
+                highlighted: true
+                enabled: !studioRoot.autoFillBusy
+                         && studioRoot.weekProgramCount(studioRoot.anchorDate) > 0
+                onClicked: studioRoot.requestWeekCopy()
+            }
+        }
+    }
+
+    StudioDialog {
+        id: replaceWeeksDialog
+        anchors.centerIn: parent
+        width: Math.min(studioRoot.width - 80, 500)
+        implicitHeight: 250
+        title: "Replace fixed programs in target weeks?"
+        onAccepted: {
+            if (studioRoot.copyWeekPattern(weekCopyOffset.value,
+                                           weekCopyCount.value, true))
+                weeklyPatternDialog.close()
+        }
+
+        footer: Rectangle {
+            implicitHeight: 58
+            color: studioRoot.panel
+            border.color: studioRoot.line
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                spacing: 10
+                StudioButton {
+                    text: "Cancel"
+                    onClicked: replaceWeeksDialog.reject()
+                }
+                StudioButton {
+                    text: "Replace Weeks"
+                    destructive: true
+                    onClicked: replaceWeeksDialog.accept()
+                }
+            }
+        }
+
+        contentItem: Text {
+            width: 440
+            text: "The selected target range already contains fixed programs. "
+                  + "Those overlapping draft blocks will be replaced by this weekly pattern. "
+                  + "Your applied channel and media files are not changed."
+            color: studioRoot.textPrimary
+            wrapMode: Text.Wrap
+        }
+    }
+
+    StudioDialog {
+        id: discardDraftDialog
+        anchors.centerIn: parent
+        width: 460
+        title: "Discard unapplied Channel Studio changes?"
+        onAccepted: studioRoot.finishExit()
+        onRejected: studioRoot.pendingExitDestination = ""
+
+        footer: Rectangle {
+            implicitHeight: 58
+            color: studioRoot.panel
+            border.color: studioRoot.line
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                spacing: 10
+                StudioButton {
+                    text: "Keep Editing"
+                    onClicked: discardDraftDialog.reject()
+                }
+                StudioButton {
+                    text: "Discard Draft"
+                    destructive: true
+                    onClicked: discardDraftDialog.accept()
+                }
+            }
+        }
+
+        contentItem: Text {
+            width: 390
+            text: "This draft has changes that have not been applied to the channel."
+            color: studioRoot.textPrimary
+            wrapMode: Text.Wrap
+        }
+    }
+
+    StudioDialog {
+        id: programGroupDialog
+        anchors.centerIn: parent
+        width: Math.min(studioRoot.width - 80, 620)
+        title: "Reusable Groups & Show-Specific Filler"
+
+        footer: Rectangle {
+            implicitHeight: 58
+            color: studioRoot.panel
+            border.color: studioRoot.line
+            StudioButton {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                text: "Close"
+                onClicked: programGroupDialog.close()
+            }
+        }
+
+        contentItem: ColumnLayout {
+            width: 560
+            spacing: 12
+
+            Text {
+                Layout.fillWidth: true
+                text: "Save the unique fixed programs on "
+                      + Qt.formatDate(new Date(studioRoot.selectedDayKey + "T00:00:00"),
+                                      "dddd, MMMM d")
+                      + " as a group reusable by every Channel Studio draft."
+                color: studioRoot.textSecondary
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelTextField {
+                    id: groupNameField
+                    Layout.fillWidth: true
+                    placeholderText: "Group name — e.g. Saturday Cartoons"
+                }
+                ChannelComboBox {
+                    id: groupModeBox
+                    model: ["Sequential", "Shuffle"]
+                    Layout.preferredWidth: 130
+                }
+                StudioButton {
+                    text: "Save Day as Group"
+                    enabled: groupNameField.text.trim().length > 0
+                             && studioRoot.selectedDayAssetIds().length > 0
+                    onClicked: studioRoot.createGroupFromSelectedDay()
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: studioRoot.line
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Attach a group to the selected show. Once that show ends, "
+                      + "ChannelOS uses this group for the gap until the next fixed block."
+                color: studioRoot.textPrimary
+                wrapMode: Text.Wrap
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                ChannelComboBox {
+                    id: groupChoiceBox
+                    Layout.fillWidth: true
+                    model: studioRoot.groupsLibrary
+                    textRole: "name"
+                }
+                StudioButton {
+                    text: "Use After Selected Show"
+                    enabled: groupChoiceBox.count > 0
+                             && groupChoiceBox.currentIndex >= 0
+                             && groupChoiceBox.currentIndex < studioRoot.groupsLibrary.length
+                             && studioRoot.selectedBlockIndex >= 0
+                             && Number(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].availableCount || 0)
+                                === Number(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].memberCount || 0)
+                    onClicked: studioRoot.assignSelectedGroupAsFiller()
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: groupChoiceBox.currentIndex >= 0
+                      && groupChoiceBox.currentIndex < studioRoot.groupsLibrary.length
+                      ? Number(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].availableCount || 0)
+                        + " of "
+                        + Number(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].memberCount || 0)
+                        + " local items available • "
+                        + String(studioRoot.groupsLibrary[groupChoiceBox.currentIndex].mode || "sequential")
+                      : "No reusable groups saved yet."
+                color: studioRoot.textSecondary
+                font.pixelSize: 11
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                StudioButton {
+                    text: "Use Normal Filler After Show"
+                    enabled: studioRoot.selectedBlockIndex >= 0
+                    onClicked: studioRoot.clearSelectedShowFiller()
+                }
+                Item { Layout.fillWidth: true }
+                StudioButton {
+                    text: "Delete Reusable Group"
+                    destructive: true
+                    enabled: groupChoiceBox.count > 0
+                    onClicked: studioRoot.deleteSelectedGroup()
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Applied channels embed the group's asset IDs. Deleting or editing "
+                      + "the reusable authoring group cannot silently change a live channel."
+                color: studioRoot.warning
+                font.pixelSize: 10
+                wrapMode: Text.Wrap
+            }
+        }
+    }
+
+    AdSettingsEditor {
+        id: adSettings
+        objectName: "studioAdSettings"
+        hostItem: studioRoot
+        channelNumber: Number(channelNumberField.text || 1)
+        channelName: channelNameField.text
+        mediaLibrary: studioRoot.mediaLibrary
+        sourceOptions: studioRoot.sourceChoices()
+        inlineBin: true
+        onSettingsApplied: {
+            studioRoot.invalidateReservationsFrom(new Date().getTime())
+            studioRoot.dirty = true
+        }
+        onBinRequested: { studioRoot.activeBin = "ads"; studioRoot.dayMediaBinVisible = true }
+        previewProvider: function(settings) { return channelOS.previewChannel(Object.assign(studioRoot.editorObject(), settings)) }
+    }
+
+    ListModel { id: draftSources }
+    ListModel { id: calendarBlocks }
+}

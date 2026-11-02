@@ -34,9 +34,16 @@ class NullMediaProbe:
 class FFprobeMediaProbe:
     """Technical metadata probe backed by the external ffprobe executable."""
 
-    def __init__(self, executable: str = "ffprobe", *, required: bool = False) -> None:
+    def __init__(
+        self,
+        executable: str = "ffprobe",
+        *,
+        required: bool = False,
+        timeout_seconds: float = 30.0,
+    ) -> None:
         self.executable = executable
         self.required = required
+        self.timeout_seconds = max(0.1, float(timeout_seconds))
 
     def probe(self, path: Path) -> MediaProbeResult:
         executable = shutil.which(self.executable)
@@ -65,7 +72,12 @@ class FFprobeMediaProbe:
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                timeout=self.timeout_seconds,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise MediaProbeError(
+                f"ffprobe timed out while inspecting {path.name}"
+            ) from exc
         except OSError as exc:
             raise MediaProbeError(f"could not run ffprobe for {path}: {exc}") from exc
 

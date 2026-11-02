@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from channelos.guide import GuideError, GuideService
-from channelos.library import MediaLibrary
+from channelos.library import IndexedMedia, MediaAsset, MediaLocation, MediaLibrary
 from channelos.models import ChannelDefinition
 from channelos.probe import MediaProbeResult
 from channelos.resolve import ResolvedChannel, resolve_channel
@@ -173,3 +173,127 @@ def test_guide_rejects_invalid_horizons_and_unknown_channels(tmp_path: Path) -> 
 
     with pytest.raises(GuideError, match="unknown channel"):
         service.now_next(99, at=epoch)
+
+
+def test_calendar_guide_shows_fixed_blocks_and_filler_from_runtime_truth(tmp_path: Path) -> None:
+    epoch = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    resolved = build_resolved_channel(
+        tmp_path,
+        [30.0, 60.0],
+        channel_number=18,
+    )
+    fixed_start = epoch + timedelta(seconds=40)
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.2",
+            "channel": 18,
+            "name": "Calendar TV",
+            "sources": [
+                {"path": str(source.path)}
+                for source in resolved.definition.sources
+            ],
+            "programming": {
+                "mode": "calendar",
+                "filler_mode": "sequential",
+                "calendar": [
+                    {
+                        "start_utc": fixed_start.isoformat(),
+                        "asset_id": resolved.media[1].asset.asset_id,
+                    }
+                ],
+            },
+        }
+    )
+    runtime = ChannelRuntime.open(
+        ResolvedChannel(definition=definition, media=resolved.media),
+        RuntimeStore(tmp_path / "guide-runtime.db"),
+        now=epoch,
+    )
+
+    guide = GuideService((runtime,)).horizon(
+        epoch + timedelta(seconds=35),
+        epoch + timedelta(seconds=110),
+        generated_at=epoch + timedelta(seconds=35),
+    )
+    programs = guide.rows[0].programs
+
+    assert [program.display_label for program in programs] == ["01", "01", "00"]
+    assert programs[0].end_utc == fixed_start
+    assert programs[0].duration_seconds == pytest.approx(10.0)
+    assert "automatic filler" in programs[0].explanation[1]
+    assert programs[1].start_utc == fixed_start
+    assert "Channel Studio calendar programming" in programs[1].explanation
+
+
+def test_now_next_projects_active_ad_then_the_interrupted_program(tmp_path: Path) -> None:
+    epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+    base = build_resolved_channel(
+        tmp_path, [30.0, 30.0], channel_number=88
+    )
+    definition = ChannelDefinition.from_mapping(
+        {
+            "schema_version": "0.4",
+            "channel": 88,
+            "name": "Guide Ad TV",
+            "sources": [{"path": str(source.path)} for source in base.definition.sources],
+            "advertising": {
+                "enabled": True,
+                "sources": [{"path": str(tmp_path / "guide-ads")}],
+                "breakpoints_seconds": [10.0],
+                "break_duration_seconds": 5.0,
+            },
+            "programming": {"mode": "sequential"},
+        }
+    )
+    ad_path = tmp_path / "guide-ads" / "spot.mp4"
+    ad_asset = MediaAsset(
+        asset_id="sha256:guide-ad", content_sha256="guide-ad", size_bytes=1,
+        duration_seconds=5.0, container_format="mp4",
+    )
+    ad = IndexedMedia(
+        ad_asset,
+        MediaLocation(
+            path=ad_path, path_key=str(ad_path), asset_id=ad_asset.asset_id,
+            source_root=ad_path.parent, online=True,
+        ),
+    )
+    runtime = ChannelRuntime.open(
+        ResolvedChannel(definition, base.media, (ad,)),
+        RuntimeStore(tmp_path / "guide-ad-runtime.db"),
+        now=epoch,
+    )
+
+    result = GuideService((runtime,)).now_next(
+        88, at=epoch + timedelta(seconds=12)
+    )
+    assert result.now.is_advertisement
+    assert result.now.asset_id == ad_asset.asset_id
+    assert result.now.event_id
+    assert result.now.parent_program_id
+    assert result.now.break_id
+    assert not result.next.is_advertisement
+    assert result.next.asset_id == base.media[0].asset.asset_id
+    assert result.now.parent_program_id == result.next.event_id
+
+    horizon = GuideService((runtime,)).horizon(
+        epoch, epoch + timedelta(seconds=34), generated_at=epoch
+    )
+    programs = horizon.rows[0].programs
+    assert len(programs) == 1
+    assert not programs[0].is_advertisement
+    assert programs[0].asset_id == base.media[0].asset.asset_id
+    assert len(programs[0].break_markers) == 1
+    assert programs[0].break_markers[0].break_id
+    assert programs[0].break_markers[0].start_utc == epoch + timedelta(seconds=10)
+    assert programs[0].break_markers[0].end_utc == epoch + timedelta(seconds=15)
+
+    extended = GuideService((runtime,)).horizon(
+        epoch, epoch + timedelta(seconds=69), generated_at=epoch
+    ).rows[0].programs
+    assert len(extended) == 2
+    assert extended[1].start_utc == epoch + timedelta(seconds=35)
+    assert len(extended[1].break_markers) == 1
+    assert extended[1].break_markers[0].start_utc == epoch + timedelta(seconds=45)
+    assert len(runtime.break_store.plans_for_channel(
+        88, start=epoch, end=epoch + timedelta(seconds=100)
+    )) == 2

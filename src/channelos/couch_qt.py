@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import logging
+import os
 import queue
 import sys
 import threading
 import time
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
-from PySide6.QtGui import QGuiApplication, QWindow
+from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt, SIGNAL
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
@@ -18,10 +21,18 @@ from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
 from .couch_model import build_couch_snapshot
+from .diagnostics import LOG_DIRECTORY_ENV
 from .guide import GuideError, GuideService
 from .library import IndexedMedia, MediaLibrary
 from .on_demand import OnDemandSession, OnDemandState
-from .playback import NativeVideoSurface, PlaybackError
+from .portable import host_data_directory
+from .settings import PortableSettingsStore
+from .playback import (
+    AudioOutputDevice,
+    NativeVideoSurface,
+    PlaybackError,
+    resolve_audio_output_device_id,
+)
 from .runtime import (
     ChannelRuntimeError,
     OnDemandWatchState,
@@ -39,6 +50,40 @@ from .settings import (
 )
 from .television import TelevisionSession
 from .window_startup import NativeWindowSnapshot, NativeWindowStartupGate
+
+logger = logging.getLogger(__name__)
+
+
+def _resolved_audio_output_rows(
+    discovered: tuple[AudioOutputDevice, ...],
+    selected_device_id: str,
+) -> tuple[list[dict[str, object]], str]:
+    """Build stable Settings rows and fall back from a missing saved device."""
+
+    devices: list[dict[str, object]] = [
+        {
+            "deviceId": "",
+            "name": "System Default",
+            "available": True,
+        }
+    ]
+    known = {""}
+    for device in discovered:
+        if device.device_id in known:
+            continue
+        devices.append(
+            {
+                "deviceId": device.device_id,
+                "name": device.name,
+                "available": True,
+            }
+        )
+        known.add(device.device_id)
+
+    return devices, resolve_audio_output_device_id(
+        selected_device_id,
+        discovered,
+    )
 
 
 class CouchController(QObject):
@@ -100,7 +145,30 @@ class CouchController(QObject):
         self._settings_store = SettingsStore(
             self._runtime_store.database_path.with_name("settings.json")
         )
+        if self._library.portable:
+            self._settings_store = PortableSettingsStore(
+                self._settings_store.path, self._library.portable,
+                host_data_directory() / 'portable-devices' / (self._library.portable.setup_id + '.json'),
+            )
         self._settings = self._settings_store.load()
+        selected_audio_device = self._settings.audio_output_device_id
+        self._audio_output_devices: list[dict[str, object]] = [
+            {
+                "deviceId": "",
+                "name": "System Default",
+                "available": True,
+            }
+        ]
+        if selected_audio_device:
+            self._audio_output_devices.append(
+                {
+                    "deviceId": selected_audio_device,
+                    "name": "Saved device (currently unavailable)",
+                    "available": False,
+                }
+            )
+        self._actions.set_audio_output_device(selected_audio_device or None)
+        self._on_demand.set_audio_output_device(selected_audio_device or None)
         cache_stats = self._artwork_cache.stats()
         self._artwork_cache_bytes = cache_stats.size_bytes
         self._artwork_cache_files = cache_stats.file_count
@@ -224,8 +292,12 @@ class CouchController(QObject):
         return {
             "volumePercent": self._settings.volume_percent,
             "muted": self._settings.muted,
+            "audioOutputDeviceId": self._settings.audio_output_device_id,
+            "audioOutputDeviceName": self._audio_output_device_name(),
+            "audioOutputDevices": self._audio_output_devices,
             "skipBackSeconds": self._settings.skip_back_seconds,
             "skipForwardSeconds": self._settings.skip_forward_seconds,
+            "controllerEnabled": self._settings.controller_enabled,
             "performanceProfile": self._settings.performance_profile,
             "generateVideoThumbnails": (
                 self._settings.generate_video_thumbnails
@@ -239,6 +311,85 @@ class CouchController(QObject):
             "ffmpegThreads": self._settings.ffmpeg_threads,
             "artworkCacheBytes": self._artwork_cache_bytes,
             "artworkCacheFiles": self._artwork_cache_files,
+        }
+
+    def _audio_output_device_name(self) -> str:
+        selected = self._settings.audio_output_device_id
+        for device in self._audio_output_devices:
+            if str(device["deviceId"]) == selected:
+                return str(device["name"])
+        return "System Default" if not selected else "Unavailable device"
+
+    @Slot(result="QVariantMap")
+    def openDiagnosticLogs(self) -> dict[str, object]:
+        configured = os.environ.get(LOG_DIRECTORY_ENV)
+        logs_directory = (
+            Path(configured)
+            if configured
+            else self._runtime_store.database_path.parent / "logs"
+        )
+        try:
+            logs_directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            logger.exception("Diagnostic log directory could not be created")
+            return self._error(exc)
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(logs_directory))):
+            logger.error("The operating system did not open the diagnostic log folder")
+            return {
+                "ok": False,
+                "message": f"Diagnostic logs are stored in {logs_directory}",
+            }
+        logger.info("Diagnostic log folder opened")
+        return {
+            "ok": True,
+            "message": "Opened the ChannelOS diagnostic log folder",
+        }
+
+    @Slot(result="QVariantMap")
+    def refreshAudioOutputDevices(self) -> dict[str, object]:
+        """Refresh libVLC audio destinations without blocking Settings access."""
+
+        try:
+            discovered = self._actions.list_audio_output_devices()
+            devices, effective_device_id = _resolved_audio_output_rows(
+                discovered,
+                self._settings.audio_output_device_id,
+            )
+        except (OSError, PlaybackError, ValueError) as exc:
+            return {
+                "ok": False,
+                "message": f"Audio outputs could not be refreshed: {exc}",
+                "settings": self.settings,
+            }
+
+        selected = self._settings.audio_output_device_id
+        message = ""
+        if selected != effective_device_id:
+            settings = replace(
+                self._settings,
+                audio_output_device_id=effective_device_id,
+            )
+            try:
+                self._settings_store.save(settings)
+                self._settings = settings
+                self._actions.set_audio_output_device(None)
+                self._on_demand.set_audio_output_device(None)
+            except (OSError, PlaybackError, ValueError) as exc:
+                return {
+                    "ok": False,
+                    "message": f"Audio fallback could not be applied: {exc}",
+                    "settings": self.settings,
+                }
+            message = (
+                "The saved audio output is unavailable; using System Default."
+            )
+
+        self._audio_output_devices = devices
+        self.settingsChanged.emit()
+        return {
+            "ok": True,
+            "message": message,
+            "settings": self.settings,
         }
 
     @Slot()
@@ -415,7 +566,8 @@ class CouchController(QObject):
             return
         try:
             decision = self._actions.sync()
-        except (ChannelRuntimeError, PlaybackError, ValueError):
+        except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+            self._publish_playback_failure(exc)
             return
 
         self._playback = self._decision_view(decision)
@@ -427,7 +579,11 @@ class CouchController(QObject):
     def refreshOnDemand(self) -> None:
         if not self._on_demand.active:
             return
-        state = self._on_demand.state()
+        try:
+            state = self._on_demand.state()
+        except PlaybackError as exc:
+            self._publish_playback_failure(exc)
+            return
         self._persist_on_demand_state(state)
         self._on_demand_view = self._on_demand_state_view(state)
         self.onDemandChanged.emit()
@@ -472,6 +628,10 @@ class CouchController(QObject):
         self._on_demand.attach_video_surface(surface)
         self._surface_ready = True
         self._surface_error = ""
+        # Validate a persisted audio destination before the first media load.
+        # A disconnected headset must not leave an otherwise healthy startup
+        # silently routed to a device that no longer exists.
+        self.refreshAudioOutputDevices()
 
     @Slot()
     def startHomePlayback(self) -> None:
@@ -485,15 +645,17 @@ class CouchController(QObject):
             return
         try:
             decision = self._actions.continue_watching(default_channel=1)
-        except (ChannelRuntimeError, PlaybackError, ValueError):
-            # No saved television continuity and no real CH001 means Home stays
-            # on its presentation-only static state.
+        except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+            self._publish_playback_failure(exc)
             return
         self._publish(decision)
 
     def set_video_surface_error(self, message: str) -> None:
         self._surface_ready = False
         self._surface_error = message
+        self._publish_playback_failure(
+            PlaybackError(f"Native video surface is unavailable: {message}")
+        )
 
     def _home_view_from_decision(
         self,
@@ -549,6 +711,8 @@ class CouchController(QObject):
                 "assetId": selected.media.asset.asset_id,
                 "offsetSeconds": float(selected.offset_seconds),
                 "lagSeconds": 0.0,
+                "aheadSeconds": 0.0,
+                "isAhead": False,
                 "isLive": True,
                 "paused": False,
                 "viewerTimeMs": int(at.timestamp() * 1000),
@@ -563,6 +727,16 @@ class CouchController(QObject):
                 "nextEndMs": int(next_program.end_utc.timestamp() * 1000),
             }
 
+        broadcaster = getattr(self, "_broadcaster", None)
+        if not runtime.channel_numbers and broadcaster is not None and broadcaster.records:
+            definition = broadcaster.records[0].definition
+            return {"active": False, "mode": "static", "isUnassigned": False,
+                    "unavailable": True, "stateLabel": "MEDIA UNAVAILABLE",
+                    "continueLabel": "Reconnect media in Library", "channelNumber": definition.channel,
+                    "displayNumber": definition.display_number, "channelName": definition.name,
+                    "title": "MEDIA UNAVAILABLE", "paused": False,
+                    "message": "No channel media is available. Reconnect or scan a source in Library."}
+
         return {
             "active": False,
             "mode": "static",
@@ -574,6 +748,8 @@ class CouchController(QObject):
             "channelName": "ChannelOS",
             "title": "NO PROGRAMMING",
             "lagSeconds": 0.0,
+            "aheadSeconds": 0.0,
+            "isAhead": False,
             "isLive": False,
             "paused": False,
             "programStartMs": 0,
@@ -590,15 +766,38 @@ class CouchController(QObject):
             decision.channel_number,
             at=decision.viewer_time_utc,
         ).next
+        event = selected.event
+        parent_title = ""
+        if event.parent_program_asset_id:
+            for program in self._actions.runtime.channels[decision.channel_number].channel.media:
+                if program.asset.asset_id == event.parent_program_asset_id:
+                    parent_title = program.location.path.stem
+                    break
+        break_start = break_end = None
+        runtime = self._actions.runtime.channels[decision.channel_number]
+        if event.break_id and runtime.break_store:
+            plan = runtime.break_store.load_plan(event.break_id)
+            if plan:
+                break_start = plan.scheduled_at
+                break_end = plan.scheduled_at + timedelta(seconds=plan.duration_seconds)
         return {
             "active": True,
+            "breakStartMs": int(break_start.timestamp() * 1000) if break_start else 0,
+            "breakEndMs": int(break_end.timestamp() * 1000) if break_end else 0,
+            "breakRemainingSeconds": max(0.0, (break_end - decision.viewer_time_utc).total_seconds()) if break_end else 0,
             "channelNumber": decision.channel_number,
             "displayNumber": definition.display_number,
             "channelName": decision.channel_name,
             "title": selected.media.location.path.stem,
+            "eventType": event.event_type,
+            "isAdvertisement": event.event_type in {"advertisement", "transition"},
+            "breakId": event.break_id or "",
+            "parentProgramTitle": parent_title,
             "assetId": selected.media.asset.asset_id,
             "offsetSeconds": float(selected.offset_seconds),
-            "lagSeconds": float(decision.lag_seconds),
+            "lagSeconds": max(0.0, float(decision.lag_seconds)),
+            "aheadSeconds": float(decision.ahead_seconds),
+            "isAhead": bool(decision.is_ahead),
             "isLive": bool(decision.is_live),
             "paused": bool(self._actions.paused),
             "viewerTimeMs": int(decision.viewer_time_utc.timestamp() * 1000),
@@ -621,6 +820,43 @@ class CouchController(QObject):
             "message": TelevisionSession.describe(decision),
             "playback": self._playback,
         }
+
+    def _publish_playback_failure(self, exc: Exception) -> dict[str, object]:
+        """Expose decoder failures instead of leaving a blank native surface."""
+
+        message = str(exc)
+        if (
+            not bool(self._playback.get("active"))
+            and str(self._playback.get("error", "")) == message
+        ):
+            return {
+                "ok": False,
+                "message": message,
+                "playback": self._playback,
+            }
+        logger.error(
+            "Playback unavailable: %s",
+            message,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
+        failed = dict(self._playback)
+        failed["active"] = False
+        failed["error"] = message
+        self._playback = failed
+
+        home = dict(self._home_television)
+        home["playbackError"] = message
+        home["stateLabel"] = "PLAYBACK UNAVAILABLE"
+        self._home_television = home
+
+        self.playbackChanged.emit()
+        self.homeTelevisionChanged.emit()
+        return {"ok": False, "message": message, "playback": failed}
+
+    def _action_error(self, exc: Exception) -> dict[str, object]:
+        if isinstance(exc, PlaybackError):
+            return self._publish_playback_failure(exc)
+        return self._error(exc)
 
     @staticmethod
     def _error(exc: Exception) -> dict[str, object]:
@@ -650,6 +886,8 @@ class CouchController(QObject):
         channel_number: int,
         approximate_start_ms: float,
     ) -> dict[str, object]:
+        if any(definition.channel == channel_number for definition in self._service.unavailable_channels):
+            return {"ok": False, "message": "This channel's media is unavailable. Reconnect or scan its source in Library."}
         if not self._surface_ready:
             return {"ok": False, "message": self._surface_error}
         try:
@@ -660,7 +898,7 @@ class CouchController(QObject):
             )
             return self._publish(decision)
         except (GuideError, ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(int, result="QVariantMap")
     def playLibraryIndex(self, index: int) -> dict[str, object]:
@@ -695,6 +933,9 @@ class CouchController(QObject):
             self._on_demand.set_volume(self._volume)
             self._on_demand.set_muted(self._muted)
             self._on_demand_view = self._on_demand_state_view(state)
+            if "error" in self._playback:
+                self._playback = {"active": False}
+                self.playbackChanged.emit()
             self.onDemandChanged.emit()
 
             return {
@@ -708,7 +949,7 @@ class CouchController(QObject):
             }
 
         except (PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def toggleOnDemandPause(self) -> dict[str, object]:
@@ -728,7 +969,7 @@ class CouchController(QObject):
             }
 
         except (PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(float, result="QVariantMap")
     def skipOnDemand(self, delta_seconds: float) -> dict[str, object]:
@@ -744,15 +985,20 @@ class CouchController(QObject):
             }
 
         except (PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def stopOnDemand(self) -> dict[str, object]:
         if self._on_demand.active:
-            self._persist_on_demand_state(
-                self._on_demand.state(),
-                force=True,
-            )
+            try:
+                self._persist_on_demand_state(
+                    self._on_demand.state(),
+                    force=True,
+                )
+            except PlaybackError:
+                # Returning Home must remain available even when the decoder
+                # has already failed and cannot provide a final playhead.
+                pass
         self._on_demand.stop()
         self._on_demand_view = {"active": False}
         self.onDemandChanged.emit()
@@ -765,21 +1011,21 @@ class CouchController(QObject):
             decision = self._actions.play() if self._actions.paused else self._actions.pause()
             return self._publish(decision)
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def goLive(self) -> dict[str, object]:
         try:
             return self._publish(self._actions.go_live())
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(float, result="QVariantMap")
     def skip(self, delta_seconds: float) -> dict[str, object]:
         try:
             return self._publish(self._actions.skip(float(delta_seconds)))
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(int, result="QVariantMap")
     def changeChannel(self, direction: int) -> dict[str, object]:
@@ -792,10 +1038,12 @@ class CouchController(QObject):
                 raise ValueError("channel direction must be -1 or 1")
             return self._publish(decision)
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(int, result="QVariantMap")
     def tuneChannel(self, channel_number: int) -> dict[str, object]:
+        if any(definition.channel == channel_number for definition in self._service.unavailable_channels):
+            return {"ok": False, "message": "This channel's media is unavailable. Reconnect or scan its source in Library."}
         if not self._surface_ready:
             return {"ok": False, "message": self._surface_error}
         try:
@@ -803,14 +1051,14 @@ class CouchController(QObject):
                 self._actions.tune(int(channel_number))
             )
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def previousChannel(self) -> dict[str, object]:
         try:
             return self._publish(self._actions.previous_channel())
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def continueWatching(self) -> dict[str, object]:
@@ -821,7 +1069,7 @@ class CouchController(QObject):
                 self._actions.continue_watching(default_channel=1)
             )
         except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-            return self._error(exc)
+            return self._action_error(exc)
 
     @Slot(result="QVariantMap")
     def enterLiveFromHome(self) -> dict[str, object]:
@@ -944,6 +1192,28 @@ class CouchController(QObject):
                 )
                 settings = self._settings.with_performance_profile(value)
                 message = f"Performance profile: {value.title()}"
+            elif name == "audioOutput":
+                current = self._settings.audio_output_device_id
+                choices = tuple(
+                    str(device["deviceId"])
+                    for device in self._audio_output_devices
+                    if bool(device["available"])
+                    or str(device["deviceId"]) == current
+                )
+                if current not in choices:
+                    current = ""
+                index = choices.index(current)
+                value = choices[(index + step) % len(choices)]
+                settings = replace(
+                    self._settings,
+                    audio_output_device_id=value,
+                )
+                device_name = next(
+                    str(device["name"])
+                    for device in self._audio_output_devices
+                    if str(device["deviceId"]) == value
+                )
+                message = f"Audio output: {device_name}"
             elif name == "skipBack":
                 value = self._cycle_choice(
                     self._settings.skip_back_seconds,
@@ -1014,16 +1284,31 @@ class CouchController(QObject):
                     reduced_motion=value,
                 )
                 message = "Reduced motion on" if value else "Reduced motion off"
+            elif name == "controllerEnabled":
+                value = not self._settings.controller_enabled
+                settings = replace(
+                    self._settings,
+                    controller_enabled=value,
+                )
+                message = (
+                    "Controller input on"
+                    if value
+                    else "Controller input off - use keyboard or mouse to turn it back on"
+                )
             else:
                 raise ValueError(f"unknown setting: {name}")
 
             self._save_settings(settings)
+            if name == "audioOutput":
+                selected = settings.audio_output_device_id or None
+                self._actions.set_audio_output_device(selected)
+                self._on_demand.set_audio_output_device(selected)
             return {
                 "ok": True,
                 "message": message,
                 "settings": self.settings,
             }
-        except (OSError, ValueError) as exc:
+        except (OSError, PlaybackError, ValueError) as exc:
             return self._error(exc)
 
     @Slot(result="QVariantMap")
@@ -1067,6 +1352,8 @@ class CouchController(QObject):
     def resetSettings(self) -> dict[str, object]:
         try:
             self._save_settings(CouchSettings())
+            self._actions.set_audio_output_device(None)
+            self._on_demand.set_audio_output_device(None)
             self._apply_audio_state()
             return {
                 "ok": True,
@@ -1086,6 +1373,29 @@ class CouchController(QObject):
             )
         self._on_demand.stop()
         self._actions.stop()
+        for runtime in self._actions.runtime.channels.values():
+            if runtime.break_store is not None:
+                runtime.break_store.close()
+
+
+def connect_screen_changed(window, callback) -> None:
+    """Connect the QML page notification rather than QWindow's monitor signal.
+
+    Main.qml's string `screen` has a no-argument notify signal, while PySide's
+    attribute resolves to the inherited screenChanged(QScreen*) overload.
+    """
+    if isinstance(window, QObject):
+        meta = window.metaObject()
+        index = meta.indexOfProperty("screen")
+        if index >= 0:
+            prop = meta.property(index)
+            if prop.hasNotifySignal():
+                signature = bytes(prop.notifySignal().methodSignature()).decode()
+                QObject.connect(window, SIGNAL(signature), callback)
+                return
+    changed = getattr(window, "screenChanged", None)
+    if changed is not None:
+        changed.connect(callback)
 
 
 class CouchKeyFilter(QObject):
@@ -1100,6 +1410,7 @@ class CouchKeyFilter(QObject):
         self._channel_generation = 0
         self._channel_digits = ""
         self._home_scan_dialog: QProgressDialog | None = None
+        connect_screen_changed(window, self._channel_entry_screen_changed)
         scan_changed = getattr(controller, "libraryScanChanged", None)
         if scan_changed is not None:
             scan_changed.connect(self._update_home_scan_dialog)
@@ -1227,14 +1538,21 @@ class CouchKeyFilter(QObject):
         intent = bindings.get(key)
         return None if intent is None else ControlCommand(intent)
 
+    def _cancel_channel_entry(self) -> None:
+        self._channel_digits = ""
+        self._channel_generation += 1
+        self._window.setProperty("channelEntry", "")
+
+    def _channel_entry_screen_changed(self) -> None:
+        if str(self._window.property("screen")) not in {"live", "ondemand"}:
+            self._cancel_channel_entry()
+
     def _commit_channel_entry(self) -> None:
         digits = self._channel_digits
         if not digits:
             return
 
-        self._channel_digits = ""
-        self._channel_generation += 1
-        self._window.setProperty("channelEntry", "")
+        self._cancel_channel_entry()
 
         came_from_on_demand = (
             str(self._window.property("screen")) == "ondemand"
@@ -1269,11 +1587,11 @@ class CouchKeyFilter(QObject):
             return
 
         def commit_if_current() -> None:
-            if (
-                generation == self._channel_generation
-                and self._channel_digits
-                and str(self._window.property("screen")) in {"live", "ondemand"}
-            ):
+            if generation != self._channel_generation:
+                return
+            if str(self._window.property("screen")) not in {"live", "ondemand"}:
+                self._cancel_channel_entry()
+            elif self._channel_digits:
                 self._commit_channel_entry()
 
         QTimer.singleShot(1300, commit_if_current)
@@ -1466,6 +1784,9 @@ class CouchKeyFilter(QObject):
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
         self._window.setProperty("infoVisible", False)
+        refresh = self._controller.refreshAudioOutputDevices()
+        if not bool(refresh.get("ok")):
+            self._notify(refresh)
         self._window.setProperty("screen", "settings")
         return True
 
@@ -1491,7 +1812,7 @@ class CouchKeyFilter(QObject):
             if str(home.get("mode", "static")) == "static":
                 self._notify(
                     {
-                        "message": (
+                        "message": home.get("message") or (
                             "Channel 001 is unassigned - create "
                             "Channel 001 in Broadcaster to start watching"
                         )
@@ -1542,20 +1863,29 @@ class CouchKeyFilter(QObject):
 
     def _adjust_selected_setting(self, direction: int) -> bool:
         selection = int(self._window.property("settingsSelection"))
-        names = (
-            "performanceProfile",
-            "volume",
-            "muted",
-            "skipBack",
-            "skipForward",
-            "generateVideoThumbnails",
-            "artworkCacheLimit",
-            "backgroundArtworkDuringPlayback",
-            "reducedMotion",
-        )
-        if not 0 <= selection < len(names):
+        if selection == 1:
+            result = self._controller.changeDisplayMode(direction)
+        else:
+            names = {
+                0: "performanceProfile",
+                2: "audioOutput",
+                3: "volume",
+                4: "muted",
+                5: "skipBack",
+                6: "skipForward",
+                7: "generateVideoThumbnails",
+                8: "artworkCacheLimit",
+                9: "backgroundArtworkDuringPlayback",
+                10: "reducedMotion",
+                11: "controllerEnabled",
+            }
+            name = names.get(selection)
+            if name is None:
+                return False
+            result = self._controller.adjustSetting(name, direction)
+        if not bool(result.get("ok", False)):
+            self._notify(result)
             return False
-        result = self._controller.adjustSetting(names[selection], direction)
         self._notify(result)
         if "volume" in result:
             self._window.setProperty(
@@ -1595,6 +1925,11 @@ class CouchKeyFilter(QObject):
 
         intent = command.intent
         screen = str(self._window.property("screen"))
+        if intent in {ControlIntent.TUNE, ControlIntent.CHANNEL_UP,
+                      ControlIntent.CHANNEL_DOWN, ControlIntent.PREVIOUS_CHANNEL,
+                      ControlIntent.HOME, ControlIntent.GUIDE,
+                      ControlIntent.LIBRARY, ControlIntent.SETTINGS, ControlIntent.CHANNELS}:
+            self._cancel_channel_entry()
 
         if intent is ControlIntent.POWER:
             QGuiApplication.quit()
@@ -1721,7 +2056,7 @@ class CouchKeyFilter(QObject):
                 current = int(self._window.property("settingsSelection"))
                 self._window.setProperty(
                     "settingsSelection",
-                    min(10, current + 1),
+                    min(14, current + 1),
                 )
                 return True
             if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
@@ -1729,11 +2064,15 @@ class CouchKeyFilter(QObject):
                 return self._adjust_selected_setting(direction)
             if intent is ControlIntent.SELECT:
                 selection = int(self._window.property("settingsSelection"))
-                if selection == 9:
+                if selection == 12:
                     result = self._controller.clearArtworkCache()
                     self._notify(result)
                     return True
-                if selection == 10:
+                if selection == 13:
+                    result = self._controller.openDiagnosticLogs()
+                    self._notify(result)
+                    return True
+                if selection == 14:
                     result = self._controller.resetSettings()
                     self._notify(result)
                     self._window.setProperty(
@@ -2160,7 +2499,13 @@ def run_qt(
     window._channelos_video_window = video_window
     window._channelos_settings_item = settings_item
 
-    controller_input = QtControllerInput(window, key_filter.dispatch_command)
+    controller_input = QtControllerInput(
+        window,
+        key_filter.dispatch_command,
+        enabled=lambda: bool(
+            controller.settings.get("controllerEnabled", True)
+        ),
+    )
     window._channelos_controller_input = controller_input
 
     # The channel continues broadcasting independently of UI input.

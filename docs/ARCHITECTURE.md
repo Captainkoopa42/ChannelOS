@@ -1,7 +1,6 @@
 # ChannelOS Architecture
 
-**Status:** Draft 0.5  
-**Current phase:** 2 — Guide / UI-facing plumbing
+**Status:** Windows 0.0.6 candidate, runtime schema 3
 
 ## Architectural objective
 
@@ -15,50 +14,15 @@ The canonical product-level description is [MASTER_DESIGN.md](MASTER_DESIGN.md).
 
 ## System boundaries
 
-```text
-+---------------------------------------------------------+
-|                    TV / Remote UI                      |
-|            Live View | Guide | Library                 |
-+---------------------------+-----------------------------+
-                            |
-                            | local service / API / IPC
-                            v
-+---------------------------------------------------------+
-|             Guide / Television Boundary                |
-| horizon | Now/Next | detail | explain-why | intents    |
-+---------------------------+-----------------------------+
-                            |
-                            v
-+---------------------------------------------------------+
-|                 Television Runtime                     |
-| TUNE | channel +/- | previous | GO_LIVE | continuity  |
-+---------------------------+-----------------------------+
-                            |
-                            v
-+---------------------------------------------------------+
-|                  Channel Runtime                       |
-| numeric identity | schedule epoch | Broadcast Clock    |
-| Viewer Clock | generated timeline | restart state      |
-+---------------------+-------------------+---------------+
-                      |                   |
-                      v                   v
-+---------------------------+   +-------------------------+
-|    Programming Engine     |   |    Playback Adapter     |
-| sequence | shuffle        |   | libVLC / future        |
-+-------------+-------------+   +------------+------------+
-              |                              |
-              +---------------+--------------+
-                              v
-+---------------------------------------------------------+
-|                 Media Index / State                    |
-| assets | locations | technical metadata | mappings     |
-+---------------------------+-----------------------------+
-                            |
-                            v
-+---------------------------------------------------------+
-|                    Source Adapters                     |
-|        local filesystem | NAS | removable media        |
-+---------------------------------------------------------+
+```mermaid
+flowchart TD
+    UI["Home, Guide, Library and Broadcaster"] --> TV["Guide and television runtime"]
+    UI --> Draft["Detached authoring and validation"]
+    Draft --> Intent["Portable channel YAML"]
+    Intent --> Runtime["Channel runtime"]
+    TV --> Runtime
+    Runtime --> State["Library and runtime SQLite state"]
+    Runtime --> VLC["Replaceable libVLC backend"]
 ```
 
 The authoritative scheduling logic belongs below the UI boundary. The interface can request television state and issue user intents; it must not independently decide what a channel is airing.
@@ -106,7 +70,10 @@ A basic library scan may still index media without ffprobe. A persistent Broadca
 
 Channel definitions describe durable user intent: channel number, name, source selectors, and programming behavior. They are human-readable and versioned.
 
-Resolved media IDs, wall-clock epochs, current tune state, and viewer positions do not belong inside the portable channel definition.
+Generated resolved-media lists, wall-clock epochs, current tune state, and
+viewer positions do not belong inside the portable channel definition. An
+explicit 0.2 calendar block may deliberately reference one stable Library asset
+ID; that is authored programming intent rather than generated runtime state.
 
 ### Runtime state
 
@@ -128,16 +95,21 @@ This state can be deleted without deleting media. Future Export My Television wo
 
 The programming layer converts a resolved channel into a timed schedule.
 
-Phase 1 implements two deterministic repeating policies:
+The runtime implements two deterministic repeating policies:
 
 - sequential programming in resolved source order,
 - deterministic shuffle derived from stable asset identities.
 
 Every eligible shuffle item appears once before the cycle repeats. `avoid_repeat_days` is treated as a guarantee: if the eligible media duration cannot satisfy the requested window, the runtime rejects the configuration rather than silently weakening it.
 
-For either policy, indexed positive durations form a repeating timed cycle anchored to a persistent UTC schedule epoch.
+For either policy, indexed positive durations form a repeating timed cycle
+anchored to a persistent UTC schedule epoch. Channel Definition 0.2 adds fixed
+UTC calendar blocks. Those blocks override the cycle at their declared times;
+the selected sequential or shuffle cycle fills every uncovered interval. The
+Guide and playback session read this combined timeline from `ChannelRuntime`.
 
-Time-of-day blocks, weighted rotations, marathons, feature slots, and seasonal rules remain later broadcaster-tool work.
+Recurring templates, weighted rotations, marathons, feature slots, and seasonal
+rules remain later broadcaster-tool work.
 
 ## Broadcast Clock
 
@@ -168,14 +140,23 @@ A persistent channel schedule is fingerprinted from the inputs that define its c
 - programming policy,
 - stable asset IDs,
 - indexed durations.
+- fixed calendar starts and their stable asset IDs for 0.2 channels.
 
 Sequential schedules preserve effective source order. Shuffle schedules derive their order from stable identities so path movement does not silently mutate the shuffled schedule.
 
 If the signature is unchanged after restart, the original epoch is reused and the Broadcast Clock continues naturally.
 
-If the programming inputs change, ChannelOS creates a new epoch. This avoids projecting an old timeline onto a different schedule.
+If repeating sequential/shuffle programming inputs change, ChannelOS creates a
+new epoch. This avoids projecting an old cycle onto a different schedule.
 
-The same mechanism handles missing files. A rescan marks a disappeared location offline, resolution changes the eligible media set, the signature changes, and the channel re-anchors using surviving online media.
+Calendar definitions are different: their fixed blocks already contain absolute
+UTC intent. A calendar edit updates the schedule signature while preserving the
+existing filler epoch and Viewer Clock, so adding a future program does not
+restart today's channel or erase a paused/behind-live position.
+
+For repeating channels, the same re-anchor mechanism handles missing files. A
+calendar channel instead preserves its filler clock; a fixed block whose asset
+is unavailable is rejected during validation rather than silently weakened.
 
 ## Viewer Clock
 
@@ -199,7 +180,8 @@ GO_LIVE
 Viewer Clock := Broadcast Clock
 ```
 
-Fast-forward is capped at LIVE.
+Fast-forward may move the Viewer Clock past LIVE into upcoming local
+programming. GO_LIVE returns to the Broadcast Clock from either direction.
 
 > **The schedule belongs to the channel. The playhead belongs to the user.**
 
@@ -492,3 +474,22 @@ Phase 1 has passed the required behaviors:
 12. deterministic shuffle over genuine indexed media.
 
 The architectural focus now moves to Phase 2: projecting this runtime truth into a Guide and stable UI-facing service boundary.
+
+## Release-audit boundaries in 0.0.6
+
+`calendar_reconcile` binds reservations to the parent asset, start and duration,
+and replays the affected suffix through the shared simple planner. Studio updates
+fixed-start reservations together; a fit failure rejects the draft. Validation and
+Preview use detached database copies, preserving the live queue and ledgers.
+
+Runtime schema 3 stores calendar intent and archives superseded future plans.
+Actual airing/viewing rows protect immutable reservations. Program clock rows carry
+the resolved schedule signature, so a temporary smaller pool cannot borrow timing
+from a different program. Channel deletion archives all channel-owned runtime rows
+in one SQLite transaction and clears the catalog assignment. A durable operation
+journal coordinates the definition move, runtime cleanup and catalog change and
+supports interrupted deletion and failed-lineup rollback.
+
+Saved definitions are distinct from available playback runtimes. An empty playable
+lineup is a valid management/recovery state. Database-version, integrity and portable
+identity failures retain their existing fail-closed behavior.

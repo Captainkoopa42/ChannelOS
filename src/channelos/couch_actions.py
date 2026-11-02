@@ -4,7 +4,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from .guide import GuideController, GuideError, GuideProgram, GuideService
-from .playback import LibVLCBackend, NativeVideoSurface, PlaybackBackend
+from .playback import (
+    AudioOutputDevice,
+    LibVLCBackend,
+    NativeVideoSurface,
+    PlaybackBackend,
+)
 from .runtime import TelevisionRuntime, TuneDecision, require_aware_utc, utc_now
 from .television import TelevisionSession
 
@@ -30,6 +35,7 @@ class CouchActions:
         self._guide: GuideController | None = None
         self._surface: NativeVideoSurface | None = None
         self._last_decision: TuneDecision | None = None
+        self._audio_output_device_id: str | None = None
 
     @property
     def last_decision(self) -> TuneDecision | None:
@@ -60,6 +66,8 @@ class CouchActions:
         backend = self._backend_factory()
         if self._surface is not None:
             backend.attach_video_surface(self._surface)
+        if self._audio_output_device_id is not None:
+            backend.set_audio_output_device(self._audio_output_device_id)
 
         session = TelevisionSession(self.runtime, backend)
         self._backend = backend
@@ -197,6 +205,23 @@ class CouchActions:
         self._last_decision = decision
         return decision
 
+    def restore_after_lineup_change(
+        self,
+        channel_number: int,
+        *,
+        paused: bool,
+        at: datetime | None = None,
+    ) -> TuneDecision:
+        """Resume one active feed after its Guide/runtime objects are rebuilt."""
+
+        decision = self._ensure_session().restore_after_lineup_change(
+            int(channel_number),
+            paused=bool(paused),
+            now=at,
+        )
+        self._last_decision = decision
+        return decision
+
     def sync(self, *, at: datetime | None = None) -> TuneDecision:
         """Synchronize decoder playback with the authoritative Viewer Clock."""
 
@@ -214,11 +239,25 @@ class CouchActions:
         self._ensure_session().backend.set_muted(value)
         return value
 
-    def suspend_decoder(self) -> None:
+    def list_audio_output_devices(self) -> tuple[AudioOutputDevice, ...]:
+        return self._ensure_session().backend.list_audio_output_devices()
+
+    def set_audio_output_device(self, device_id: str | None) -> None:
+        self._audio_output_device_id = None if not device_id else str(device_id)
+        if self._backend is not None:
+            self._backend.set_audio_output_device(
+                self._audio_output_device_id
+            )
+
+    def checkpoint_viewing(self) -> None:
+        if self._session is not None:
+            self._session.checkpoint_viewing()
+
+    def suspend_decoder(self, *, persist_history: bool = True) -> None:
         """Release live-TV decoder output while preserving runtime clock state."""
 
         if self._session is not None:
-            self._session.suspend_decoder()
+            self._session.suspend_decoder(persist_history=persist_history)
 
     def stop(self) -> None:
         if self._session is not None:

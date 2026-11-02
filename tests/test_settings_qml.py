@@ -112,8 +112,12 @@ class FakeSettingsController(QObject):
         self._settings = {
             "volumePercent": 100,
             "muted": False,
+            "audioOutputDeviceId": "",
+            "audioOutputDeviceName": "System Default",
+            "audioOutputDevices": [],
             "skipBackSeconds": 10,
             "skipForwardSeconds": 30,
+            "controllerEnabled": True,
             "performanceProfile": "standard",
             "generateVideoThumbnails": True,
             "artworkCacheLimitMb": 0,
@@ -178,6 +182,10 @@ class FakeSettingsController(QObject):
             "removedBytes": 0,
             "settings": self._settings,
         }
+
+    @Slot(result="QVariantMap")
+    def openDiagnosticLogs(self):
+        return {"ok": True, "message": "opened diagnostic logs"}
 
 
 def test_settings_qml_instantiates_headlessly() -> None:
@@ -244,6 +252,9 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
 
     assert "preferences.volumePercent" in text
     assert "preferences.muted" in text
+    assert "preferences.audioOutputDeviceName" in text
+    assert '2: "audioOutput"' in text
+    assert "Audio Output" in text
     assert "preferences.skipBackSeconds" in text
     assert "preferences.skipForwardSeconds" in text
     assert "preferences.performanceProfile" in text
@@ -251,6 +262,11 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
     assert "preferences.artworkCacheLimitMb" in text
     assert "preferences.backgroundArtworkDuringPlayback" in text
     assert "preferences.reducedMotion" in text
+    assert "Diagnostic Logs" in text
+    assert "channelOS.openDiagnosticLogs()" in text
+    assert "preferences.controllerEnabled" in text
+    assert '11: "controllerEnabled"' in text
+    assert "Controller Input" in text
     assert "preferences.artworkCacheBytes" in text
     assert "channelOS.displayMode" in text
     assert "channelOS.changeDisplayMode" in text

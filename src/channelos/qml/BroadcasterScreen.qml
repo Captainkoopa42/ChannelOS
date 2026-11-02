@@ -29,6 +29,9 @@ Item {
     property int selectedChannelIndex: 0
     property string editorMode: "list"
     property int editingChannelNumber: 0
+    property int pendingDeleteChannelNumber: 0
+    property string pendingDeleteDisplayNumber: "---"
+    property string pendingDeleteName: ""
     property string feedbackMessage: ""
     property bool feedbackIsError: false
     property var previewData: ({ ok: false, items: [] })
@@ -58,6 +61,7 @@ Item {
     }
 
     function handleControllerIntent(intent: string): void {
+        if (classicAds.dialogOpen) { if (intent === "BACK") classicAds.cancelActive(); return }
         if (!hostWindow || hostWindow.screen !== "broadcaster")
             return
         if (intent === "BACK") {
@@ -107,8 +111,16 @@ Item {
         draftSources.append({ path: value })
     }
 
+    property var adDraftData: ({})
+    function loadAdDraft(number) {
+        var result = channelOS && typeof channelOS.loadChannelStudio === "function" ? channelOS.loadChannelStudio(number) : ({})
+        adDraftData = result && result.draft || ({})
+        classicAds.load(adDraftData)
+    }
+
     function beginCreate() {
         editorMode = "create"
+        loadAdDraft(0)
         editingChannelNumber = 0
         resetFeedback()
         previewData = ({ ok: false, items: [] })
@@ -133,7 +145,12 @@ Item {
             return
 
         var channel = selectedChannel()
+        if (String(channel.mode) === "calendar") {
+            openStudio(channel.channelNumber)
+            return
+        }
         editorMode = "edit"
+        loadAdDraft(Number(channel.channelNumber))
         editingChannelNumber = Number(channel.channelNumber)
         resetFeedback()
         previewData = ({ ok: false, items: [] })
@@ -154,6 +171,13 @@ Item {
         channelNameField.forceActiveFocus()
     }
 
+    function openStudio(channelNumber) {
+        if (!broadcasterRoot.hostWindow)
+            return
+        broadcasterRoot.hostWindow.studioChannelNumber = Number(channelNumber || 0)
+        broadcasterRoot.hostWindow.screen = "studio"
+    }
+
     function cancelEditor() {
         editorMode = "list"
         editingChannelNumber = 0
@@ -167,7 +191,7 @@ Item {
         for (var i = 0; i < draftSources.count; ++i)
             sources.push(draftSources.get(i).path)
 
-        return {
+        return Object.assign({
             channel: channelNumberField.text,
             name: channelNameField.text,
             description: descriptionField.text,
@@ -176,7 +200,7 @@ Item {
             avoidRepeatDays: repeatDays.value,
             numberWidth: numberWidth.value,
             sources: sources
-        }
+        }, classicAds.editorObject())
     }
 
     function previewDraft() {
@@ -223,6 +247,53 @@ Item {
             }
             broadcasterFocus.forceActiveFocus()
         }
+    }
+
+    function canDeleteSelectedChannel() {
+        return channels.length > 1 && Boolean(selectedChannel().managed)
+    }
+
+    function deleteUnavailableReason() {
+        if (channels.length <= 1)
+            return "Create a replacement before deleting the final channel"
+        if (!selectedChannel().managed)
+            return "External channel files cannot be deleted from Broadcaster"
+        return ""
+    }
+
+    function requestDeleteChannel() {
+        if (!channels.length)
+            return
+        if (!canDeleteSelectedChannel()) {
+            feedbackMessage = deleteUnavailableReason()
+            feedbackIsError = true
+            return
+        }
+        var channel = selectedChannel()
+        pendingDeleteChannelNumber = Number(channel.channelNumber)
+        pendingDeleteDisplayNumber = String(channel.displayNumber || "---")
+        pendingDeleteName = String(channel.name || "Untitled Channel")
+        deleteChannelDialog.open()
+    }
+
+    function deleteSelectedChannel() {
+        var removedIndex = selectedChannelIndex
+        var result = channelOS.deleteChannel(pendingDeleteChannelNumber)
+        setResult(result)
+
+        if (result && result.ok) {
+            snapshot = channelOS.broadcasterSnapshot
+            editorMode = "list"
+            editingChannelNumber = 0
+            previewData = ({ ok: false, items: [] })
+            selectedChannelIndex = Math.max(
+                        0,
+                        Math.min(removedIndex, channels.length - 1))
+            broadcasterFocus.forceActiveFocus()
+        }
+        pendingDeleteChannelNumber = 0
+        pendingDeleteDisplayNumber = "---"
+        pendingDeleteName = ""
     }
 
     function leaveBroadcaster() {
@@ -328,7 +399,18 @@ Item {
                             selectedChannelIndex + 1)
                 event.accepted = true
             } else if (event.key === Qt.Key_N) {
+                openStudio(0)
+                event.accepted = true
+            } else if (event.key === Qt.Key_S) {
+                openStudio(channels.length
+                           ? selectedChannel().channelNumber
+                           : 0)
+                event.accepted = true
+            } else if (event.key === Qt.Key_C) {
                 beginCreate()
+                event.accepted = true
+            } else if (event.key === Qt.Key_Delete) {
+                requestDeleteChannel()
                 event.accepted = true
             } else if (event.key === Qt.Key_E
                        || event.key === Qt.Key_Return
@@ -526,7 +608,7 @@ Item {
                                     width: parent.width
                                     text: modelData.mode.toUpperCase()
                                           + "   |   NOW: "
-                                          + (modelData.nowTitle || "Ready")
+                                          + (modelData.availabilityMessage || modelData.nowTitle || "Ready")
                                     color: broadcasterRoot.textSecondary
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
@@ -587,17 +669,47 @@ Item {
                     anchors.margins: 18
                     spacing: 12
 
-                    Button {
-                        text: "Create Channel"
-                        width: (parent.width - 12) / 2
+                    ChannelButton {
+                        text: "New in Studio"
+                        width: (parent.width - 48) / 5
+                        onClicked: broadcasterRoot.openStudio(0)
+                    }
+
+                    ChannelButton {
+                        text: "Open Studio"
+                        width: (parent.width - 48) / 5
+                        enabled: broadcasterRoot.channels.length > 0
+                        onClicked: broadcasterRoot.openStudio(
+                                       broadcasterRoot.selectedChannel().channelNumber)
+                    }
+
+                    ChannelButton {
+                        text: "Classic New"
+                        width: (parent.width - 48) / 5
                         onClicked: broadcasterRoot.beginCreate()
                     }
 
-                    Button {
-                        text: "Edit Existing"
-                        width: (parent.width - 12) / 2
+                    ChannelButton {
+                        text: broadcasterRoot.channels.length
+                              && broadcasterRoot.selectedChannel().mode === "calendar"
+                              ? "Studio Channel"
+                              : "Classic Edit"
+                        width: (parent.width - 48) / 5
                         enabled: broadcasterRoot.channels.length > 0
+                                 && broadcasterRoot.selectedChannel().mode !== "calendar"
                         onClicked: broadcasterRoot.beginEdit()
+                    }
+
+                    ChannelButton {
+                        text: "Delete Channel"
+                        width: (parent.width - 48) / 5
+                        enabled: broadcasterRoot.editorMode === "list"
+                                 && broadcasterRoot.canDeleteSelectedChannel()
+                        destructive: true
+                        onClicked: broadcasterRoot.requestDeleteChannel()
+                        ToolTip.visible: hovered && !enabled
+                                         && broadcasterRoot.editorMode === "list"
+                        ToolTip.text: broadcasterRoot.deleteUnavailableReason()
                     }
                 }
             }
@@ -651,6 +763,28 @@ Item {
                             color: broadcasterRoot.line
                         }
 
+                        Rectangle {
+                            visible: broadcasterRoot.feedbackMessage.length > 0
+                            width: parent.width
+                            height: listFeedbackText.implicitHeight + 28
+                            radius: 7
+                            color: broadcasterRoot.feedbackIsError
+                                   ? "#401c25" : "#123628"
+                            border.color: broadcasterRoot.feedbackIsError
+                                          ? broadcasterRoot.danger
+                                          : broadcasterRoot.liveGreen
+
+                            Text {
+                                id: listFeedbackText
+                                anchors.fill: parent
+                                anchors.margins: 14
+                                text: broadcasterRoot.feedbackMessage
+                                color: broadcasterRoot.textPrimary
+                                font.pixelSize: 14
+                                wrapMode: Text.WordWrap
+                            }
+                        }
+
                         GridLayout {
                             width: parent.width
                             columns: 2
@@ -679,7 +813,8 @@ Item {
 
                                     Text {
                                         width: parent.width
-                                        text: broadcasterRoot.selectedChannel().nowTitle
+                                        text: broadcasterRoot.selectedChannel().availabilityMessage
+                                              || broadcasterRoot.selectedChannel().nowTitle
                                               || "Runtime calculates the current program"
                                         color: broadcasterRoot.textPrimary
                                         font.pixelSize: 19
@@ -817,7 +952,7 @@ Item {
 
                                 Text {
                                     width: parent.width
-                                    text: "Creating a channel can never silently replace an existing channel number. Editing is an explicit separate action, writes atomically, and preserves a .bak copy of the prior definition."
+                                    text: "Creating never overwrites another channel. Editing writes atomically and preserves a .bak copy. Deleting requires confirmation and retains a dated recovery definition."
                                     color: broadcasterRoot.textPrimary
                                     font.pixelSize: 14
                                     wrapMode: Text.WordWrap
@@ -895,7 +1030,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                TextField {
+                                ChannelTextField {
                                     id: channelNumberField
                                     Layout.fillWidth: true
                                     placeholderText: "025"
@@ -927,7 +1062,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                TextField {
+                                ChannelTextField {
                                     id: channelNameField
                                     Layout.fillWidth: true
                                     placeholderText: "Sci-Fi Classics"
@@ -957,7 +1092,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                ComboBox {
+                                ChannelComboBox {
                                     id: modeBox
                                     Layout.fillWidth: true
                                     model: ["Sequential", "Shuffle"]
@@ -974,7 +1109,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                SpinBox {
+                                ChannelSpinBox {
                                     id: numberWidth
                                     Layout.fillWidth: true
                                     from: 1
@@ -994,7 +1129,7 @@ Item {
                                     color: broadcasterRoot.textSecondary
                                 }
 
-                                SpinBox {
+                                ChannelSpinBox {
                                     id: repeatDays
                                     Layout.fillWidth: true
                                     from: 0
@@ -1005,7 +1140,7 @@ Item {
                                 }
                             }
 
-                            CheckBox {
+                            ChannelCheckBox {
                                 id: preserveOrder
                                 text: "Preserve episode/source order"
                                 Layout.alignment: Qt.AlignBottom
@@ -1031,7 +1166,7 @@ Item {
                                 color: broadcasterRoot.textSecondary
                             }
 
-                            TextArea {
+                            ChannelTextArea {
                                 id: descriptionField
                                 width: parent.width
                                 height: 82
@@ -1081,7 +1216,7 @@ Item {
                                     width: parent.width
                                     spacing: 10
 
-                                    ComboBox {
+                                    ChannelComboBox {
                                         id: sourcePicker
                                         width: parent.width - addSourceButton.width - 10
                                         model: broadcasterRoot.sourceOptions
@@ -1089,7 +1224,7 @@ Item {
                                         activeFocusOnTab: true
                                     }
 
-                                    Button {
+                                    ChannelButton {
                                         id: addSourceButton
                                         text: "Add Source"
                                         enabled: broadcasterRoot.sourceOptions.length > 0
@@ -1132,7 +1267,7 @@ Item {
                                             elide: Text.ElideMiddle
                                         }
 
-                                        Button {
+                                        ChannelButton {
                                             id: removeSource
                                             anchors.right: parent.right
                                             anchors.verticalCenter: parent.verticalCenter
@@ -1140,10 +1275,22 @@ Item {
                                             width: 76
                                             height: 30
                                             text: "Remove"
+                                            destructive: true
                                             onClicked: draftSources.remove(index)
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Label { text: "ADVERTISING"; color: broadcasterRoot.accentBright; font.pixelSize: 12 }
+                            Label { text: classicAds.description(); color: broadcasterRoot.textSecondary; Layout.fillWidth: true; wrapMode: Text.Wrap }
+                            RowLayout {
+                                ChannelButton { text: "Ad Bin"; onClicked: classicAds.openBin() }
+                                ChannelButton { objectName: "classicAdBreaksButton"; text: "Ad Breaks"; onClicked: classicAds.openBasic() }
+                                ChannelButton { text: "Advanced Ad Settings…"; onClicked: classicAds.openAdvanced() }
                             }
                         }
 
@@ -1179,7 +1326,7 @@ Item {
                                         height: 1
                                     }
 
-                                    Button {
+                                    ChannelButton {
                                         id: previewButton
                                         text: "Preview"
                                         onClicked: broadcasterRoot.previewDraft()
@@ -1254,24 +1401,39 @@ Item {
                             width: parent.width
                             spacing: 12
 
-                            Button {
+                            ChannelButton {
                                 text: "Cancel"
                                 width: 130
                                 onClicked: broadcasterRoot.cancelEditor()
                             }
 
+                            ChannelButton {
+                                id: deleteChannelButton
+                                text: "Delete Channel"
+                                width: 150
+                                visible: broadcasterRoot.editorMode === "edit"
+                                enabled: broadcasterRoot.canDeleteSelectedChannel()
+                                destructive: true
+                                onClicked: broadcasterRoot.requestDeleteChannel()
+                                ToolTip.visible: hovered && !enabled
+                                ToolTip.text: broadcasterRoot.deleteUnavailableReason()
+                            }
+
                             Item {
-                                width: Math.max(0, parent.width - 130 - 160 - 160 - 36)
+                                width: Math.max(
+                                           0,
+                                           parent.width - 130 - 160 - 160 - 36
+                                           - (deleteChannelButton.visible ? 162 : 0))
                                 height: 1
                             }
 
-                            Button {
+                            ChannelButton {
                                 text: "Preview"
                                 width: 160
                                 onClicked: broadcasterRoot.previewDraft()
                             }
 
-                            Button {
+                            ChannelButton {
                                 text: broadcasterRoot.editorMode === "create"
                                       ? "Save Channel" : "Save Changes"
                                 width: 160
@@ -1303,8 +1465,11 @@ Item {
                 spacing: 30
 
                 Text { text: "UP/DOWN  Select Channel"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
-                Text { text: "N  New Channel"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
+                Text { text: "N  New Studio Channel"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
+                Text { text: "S  Open Studio"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
+                Text { text: "C  Classic New"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "E / ENTER  Edit"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
+                Text { text: "DEL  Delete"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "TAB  Fields"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "CTRL+S  Save"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
                 Text { text: "ESC  Back / Cancel"; color: broadcasterRoot.textSecondary; font.pixelSize: 13 }
@@ -1324,6 +1489,68 @@ Item {
         }
     }
 
+    Dialog {
+        id: deleteChannelDialog
+        anchors.centerIn: parent
+        implicitWidth: 540
+        modal: true
+        dim: true
+        padding: 24
+        closePolicy: Popup.CloseOnEscape
+        title: "Delete Channel "
+               + broadcasterRoot.pendingDeleteDisplayNumber + "?"
+        palette.window: broadcasterRoot.panelRaised
+        palette.windowText: broadcasterRoot.textPrimary
+        palette.button: broadcasterRoot.panelSoft
+        palette.buttonText: broadcasterRoot.textPrimary
+        background: Rectangle {
+            radius: 8
+            color: broadcasterRoot.panelRaised
+            border.color: broadcasterRoot.line
+            border.width: 1
+        }
+        onRejected: {
+            broadcasterRoot.pendingDeleteChannelNumber = 0
+            broadcasterRoot.pendingDeleteDisplayNumber = "---"
+            broadcasterRoot.pendingDeleteName = ""
+        }
+
+        footer: DialogButtonBox {
+            spacing: 12
+            padding: 16
+            background: Rectangle {
+                color: broadcasterRoot.panel
+                border.color: broadcasterRoot.line
+                border.width: 1
+            }
+            ChannelButton {
+                text: "Cancel"
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            ChannelButton {
+                text: "Delete Channel"
+                destructive: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+
+        onAccepted: broadcasterRoot.deleteSelectedChannel()
+
+        contentItem: Text {
+            width: 460
+            text: "Remove Channel "
+                  + broadcasterRoot.pendingDeleteDisplayNumber + " — "
+                  + broadcasterRoot.pendingDeleteName
+                  + " from the live lineup?\n\n"
+                  + "Its saved channel and viewer clocks will be cleared. "
+                  + "The definition is kept as a dated recovery backup, and "
+                  + "your media files are never deleted."
+            color: broadcasterRoot.textPrimary
+            font.pixelSize: 15
+            wrapMode: Text.Wrap
+        }
+    }
+
     Connections {
         target: channelOS
         function onBroadcasterChanged() {
@@ -1334,4 +1561,16 @@ Item {
     ListModel {
         id: draftSources
     }
+    AdSettingsEditor {
+        id: classicAds
+        objectName: "classicAdSettings"
+        hostItem: broadcasterRoot
+        channelNumber: Number(channelNumberField.text || 1)
+        channelName: channelNameField.text
+        mediaLibrary: broadcasterRoot.adDraftData.media || []
+        sourceOptions: broadcasterRoot.sourceOptions
+        previewProvider: function(settings) { return channelOS.previewChannel(Object.assign(broadcasterRoot.draftObject(), settings)) }
+        onSettingsApplied: { broadcasterRoot.previewData = ({ok:false, items:[]}); broadcasterRoot.feedbackMessage = "Ad settings updated in this draft."; broadcasterRoot.feedbackIsError = false }
+    }
+
 }

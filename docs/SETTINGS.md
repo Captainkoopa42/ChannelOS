@@ -1,7 +1,7 @@
 # ChannelOS Settings
 
-**Status:** Expanded Settings and performance profiles implemented; Windows
-validation pending on the feature branch
+**Status:** Expanded Settings, performance profiles, and selectable libVLC audio
+output implemented; Windows device-switch validation pending on the feature branch
 
 ChannelOS stores couch preferences in a small local JSON file. Settings do not
 edit the media index, watch history, channel definitions, or television clocks.
@@ -34,14 +34,27 @@ thumbnails until the cache fits.
 
 | Preference | Default | Choices / behavior |
 | --- | ---: | --- |
+| Audio Output | System Default | Any destination currently exposed by libVLC, such as speakers or headphones |
 | Volume | 100% | 0-100% in 5% steps |
 | Muted | Off | On / Off |
 | Skip Back | 10 seconds | 5, 10, 15, or 30 seconds |
 | Skip Forward | 30 seconds | 15, 30, 60, or 90 seconds |
+| Controller Input | On | On / Off; input is always suspended while another application has focus |
 
-Volume and mute changes apply to the active Live TV or On Demand session and
-become the next-launch defaults. Skip choices apply to both television and On
-Demand control intents.
+Audio Output, volume, and mute changes apply to both Live TV and On Demand and
+become the next-launch defaults. A choice is remembered even when that decoder
+has not been created yet. System Default deliberately returns routing to the
+operating system. Before the first media load, ChannelOS validates a saved
+destination against the outputs currently exposed by libVLC. A disconnected
+device falls back to System Default and that safe choice is persisted.
+Skip choices apply to both television and On Demand control intents.
+
+Controller Input is a persistent master switch for ChannelOS gamepad polling.
+When enabled, controller commands are accepted only while ChannelOS is the
+active application. Losing focus clears held-button state; returning to
+ChannelOS primes the current state so a button held in another application
+cannot trigger a delayed action. Keyboard and mouse input remain available when
+controller input is off, including for turning it back on.
 
 ## Truthful presentation
 
@@ -92,12 +105,22 @@ Preferences are stored locally at:
 .channelos/settings.json
 ```
 
-Writes use a temporary file followed by atomic replacement. A missing, damaged,
-or invalid file falls back safely to Standard defaults. Reset Defaults rewrites
-only this settings file and reapplies Standard mode.
+Writes use a temporary file followed by atomic replacement. Existing alpha
+settings files without an audio-device field migrate to System Default. A
+missing, damaged, or invalid file falls back safely to Standard defaults. Reset
+Defaults rewrites only this settings file, reapplies Standard mode, and restores
+System Default audio routing.
 
 ## Deliberate limits
 
-User-editable controller bindings, a light-color theme, playback-runtime
-selection, server/remote permissions, and startup/crash-recovery controls
-remain later work. Household viewer profiles are a separate roadmap feature.
+User-editable controller bindings, a light-color theme, audio-channel mapping,
+playback-runtime selection, server/remote permissions, and startup/crash-recovery
+controls remain later work. Household viewer profiles are a separate roadmap
+feature.
+
+## Release candidate validation
+
+Settings remain separate from channel/ad policy. In 0.0.6, leaving playback for
+Settings cancels pending numeric tuning. An unavailable lineup can still reach
+Library, Broadcaster and Settings. Physical speaker/headphone and controller
+checks are recorded separately in [Windows acceptance](releases/WINDOWS_0.0.6_ACCEPTANCE.md).

@@ -1,40 +1,27 @@
 from __future__ import annotations
 
+import logging
+import argparse
+import json
 import os
+import sqlite3
 import subprocess
 import sys
-import traceback
-from contextlib import redirect_stderr, redirect_stdout
-from datetime import datetime
+from collections.abc import Mapping
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Mapping, TextIO
 
 from . import couch
-from .first_run import FIRST_RUN_CANCELLED, first_run_required, run_first_run_setup
+from .diagnostics import DiagnosticSession
+from .first_run import (FIRST_RUN_CANCELLED, FIRST_RUN_OPEN_PORTABLE,
+                        PORTABLE_HANDOFF, first_run_required, run_first_run_setup)
+from .portable import (APP_FOLDER, DATA_FOLDER, PortableSetupError, SetupLock,
+                       find_setup, load_setup, remember_setup)
+from .portable_copy import inspect_setup
+from .storage import DatabaseVersionError
 
 DATA_DIRECTORY_ENV = "CHANNELOS_DATA_DIR"
 FIRST_RUN_FLAG = "--channelos-first-run-setup"
-
-
-class _Tee:
-    """Write diagnostics to a durable log and an optional attached console."""
-
-    def __init__(self, log: TextIO, console: TextIO | None) -> None:
-        self._log = log
-        self._console = console
-
-    def write(self, value: str) -> int:
-        self._log.write(value)
-        self._log.flush()
-        if self._console is not None:
-            self._console.write(value)
-            self._console.flush()
-        return len(value)
-
-    def flush(self) -> None:
-        self._log.flush()
-        if self._console is not None:
-            self._console.flush()
 
 
 def default_data_directory(environment: Mapping[str, str] | None = None) -> Path:
@@ -110,26 +97,80 @@ def _run_first_run_helper(data_directory: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Launch packaged ChannelOS with writable per-user state and a log file."""
+    """Launch the selected setup, retaining its drive lease until Qt exits."""
+
+    with ExitStack() as lifetime:
+        try:
+            return _launch(argv, lifetime)
+        except (ValueError, OSError, sqlite3.Error, DatabaseVersionError) as exc:
+            message = f"ChannelOS could not open this setup.\n\n{exc}"
+            logging.getLogger(__name__).error(message)
+            _show_error(message)
+            return 6
+
+
+def _launch(argv: list[str] | None, lifetime: ExitStack) -> int:
 
     supplied = list(sys.argv[1:] if argv is None else argv)
+    selector = argparse.ArgumentParser(add_help=False)
+    selector.add_argument('--portable-setup', type=Path)
+    options, supplied = selector.parse_known_args(supplied)
+    portable = None
+    if options.portable_setup is not None:
+        portable = load_setup(inspect_setup(options.portable_setup)['root'])
+    elif getattr(sys, 'frozen', False) and FIRST_RUN_FLAG not in supplied:
+        portable = find_setup(sys.executable)
+        if portable is None and Path(sys.executable).parent.name == APP_FOLDER:
+            raise PortableSetupError('The portable drive or its setup marker is missing. Reconnect the drive or use Open Existing Setup from another ChannelOS copy.')
     data_directory = default_data_directory().resolve(strict=False)
+    if portable is None and FIRST_RUN_FLAG not in supplied:
+        portable = find_setup(data_directory)
+        if portable is None and data_directory.name == DATA_FOLDER:
+            raise PortableSetupError('The portable setup marker is missing. No replacement data folder was created.')
+    if portable is not None:
+        if any(argument.split('=', 1)[0] in {'--db', '--state-db', '--channels-dir'} for argument in supplied):
+            raise PortableSetupError('Open a portable setup without separate database or channel paths, so all changes stay together on the drive.')
+        # Validate before creating directories, migrating databases or taking logs.
+        inspect_setup(portable.root)
+        lifetime.enter_context(SetupLock(portable))
+        data_directory = portable.data_directory
+        try:
+            remember_setup(portable)
+        except OSError:
+            logging.getLogger(__name__).warning('Could not remember this portable setup on the current PC')
     channels_directory = data_directory / "channels"
     logs_directory = data_directory / "logs"
     channels_directory.mkdir(parents=True, exist_ok=True)
     logs_directory.mkdir(parents=True, exist_ok=True)
 
     if FIRST_RUN_FLAG in supplied:
-        return run_first_run_setup(data_directory)
+        with DiagnosticSession(logs_directory) as diagnostics:
+            diagnostics.install_qt_message_handler()
+            try:
+                return run_first_run_setup(data_directory)
+            except Exception:
+                logging.getLogger(__name__).exception("First-run setup crashed")
+                return 1
 
     if (
         getattr(sys, "frozen", False)
+        and portable is None
         and _ordinary_first_run_candidate(supplied)
         and first_run_required(data_directory)
     ):
+        (data_directory / PORTABLE_HANDOFF).unlink(missing_ok=True)
         setup_result = _run_first_run_helper(data_directory)
         if setup_result == FIRST_RUN_CANCELLED:
             return 0
+        if setup_result == FIRST_RUN_OPEN_PORTABLE:
+            handoff = data_directory / PORTABLE_HANDOFF
+            try:
+                root = json.loads(handoff.read_text(encoding='utf-8'))['root']
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise PortableSetupError('The selected setup could not be opened. Start ChannelOS and choose Open Existing Setup again.') from exc
+            finally:
+                handoff.unlink(missing_ok=True)
+            return _launch(['--portable-setup', str(root), *supplied], lifetime)
         if setup_result:
             _show_error(
                 "ChannelOS setup could not finish.\n\n"
@@ -138,24 +179,29 @@ def main(argv: list[str] | None = None) -> int:
             )
             return setup_result
 
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    log_path = logs_directory / f"channelos-{timestamp}.log"
-
-    with log_path.open("w", encoding="utf-8", buffering=1) as log:
-        stdout = _Tee(log, getattr(sys, "__stdout__", None))
-        stderr = _Tee(log, getattr(sys, "__stderr__", None))
+    with DiagnosticSession(logs_directory) as diagnostics:
+        diagnostics.install_qt_message_handler()
+        stdout = diagnostics.stdout_stream(getattr(sys, "__stdout__", None))
+        stderr = diagnostics.stderr_stream(getattr(sys, "__stderr__", None))
         try:
             with redirect_stdout(stdout), redirect_stderr(stderr):
                 exit_code = couch.main(couch_arguments(supplied, data_directory))
         except Exception:
-            traceback.print_exc(file=log)
+            logging.getLogger(__name__).exception("ChannelOS application crashed")
             exit_code = 1
+        finally:
+            stdout.flush()
+            stderr.flush()
+        logging.getLogger(__name__).info(
+            "ChannelOS exited with code %d",
+            exit_code,
+        )
 
     if exit_code:
         _show_error(
             "ChannelOS could not start.\n\n"
-            "Your diagnostic log is here:\n\n"
-            f"{log_path}"
+            "Your diagnostic logs are here:\n\n"
+            f"{logs_directory}"
         )
     return exit_code
 

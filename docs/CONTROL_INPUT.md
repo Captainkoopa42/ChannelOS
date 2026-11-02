@@ -45,6 +45,12 @@ active XInput slot is checked first. A newly connected controller is primed
 with its current state: buttons or sticks already held during connection must
 be released before they can trigger an action.
 
+Polling and dispatch are focus-aware. While ChannelOS is not the active
+application, the Qt bridge suspends XInput reads and forgets held-input state.
+On focus return it primes a fresh controller sample before dispatch resumes, so
+using the same controller in a game or another application cannot also move the
+ChannelOS interface in the background.
+
 Only the first available XInput controller controls the couch UI in this slice.
 Disconnecting it does not interrupt playback or keyboard control. The optional
 adapter can be disabled for diagnosis before launch:
@@ -54,6 +60,9 @@ $env:CHANNELOS_DISABLE_CONTROLLER = "1"
 ```
 
 Remove that environment variable, or set it to `0`, to enable discovery again.
+The normal user-facing **Controller Input** switch in Settings persists the same
+choice without requiring an environment variable. Keyboard and mouse controls
+remain available when the switch is off.
 
 ## Default gamepad layout
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -21,6 +22,8 @@ DEFAULT_DATABASE = Path(".channelos") / "library.db"
 DEFAULT_RUNTIME_DATABASE = Path(".channelos") / "runtime.db"
 DEFAULT_CHANNEL_DIRECTORY = Path("channels")
 
+logger = logging.getLogger(__name__)
+
 
 class CouchUIError(RuntimeError):
     """Raised when the couch UI cannot be started."""
@@ -37,21 +40,19 @@ def _open_runtimes(
             definition = load_channel(path)
         except ChannelValidationError as exc:
             raise CouchUIError(str(exc)) from exc
-        resolved = resolve_channel(definition, library)
-        if not resolved.media:
-            raise CouchUIError(
-                f"Channel {definition.display_number} — {definition.name} has no indexed online media. "
-                "Scan its source folders first."
-            )
         try:
-            opened.append(ChannelRuntime.open(resolved, store))
+            from .media_resilience import _resolved_runtime
+            runtime = _resolved_runtime(definition, library, store,
+                persistent_when_complete=True, verify_files=True)
+            if runtime is not None:
+                opened.append(runtime)
+            else:
+                logger.warning("Channel %s has no available media; retained in Broadcaster", definition.display_number)
         except ChannelRuntimeError as exc:
+            for runtime in opened:
+                if runtime.break_store is not None:
+                    runtime.break_store.close()
             raise CouchUIError(str(exc)) from exc
-    if not opened:
-        raise CouchUIError(
-            "couch UI requires at least one channel. Provide a channel YAML "
-            f"or create one in {DEFAULT_CHANNEL_DIRECTORY}."
-        )
     return tuple(opened)
 
 
@@ -63,6 +64,7 @@ def run_couch(
     channels_dir: Path = DEFAULT_CHANNEL_DIRECTORY,
     windowed: bool = False,
 ) -> int:
+    logger.info("Opening ChannelOS couch runtime")
     library = MediaLibrary(db)
     store = RuntimeStore(state_db)
 
@@ -71,19 +73,25 @@ def run_couch(
             paths,
             channels_dir,
             library,
+            runtime_database_path=state_db,
         )
+        broadcaster.runtime_database_path = Path(state_db)
     except (BroadcasterError, ChannelValidationError) as exc:
         raise CouchUIError(str(exc)) from exc
 
     runtimes = _open_runtimes(broadcaster.paths, library, store)
-    service = GuideService(runtimes)
+    logger.info("Couch runtime ready channels=%d", len(runtimes))
+    service = GuideService(runtimes, definitions=tuple(record.definition for record in broadcaster.records))
     television = TelevisionRuntime(runtimes, store)
 
     try:
         from . import broadcaster_qt
         from .broadcaster_qt import run_qt
         from .display_mode import install_display_mode_support
+        from .interaction import install_interaction_support
+        from .media_resilience import install_media_resilience_support
         from .vlc_probe import install_packaged_media_scan_support
+        from .portable_qt import install_portable_support
     except (ImportError, OSError) as exc:
         raise CouchUIError(
             "ChannelOS couch UI requires the optional Qt package. "
@@ -92,6 +100,9 @@ def run_couch(
 
     install_display_mode_support(broadcaster_qt)
     install_packaged_media_scan_support(broadcaster_qt)
+    install_media_resilience_support(broadcaster_qt)
+    install_portable_support(broadcaster_qt)
+    install_interaction_support(broadcaster_qt)
     return run_qt(
         service,
         television,
@@ -138,6 +149,10 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        '--portable-setup', type=Path,
+        help='open an existing portable setup and save directly on its drive',
+    )
+    parser.add_argument(
         "--windowed",
         action="store_true",
         help="launch in a normal window instead of fullscreen",
@@ -147,6 +162,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.portable_setup is not None:
+        from .windows_app import main as launch_setup
+        return launch_setup(list(sys.argv[1:] if argv is None else argv))
     try:
         return run_couch(
             args.paths,

@@ -34,6 +34,30 @@ class NativeVideoSurface:
             raise ValueError("native video window_id must be a positive integer")
 
 
+@dataclass(frozen=True, slots=True)
+class AudioOutputDevice:
+    """One audio destination exposed by the active playback backend."""
+
+    device_id: str
+    name: str
+
+
+def resolve_audio_output_device_id(
+    saved_device_id: str,
+    available_devices: tuple[AudioOutputDevice, ...],
+) -> str:
+    """Return a usable saved destination or the system-default identifier."""
+
+    selected = str(saved_device_id)
+    if not selected:
+        return ""
+    return (
+        selected
+        if any(device.device_id == selected for device in available_devices)
+        else ""
+    )
+
+
 def _bundled_vlc_runtime_candidates() -> tuple[Path, ...]:
     """Return ChannelOS-owned libVLC locations in product-first order."""
 
@@ -77,6 +101,11 @@ def _prepare_windows_vlc_runtime() -> tuple[Any | None, Path | None]:
         plugins = candidate / "plugins"
         if plugins.is_dir():
             os.environ["VLC_PLUGIN_PATH"] = str(plugins)
+        # python-vlc can explicitly CDLL('.\\libvlc.dll'), bypassing the DLL
+        # directory registered below. Give its binding the absolute primary
+        # library as well as the dependency/plugin search paths.
+        os.environ["PYTHON_VLC_LIB_PATH"] = str(candidate / "libvlc.dll")
+        os.environ["PYTHON_VLC_MODULE_PATH"] = str(candidate)
 
         add_dll_directory = getattr(os, "add_dll_directory", None)
         if add_dll_directory is not None:
@@ -132,12 +161,35 @@ class PlaybackBackend(ABC):
 
         return False
 
+    def playback_error(self) -> str | None:
+        """Return an asynchronous decoder failure, when one has occurred."""
+
+        return None
+
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         """Attach a native presentation target when this backend supports embedding."""
 
         raise PlaybackUnavailableError(
             f"{type(self).__name__} does not support an embedded native video surface"
         )
+
+    def list_audio_output_devices(self) -> tuple[AudioOutputDevice, ...]:
+        """Return selectable audio destinations, excluding the system default."""
+
+        return ()
+
+    def set_audio_output_device(self, device_id: str | None) -> None:
+        """Select an audio destination, or the operating-system default with ``None``."""
+
+        if device_id:
+            raise PlaybackUnavailableError(
+                f"{type(self).__name__} does not support audio-output selection"
+            )
+
+    def set_transition_level(self, level: float) -> None:
+        """Apply an independent audio/video fade envelope, preserving user settings."""
+        if level != 1.0:
+            raise PlaybackUnavailableError(f"{type(self).__name__} does not support fades")
 
 
 class LibVLCBackend(PlaybackBackend):
@@ -156,6 +208,10 @@ class LibVLCBackend(PlaybackBackend):
             ) from exc
 
         self._vlc: Any = vlc
+        self._loaded_path: Path | None = None
+        self._user_volume: int | None = None
+        self._user_muted: bool | None = None
+        self._transition_level = 1.0
         try:
             self._instance = vlc.Instance(*instance_options)
             self._player = self._instance.media_player_new()
@@ -184,20 +240,51 @@ class LibVLCBackend(PlaybackBackend):
                 raise PlaybackUnavailableError(
                     f"libVLC does not support native video platform {surface.platform!r}"
                 )
+            self._fit_source_aspect_to_surface()
         except (AttributeError, TypeError, ValueError) as exc:
             raise PlaybackUnavailableError(
                 f"libVLC could not attach the {surface.platform} video surface"
             ) from exc
 
+    def _fit_source_aspect_to_surface(self) -> None:
+        """Preserve the source ratio while fitting it inside the native window.
+
+        libVLC keeps video-output overrides on the media player.  Explicitly
+        clearing them prevents a prior crop or forced ratio from stretching the
+        next programme when ChannelOS reuses the player and its HWND.  A scale
+        of zero is libVLC's autoscale mode: the complete picture fits inside
+        the available surface and any unused area becomes letterboxing.
+        """
+
+        self._player.video_set_aspect_ratio(None)
+        self._player.video_set_crop_geometry(None)
+        self._player.video_set_scale(0.0)
+
     def load(self, path: str | Path) -> None:
         media_path = Path(path).expanduser().resolve(strict=False)
+        if not media_path.is_file():
+            raise PlaybackError(
+                "Media file is unavailable: "
+                f"{media_path}. Restore the file or re-scan its Library folder."
+            )
+        try:
+            with media_path.open("rb"):
+                pass
+        except OSError as exc:
+            raise PlaybackError(
+                f"Media file cannot be read: {media_path} ({exc})"
+            ) from exc
         media = self._instance.media_new_path(str(media_path))
         self._player.set_media(media)
+        self._loaded_path = media_path
 
     def play(self) -> None:
         result = self._player.play()
         if isinstance(result, int) and result < 0:
             raise PlaybackError("libVLC could not start playback")
+        # Reapply after play() as libVLC can create a fresh video output when a
+        # programme changes or playback resumes after natural end-of-file.
+        self._fit_source_aspect_to_surface()
 
     def pause(self) -> None:
         if hasattr(self._player, "set_pause"):
@@ -226,22 +313,145 @@ class LibVLCBackend(PlaybackBackend):
         except Exception:
             return False
 
+    def playback_error(self) -> str | None:
+        # Audio outputs are recreated asynchronously as streams change. Keep
+        # user intent through silent clips and machines without an audio device.
+        self._apply_audio_settings()
+        try:
+            state = self._player.get_state()
+        except Exception:
+            return None
+        target = (
+            str(self._loaded_path)
+            if self._loaded_path is not None
+            else "the selected media"
+        )
+        if state == self._vlc.State.Error:
+            return (
+                f"libVLC could not open or decode {target}. "
+                "Verify the file still plays in VLC, then re-scan its Library folder."
+            )
+
+        # A zero vout count is not a decoder error by itself. Qt deliberately
+        # hides the native video child on management screens, and libVLC can
+        # also recreate its vout briefly during seeks and window transitions.
+        # Treat only libVLC's explicit Error state as fatal so a transient or
+        # intentionally hidden surface cannot latch playback off.
+        return None
+
     def set_volume(self, percent: int) -> None:
         if not 0 <= percent <= 100:
             raise ValueError("volume must be from 0 through 100 percent")
-        result = self._player.audio_set_volume(percent)
+        self._user_volume = percent
+        result = self._player.audio_set_volume(round(percent * self._transition_level))
         if isinstance(result, int) and result < 0:
             raise PlaybackError(f"libVLC rejected volume {percent}")
 
     def get_volume(self) -> int:
+        if self._user_volume is not None:
+            return self._user_volume
         value = self._player.audio_get_volume()
         return max(0, int(value))
 
+    def set_transition_level(self, level: float) -> None:
+        import math
+        if not math.isfinite(level) or not 0 <= level <= 1:
+            raise ValueError("transition level must be from zero through one")
+        volume = self.get_volume()
+        self._transition_level = level
+        self.set_volume(volume)
+        # libVLC's adjust filter supports brightness 0 (black) through 2.
+        # A single decoder fades through black; media never overlaps in time.
+        enabled = self._vlc.VideoAdjustOption.Enable
+        brightness = self._vlc.VideoAdjustOption.Brightness
+        self._player.video_set_adjust_int(enabled, int(level < 1.0))
+        self._player.video_set_adjust_float(brightness, float(level))
+
     def set_muted(self, muted: bool) -> None:
-        self._player.audio_set_mute(bool(muted))
+        self._user_muted = bool(muted)
+        self._player.audio_set_mute(self._user_muted)
 
     def get_muted(self) -> bool:
-        return bool(self._player.audio_get_mute())
+        if getattr(self, "_user_muted", None) is not None:
+            return self._user_muted
+        value = self._player.audio_get_mute()
+        return bool(value) if value is not None and value >= 0 else False
+
+    def _apply_audio_settings(self) -> None:
+        if getattr(self, "_user_volume", None) is not None:
+            self._player.audio_set_volume(round(self._user_volume * self._transition_level))
+        if getattr(self, "_user_muted", None) is not None:
+            self._player.audio_set_mute(self._user_muted)
+
+    @staticmethod
+    def _decode_vlc_text(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value)
+
+    def list_audio_output_devices(self) -> tuple[AudioOutputDevice, ...]:
+        """Enumerate libVLC audio destinations and release its native list."""
+
+        try:
+            head = self._player.audio_output_device_enum()
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise PlaybackUnavailableError(
+                "libVLC could not enumerate audio output devices"
+            ) from exc
+
+        if not head:
+            return ()
+
+        devices: list[AudioOutputDevice] = []
+        seen: set[str] = set()
+        node = head
+        try:
+            # libVLC returns a null-terminated native linked list. The limit is
+            # defensive protection against a malformed third-party audio module.
+            for _ in range(512):
+                if not node:
+                    break
+                current = node.contents
+                device_id = self._decode_vlc_text(current.device)
+                name = self._decode_vlc_text(current.description)
+                if device_id and device_id not in seen:
+                    devices.append(
+                        AudioOutputDevice(
+                            device_id=device_id,
+                            name=name or device_id,
+                        )
+                    )
+                    seen.add(device_id)
+                node = current.next
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise PlaybackUnavailableError(
+                "libVLC returned an invalid audio output device list"
+            ) from exc
+        finally:
+            release = getattr(
+                self._vlc,
+                "libvlc_audio_output_device_list_release",
+                None,
+            )
+            if release is not None:
+                release(head)
+
+        return tuple(devices)
+
+    def set_audio_output_device(self, device_id: str | None) -> None:
+        """Switch libVLC immediately; ``None`` follows the system default."""
+
+        selected = None if not device_id else str(device_id)
+        try:
+            # Passing no module lets libVLC route the identifier to the active
+            # audio output. libVLC 3 exposes no useful success return here.
+            self._player.audio_output_device_set(None, selected)
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise PlaybackUnavailableError(
+                "libVLC could not select the requested audio output device"
+            ) from exc
 
     def set_rate(self, rate: float) -> None:
         if rate <= 0:

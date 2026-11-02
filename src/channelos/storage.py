@@ -89,7 +89,8 @@ def inspect_database_version(
         return None
 
     table = _validate_identifier(meta_table)
-    connection = sqlite3.connect(path, timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000)
+    connection = sqlite3.connect(f'{path.resolve().as_uri()}?mode=ro', uri=True,
+                                 timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000)
     try:
         tables = {
             str(row[0])

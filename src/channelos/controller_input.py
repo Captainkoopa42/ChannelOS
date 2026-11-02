@@ -378,6 +378,13 @@ class ControllerInputHub:
     def controller_name(self) -> str:
         return self._controller_name
 
+    def reset(self) -> None:
+        """Forget connection and held-input state without dispatching commands."""
+
+        self._controller_id = ""
+        self._controller_name = ""
+        self._mapper.reset()
+
     def poll(self, *, now: float | None = None) -> tuple[ControlCommand, ...]:
         sampled_at = time.monotonic() if now is None else float(now)
         try:

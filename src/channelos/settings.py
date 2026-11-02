@@ -8,9 +8,11 @@ from typing import Any, Mapping
 
 DEFAULT_VOLUME_PERCENT = 100
 DEFAULT_MUTED = False
+DEFAULT_AUDIO_OUTPUT_DEVICE_ID = ""
 DEFAULT_SKIP_BACK_SECONDS = 10
 DEFAULT_SKIP_FORWARD_SECONDS = 30
 DEFAULT_DISPLAY_MODE = "fullscreen"
+DEFAULT_CONTROLLER_ENABLED = True
 DISPLAY_MODES = ("fullscreen", "windowed")
 SKIP_BACK_CHOICES = (5, 10, 15, 30)
 SKIP_FORWARD_CHOICES = (15, 30, 60, 90)
@@ -44,9 +46,11 @@ class CouchSettings:
 
     volume_percent: int = DEFAULT_VOLUME_PERCENT
     muted: bool = DEFAULT_MUTED
+    audio_output_device_id: str = DEFAULT_AUDIO_OUTPUT_DEVICE_ID
     skip_back_seconds: int = DEFAULT_SKIP_BACK_SECONDS
     skip_forward_seconds: int = DEFAULT_SKIP_FORWARD_SECONDS
     display_mode: str = DEFAULT_DISPLAY_MODE
+    controller_enabled: bool = DEFAULT_CONTROLLER_ENABLED
     performance_profile: str = "standard"
     generate_video_thumbnails: bool = True
     artwork_cache_limit_mb: int = 0
@@ -83,6 +87,13 @@ class CouchSettings:
         if not isinstance(muted, bool):
             muted = DEFAULT_MUTED
 
+        audio_output_device_id = values.get(
+            "audio_output_device_id",
+            DEFAULT_AUDIO_OUTPUT_DEVICE_ID,
+        )
+        if not isinstance(audio_output_device_id, str):
+            audio_output_device_id = DEFAULT_AUDIO_OUTPUT_DEVICE_ID
+
         skip_back = values.get(
             "skip_back_seconds",
             DEFAULT_SKIP_BACK_SECONDS,
@@ -102,6 +113,13 @@ class CouchSettings:
         ).strip().lower()
         if display_mode not in DISPLAY_MODES:
             display_mode = DEFAULT_DISPLAY_MODE
+
+        controller_enabled = values.get(
+            "controller_enabled",
+            DEFAULT_CONTROLLER_ENABLED,
+        )
+        if not isinstance(controller_enabled, bool):
+            controller_enabled = DEFAULT_CONTROLLER_ENABLED
 
         performance_profile = str(
             values.get("performance_profile", "standard")
@@ -163,9 +181,11 @@ class CouchSettings:
         return cls(
             volume_percent=max(0, min(100, int(volume))),
             muted=muted,
+            audio_output_device_id=audio_output_device_id,
             skip_back_seconds=int(skip_back),
             skip_forward_seconds=int(skip_forward),
             display_mode=display_mode,
+            controller_enabled=controller_enabled,
             performance_profile=performance_profile,
             generate_video_thumbnails=generate_video_thumbnails,
             artwork_cache_limit_mb=int(cache_limit),
@@ -208,3 +228,35 @@ class SettingsStore:
 
     def reset(self) -> CouchSettings:
         return self.save(CouchSettings())
+
+
+class PortableSettingsStore(SettingsStore):
+    """Travel preferences with the drive, retaining device IDs on this computer."""
+
+    def __init__(self, path, portable, machine_path):
+        super().__init__(path)
+        self.portable = portable
+        self.machine_path = Path(machine_path)
+
+    def load(self) -> CouchSettings:
+        settings = super().load().to_mapping()
+        try:
+            machine = json.loads(self.machine_path.read_text(encoding='utf-8'))
+            settings['audio_output_device_id'] = machine.get('audio_output_device_id', '')
+        except (OSError, ValueError, AttributeError):
+            settings['audio_output_device_id'] = ''
+        return CouchSettings.from_mapping(settings)
+
+    def save(self, settings: CouchSettings) -> CouchSettings:
+        self.portable.check_available()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        values = settings.to_mapping()
+        device = values.pop('audio_output_device_id', '')
+        temporary = self.path.with_name(self.path.name + '.tmp')
+        temporary.write_text(json.dumps(values, indent=2), encoding='utf-8')
+        temporary.replace(self.path)
+        self.machine_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.machine_path.with_name(self.machine_path.name + '.tmp')
+        temporary.write_text(json.dumps({'audio_output_device_id': device}), encoding='utf-8')
+        temporary.replace(self.machine_path)
+        return settings

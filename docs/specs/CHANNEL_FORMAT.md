@@ -1,6 +1,7 @@
 # Channel Definition Format
 
-**Specification:** ChannelOS Channel Definition 0.1  
+**Specification:** ChannelOS Channel Definition 0.1 and 0.2
+
 **Status:** Draft
 
 ## Purpose
@@ -25,7 +26,11 @@ programming:
 
 ### `schema_version`
 
-Required string. For the initial draft the only supported value is `0.1`.
+Required string. Supported values are:
+
+- `0.1` for sequential and shuffle channels,
+- `0.2` for the compatible calendar extension used by Channel Studio.
+- `0.3` for calendar blocks with an embedded show-specific filler pool.
 
 ### `channel`
 
@@ -76,6 +81,75 @@ programming:
   avoid_repeat_days: 14
 ```
 
+Draft 0.2 retains those fields and adds calendar programming:
+
+- `mode: calendar`
+- `filler_mode`: `sequential` or `shuffle`; this is the ordinary channel pool
+  used wherever no fixed calendar block is airing
+- `calendar`: a non-empty list of exact fixed blocks
+
+Each fixed block contains an aware ISO-8601 `start_utc` and a stable Library
+`asset_id`. ChannelOS sorts blocks by their normalized UTC start and rejects
+duplicate starts, unavailable assets, unknown/non-positive durations, and
+overlapping programs.
+
+```yaml
+schema_version: "0.2"
+channel: 9
+name: Saturday Television
+sources:
+  - path: /media/TV
+programming:
+  mode: calendar
+  filler_mode: shuffle
+  preserve_episode_order: false
+  avoid_repeat_days: 0
+  calendar:
+    - start_utc: "2026-09-12T12:00:00+00:00"
+      asset_id: "sha256:0123456789abcdef..."
+    - start_utc: "2026-09-12T12:24:00+00:00"
+      asset_id: "sha256:fedcba9876543210..."
+presentation:
+  number_width: 3
+```
+
+The Studio displays dates and times in the machine's local timezone, but saves
+aware UTC timestamps so the portable definition is unambiguous. Calendar
+blocks are one-time fixed starts. Before, between, and after those blocks, the
+configured filler cycle keeps the channel broadcasting without decoding every
+channel in the background.
+
+Draft 0.3 adds an optional `filler` mapping to an individual calendar block.
+Its `mode` is `sequential` or `shuffle`, and `asset_ids` is a non-empty list of
+stable Library assets. Once that fixed show ends, the block's filler pool airs
+until the next fixed block; gaps before the first block and blocks without this
+mapping continue using the channel-wide filler.
+
+```yaml
+schema_version: "0.3"
+channel: 9
+name: Saturday Television
+sources:
+  - path: /media/TV
+programming:
+  mode: calendar
+  filler_mode: sequential
+  calendar:
+    - start_utc: "2026-09-12T12:00:00+00:00"
+      asset_id: "sha256:show..."
+      filler:
+        mode: shuffle
+        asset_ids:
+          - "sha256:bumper-one..."
+          - "sha256:bumper-two..."
+```
+
+Reusable Studio groups are local authoring conveniences stored under the
+managed channel directory. When assigned to a show, their members are copied
+into the portable channel definition. Playback therefore remains offline and
+self-contained: later deleting a reusable group cannot silently change an
+already-applied channel.
+
 ### `presentation`
 
 Optional display hints. These do not change media ownership or scheduling semantics.
@@ -94,14 +168,25 @@ The following do **not** belong in the portable channel definition:
 - generated schedule cache
 - recently played item IDs
 - scanner cache
-- resolved absolute media IDs
+- generated/resolved media lists (an explicit 0.2 calendar block may contain
+  the stable asset ID the user deliberately scheduled)
 
 Those values belong in runtime state and may be safely deleted without altering the user's channel intent.
 
 ## Validation philosophy
 
-The parser should reject ambiguous or unsupported input early. Unknown top-level keys are rejected in draft 0.1 so mistakes are visible rather than silently ignored. Future schema migrations should be explicit.
+The parser rejects ambiguous or unsupported input early. Unknown fields are
+rejected so mistakes are visible rather than silently ignored. Schema
+migrations are explicit; a 0.1 channel never silently acquires 0.2 semantics.
 
 ## Portability rule
 
 A third-party program should be able to implement this specification without importing ChannelOS source code. That is a feature, not a leak.
+
+## Application 0.0.6 compatibility
+
+The application continues to read channel schemas 0.1–0.6. No new keys are added to
+the strict schema-0.6 ad snapshot: its occurrence IDs, start/end, policy revision
+and segment timing bind it to the current parent. Stale future snapshots are
+rebuilt through chronological reconciliation. Runtime schema 3 stores lifecycle,
+calendar provenance and program-clock scope separately from portable channel intent.

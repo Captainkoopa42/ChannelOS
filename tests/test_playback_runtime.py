@@ -19,6 +19,8 @@ def test_windows_vlc_override_registers_runtime(monkeypatch, tmp_path: Path) -> 
     sentinel = object()
     registered: list[str] = []
 
+    monkeypatch.setenv("PYTHON_VLC_LIB_PATH", "")
+    monkeypatch.setenv("PYTHON_VLC_MODULE_PATH", "")
     monkeypatch.setattr(playback, "IS_WINDOWS", True)
     monkeypatch.setattr(playback, "_bundled_vlc_runtime_candidates", lambda: ())
     monkeypatch.setenv(playback.VLC_RUNTIME_ENV, str(runtime))
@@ -35,6 +37,8 @@ def test_windows_vlc_override_registers_runtime(monkeypatch, tmp_path: Path) -> 
     assert selected == runtime
     assert registered == [str(runtime)]
     assert playback.os.environ["VLC_PLUGIN_PATH"] == str(runtime / "plugins")
+    assert playback.os.environ["PYTHON_VLC_LIB_PATH"] == str(runtime / "libvlc.dll")
+    assert playback.os.environ["PYTHON_VLC_MODULE_PATH"] == str(runtime)
 
 
 def test_bundled_vlc_precedes_developer_override(monkeypatch, tmp_path: Path) -> None:
@@ -42,6 +46,8 @@ def test_bundled_vlc_precedes_developer_override(monkeypatch, tmp_path: Path) ->
     override = _make_vlc_runtime(tmp_path / "override")
     registered: list[str] = []
 
+    monkeypatch.setenv("PYTHON_VLC_LIB_PATH", "")
+    monkeypatch.setenv("PYTHON_VLC_MODULE_PATH", "")
     monkeypatch.setattr(playback, "IS_WINDOWS", True)
     monkeypatch.setattr(playback, "_bundled_vlc_runtime_candidates", lambda: (bundled,))
     monkeypatch.setenv(playback.VLC_RUNTIME_ENV, str(override))
@@ -77,9 +83,18 @@ def test_native_video_surface_validates_platform_and_handle() -> None:
         playback.NativeVideoSurface("windows", 0)
 
 
+def test_libvlc_rejects_a_missing_media_path_before_decoder_start(
+    tmp_path: Path,
+) -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+
+    with pytest.raises(playback.PlaybackError, match="Media file is unavailable"):
+        backend.load(tmp_path / "moved-movie.mkv")
+
+
 class _FakePlayer:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, int]] = []
+        self.calls: list[tuple[str, object]] = []
 
     def set_hwnd(self, handle: int) -> None:
         self.calls.append(("windows", handle))
@@ -90,6 +105,22 @@ class _FakePlayer:
     def set_nsobject(self, handle: int) -> None:
         self.calls.append(("macos", handle))
 
+    def video_set_aspect_ratio(self, ratio) -> None:
+        self.calls.append(("aspect", ratio))
+
+    def video_set_crop_geometry(self, geometry) -> None:
+        self.calls.append(("crop", geometry))
+
+    def video_set_scale(self, scale: float) -> None:
+        self.calls.append(("scale", scale))
+
+    def play(self) -> int:
+        self.calls.append(("play", None))
+        return 0
+
+    def get_state(self):
+        return "error"
+
 
 @pytest.mark.parametrize("platform", ["windows", "x11", "macos"])
 def test_libvlc_routes_native_surface_to_platform_method(platform: str) -> None:
@@ -99,4 +130,139 @@ def test_libvlc_routes_native_surface_to_platform_method(platform: str) -> None:
 
     backend.attach_video_surface(playback.NativeVideoSurface(platform, 4242))
 
-    assert player.calls == [(platform, 4242)]
+    assert player.calls == [
+        (platform, 4242),
+        ("aspect", None),
+        ("crop", None),
+        ("scale", 0.0),
+    ]
+
+
+def test_libvlc_reapplies_source_aspect_fit_when_playback_starts() -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+    player = _FakePlayer()
+    backend._player = player
+
+    backend.play()
+
+    assert player.calls == [
+        ("play", None),
+        ("aspect", None),
+        ("crop", None),
+        ("scale", 0.0),
+    ]
+
+
+def test_libvlc_reports_asynchronous_decoder_failure(tmp_path: Path) -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+    backend._player = _FakePlayer()
+    backend._vlc = type(
+        "FakeVlc",
+        (),
+        {"State": type("State", (), {"Error": "error"})},
+    )
+    backend._loaded_path = tmp_path / "movie.mkv"
+
+    assert "could not open or decode" in str(backend.playback_error())
+    assert str(backend._loaded_path) in str(backend.playback_error())
+
+
+def test_libvlc_does_not_latch_transient_zero_video_output_as_an_error(
+    tmp_path: Path,
+) -> None:
+    class NoVideoPlayer:
+        def get_state(self):
+            return "playing"
+
+        def has_vout(self):
+            return 0
+
+    backend = object.__new__(playback.LibVLCBackend)
+    backend._player = NoVideoPlayer()
+    backend._vlc = type(
+        "FakeVlc",
+        (),
+        {"State": type("State", (), {"Error": "error", "Playing": "playing"})},
+    )
+    backend._loaded_path = tmp_path / "movie.mkv"
+
+    assert backend.playback_error() is None
+
+
+def test_missing_saved_audio_output_falls_back_to_system_default() -> None:
+    devices = (
+        playback.AudioOutputDevice("speakers-id", "Desktop Speakers"),
+        playback.AudioOutputDevice("headphones-id", "USB Headphones"),
+    )
+
+    assert (
+        playback.resolve_audio_output_device_id("headphones-id", devices)
+        == "headphones-id"
+    )
+    assert playback.resolve_audio_output_device_id("unplugged-id", devices) == ""
+    assert playback.resolve_audio_output_device_id("", devices) == ""
+
+
+class _AudioDeviceNode:
+    def __init__(self, device: bytes, description: bytes, next_node=None) -> None:
+        self.device = device
+        self.description = description
+        self.next = next_node
+
+
+class _AudioDevicePointer:
+    def __init__(self, node: _AudioDeviceNode) -> None:
+        self.contents = node
+
+
+class _FakeAudioPlayer:
+    def __init__(self, head=None) -> None:
+        self.head = head
+        self.selections: list[tuple[None, str | None]] = []
+
+    def audio_output_device_enum(self):
+        return self.head
+
+    def audio_output_device_set(self, module, device_id) -> None:
+        self.selections.append((module, device_id))
+
+
+def test_libvlc_enumerates_and_releases_audio_output_devices() -> None:
+    headphones = _AudioDevicePointer(
+        _AudioDeviceNode(b"headphones-id", b"USB Headphones")
+    )
+    speakers = _AudioDevicePointer(
+        _AudioDeviceNode(b"speakers-id", b"Desktop Speakers", headphones)
+    )
+    released = []
+    backend = object.__new__(playback.LibVLCBackend)
+    backend._player = _FakeAudioPlayer(speakers)
+    backend._vlc = type(
+        "FakeVlc",
+        (),
+        {
+            "libvlc_audio_output_device_list_release": staticmethod(
+                lambda head: released.append(head)
+            )
+        },
+    )
+
+    assert backend.list_audio_output_devices() == (
+        playback.AudioOutputDevice("speakers-id", "Desktop Speakers"),
+        playback.AudioOutputDevice("headphones-id", "USB Headphones"),
+    )
+    assert released == [speakers]
+
+
+def test_libvlc_selects_explicit_or_system_default_audio_output() -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+    player = _FakeAudioPlayer()
+    backend._player = player
+
+    backend.set_audio_output_device("headphones-id")
+    backend.set_audio_output_device(None)
+
+    assert player.selections == [
+        (None, "headphones-id"),
+        (None, None),
+    ]

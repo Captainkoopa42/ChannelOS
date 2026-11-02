@@ -96,6 +96,8 @@ The Guide service produces stable scheduled occurrences, Now/Next, multi-channel
 - [x] Channel up/down
 - [x] Previous Channel couch binding
 - [x] Volume / mute integration
+- [x] Selectable libVLC audio output for speakers, headphones, and System Default
+  — implementation and automated tests complete; Windows hardware validation pending
 - [x] Play / pause
 - [x] Rewind / fast-forward / skip
 - [x] LIVE button behavior
@@ -158,7 +160,7 @@ Rich Library work still remaining:
 - [x] Persistent local Continue Watching and resume state for the default viewer
 - [ ] Recently Added
 - [ ] Favorites
-- [ ] Add to Channel — future workflow is defined in the [Channel Studio concept](design/CHANNEL_STUDIO_CONCEPT.md)
+- [x] Add to Channel through the safe existing-channel update path
 - [ ] Friendly normalized format/media labels
 - [ ] Rich title and metadata presentation
 
@@ -170,7 +172,18 @@ Rich Library work still remaining:
 
 **Goal:** Make the library understandable and the channels programmable without making metadata providers authoritative.
 
-The future visual programming workspace is recorded in the [Channel Studio concept](design/CHANNEL_STUDIO_CONCEPT.md). It complements rather than replaces the existing Channel Builder.
+The first visual programming workspace described by the [Channel Studio
+concept](design/CHANNEL_STUDIO_CONCEPT.md) is implemented. It complements rather
+than replaces the existing Channel Builder.
+
+- [x] Channel Studio detached draft workflow
+- [x] Day/week/month calendar views
+- [x] Drag/drop fixed media blocks and horizontal program timeline
+- [x] Editable sequential/shuffle Auto Fill
+- [x] Channel Definition 0.2 calendar blocks plus automatic gap filler
+- [x] Reusable Studio program groups and show-specific gap filler
+- [x] Recurring weekly patterns and copy-week tools
+- [x] Full-screen Day editor integrated with Week and Month views
 
 - [ ] Metadata provider abstraction
 - [ ] File/title matching workflow
@@ -178,7 +191,7 @@ The future visual programming workspace is recorded in the [Channel Studio conce
 - [ ] Manual correction
 - [ ] Metadata overrides
 - [ ] Portable metadata strategy
-- [ ] Time-of-day blocks
+- [x] Absolute clock-time calendar blocks
 - [ ] Weighted rotations
 - [ ] Marathons
 - [ ] Feature/movie slots

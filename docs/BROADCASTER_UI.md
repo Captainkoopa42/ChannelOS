@@ -1,6 +1,7 @@
 # ChannelOS Broadcaster / Channel Builder
 
-**Status:** First functional management slice  
+**Status:** Windows 0.0.6 candidate — Classic Builder and Channel Studio
+
 **Product mode:** Broadcaster / Management
 
 ## Product rule
@@ -11,33 +12,31 @@ Broadcaster mode exists to let a person create and program persistent television
 
 It does not replace the channel-definition format, the scheduler, or the television runtime. The interface edits durable user intent; the existing ChannelOS runtime remains authoritative for what actually airs.
 
-```text
-Broadcaster UI
-      |
-      v
-portable channel definition (YAML)
-      |
-      v
-resolver + programming/runtime validation
-      |
-      v
-ChannelRuntime / Broadcast Clock
-      |
-      +----> Guide
-      |
-      +----> Live TV
+```mermaid
+flowchart TD
+    Draft["Broadcaster draft"] --> Validate["Resolve and validate detached state"]
+    Validate --> YAML["Portable channel definition"]
+    YAML --> Clock["Channel runtime and Broadcast Clock"]
+    Clock --> Guide["Guide and live playback"]
 ```
 
-## First slice
+## Implemented authoring surfaces
 
-The first Broadcaster slice provides:
+Broadcaster provides two compatible authoring paths:
+
+- **Channel Studio** for calendar programming and visual arrangement,
+- **Classic Edit** for the original compact sequential/shuffle workflow.
+
+Together they provide:
 
 - a real Broadcaster home showing the active lineup,
 - current and next programming projected from the real Guide,
 - mouse interaction inside the management surface,
 - keyboard navigation and text entry,
-- Create Channel,
+- New in Studio and Open Studio,
+- Create Channel through the Classic Builder remains available,
 - explicit Edit Existing Channel,
+- confirmed deletion of managed Classic channels with recovery backups,
 - channel name and description,
 - numeric channel identity,
 - sequential or deterministic-shuffle programming,
@@ -45,7 +44,15 @@ The first Broadcaster slice provides:
 - source selection from already indexed library roots,
 - real program-order preview before save,
 - immediate Guide/runtime reload after a successful save,
-- portable YAML output using Channel Definition 0.1.
+- a canonical Library media bin,
+- week and month calendar navigation,
+- drag media onto a day,
+- a horizontal video-editor-style program timeline,
+- drag-to-swap, drag-to-move-day, remove, and ±15-minute adjustments,
+- sequential or deterministic-shuffle Auto Fill for a visible week/month,
+- collision-safe week copying and 1–52 week pattern materialization,
+- filler programming for every gap left between fixed blocks,
+- portable YAML output using Channel Definition 0.1, 0.2, or 0.3.
 
 The current couch shell still accepts explicit channel YAML files at startup. Broadcaster-managed definitions are additionally discovered from the configured channel-definition directory, which defaults to:
 
@@ -79,7 +86,7 @@ Renumbering is deliberately not treated as a normal field edit because a channel
 
 Before creating or updating a definition, ChannelOS runs the candidate through:
 
-1. the public Channel Definition 0.1 validator,
+1. the public Channel Definition 0.1/0.2 validator,
 2. the canonical media resolver,
 3. the actual `ChannelRuntime.open` path against a disposable runtime database.
 
@@ -93,20 +100,75 @@ An explicit edit first copies the previous definition to a sibling `.bak` file, 
 
 These protections are not substitutes for future full Export My Television / version history, but they prevent the management UI from casually destroying a working channel definition.
 
-## Program preview
+### Delete is recoverable and lineup-safe
+
+The Broadcaster channel list and Classic Edit expose **Delete Channel** for
+Broadcaster-managed definitions, including calendar channels selected in the
+lineup. Confirmation is required. ChannelOS validates the remaining lineup,
+moves the YAML definition to a dated `.deleted-*.bak` recovery file, clears that
+channel's Broadcast Clock, Viewer Clock, and tuning references, and then
+reloads the Guide. Original media files are never removed. If the replacement
+lineup cannot load, ChannelOS restores the definition from the recovery file.
+If the deleted channel was playing, the next surviving channel takes over live;
+otherwise the existing feed and its Viewer Clock continue across the reload.
+
+The final active channel cannot be deleted, and externally supplied YAML files
+remain under the control of the person or tool that supplied them.
+
+## Program preview and Studio drafts
 
 Preview does not create a second scheduling engine.
 
 It resolves the candidate definition through the same canonical library and uses the same sequential order or `deterministic_shuffle_order` used by ChannelRuntime. Preview validation uses a disposable RuntimeStore, so previewing does not alter the actual Broadcast Clock or Viewer Clock.
 
+Channel Studio follows the same rule. Opening it loads a detached draft. Auto
+Fill resolves local media and builds its result on a worker thread with visible
+progress and cancellation. The current draft is left untouched unless that
+background job succeeds, at which point its real editable fixed blocks replace
+the requested range rather than writing a decorative calendar cache. Only
+**Apply to Channel** invokes the normal create/update path.
+Apply validates the complete calendar, writes atomically, preserves the prior
+definition as `.bak` on edit, and reloads the authoritative lineup.
+
+The calendar itself is not a second scheduler. `ChannelRuntime` combines fixed
+0.2 calendar blocks with the existing sequential/shuffle cycle as gap filler.
+The Guide and decoder rollover continue to consume that same runtime truth.
+
+Schema 0.3 calendar blocks may additionally carry a show-specific filler pool.
+Studio can save the unique fixed programs from a selected day as a reusable
+local group, then attach that group's sequential or shuffle snapshot to a fixed
+show. The group fills only the gap after that show. Reusable groups are never a
+runtime dependency: applied channels embed stable asset IDs, so deleting a
+group later does not modify live programming.
+
+The weekly-pattern tool treats the displayed Monday–Sunday week as a source
+template. It can copy that schedule to a later empty week or materialize it
+across as many as 52 consecutive weeks. Weekday, local wall-clock start time,
+program order, and show-specific filler snapshots are preserved. Crossing a
+daylight-saving boundary therefore keeps a 7:00 PM show at 7:00 PM rather than
+adding a fixed number of UTC seconds. Target collisions fail safely by default;
+replacing occupied weeks requires an explicit confirmation. Generated weeks
+are ordinary detached calendar blocks, so each can be edited independently and
+neither the live channel nor media files change until Apply.
+
+The full-screen Day editor opens the selected date from either Week or Month
+without creating another schedule. Its horizontally scrollable 24-hour track
+uses the same detached calendar blocks, with shortcuts to the start, midday,
+evening, and end of day. Media and existing blocks can be dropped at a
+15-minute snapped local time. A placement that overlaps another fixed block or
+runs past midnight is refused without mutating the draft. The Media Bin can be
+shown temporarily and hidden again to restore the full-width editing surface.
+
 ## Immediate Guide integration
 
-After a successful create/edit, the couch application rebuilds the active `GuideService` and `TelevisionRuntime` from the saved portable definitions while reusing the real persistent `RuntimeStore`.
+After a successful create, edit, or delete, the couch application rebuilds the active `GuideService` and `TelevisionRuntime` from the saved portable definitions while reusing the real persistent `RuntimeStore`.
 
 Consequences:
 
 - unchanged schedules retain their persisted epochs,
-- a changed schedule signature receives the existing runtime's normal re-anchor behavior,
+- changed sequential/shuffle cycles receive the normal re-anchor behavior,
+- calendar edits preserve the existing filler epoch and Viewer Clock while
+  applying their absolute UTC blocks,
 - the newly created channel appears in the Guide immediately,
 - numeric tuning addresses the new lineup immediately,
 - the UI does not maintain a fake second copy of channel truth.
@@ -169,7 +231,9 @@ Mouse click        Select/open Broadcaster card
 
 Broadcaster list
 Up / Down          Select channel
-N                  New channel
+N                  New channel in Studio
+S                  Open selected channel in Studio
+C                  New channel in Classic Builder
 E / Enter          Edit selected channel
 Mouse click        Select channel
 Double click       Edit selected channel
@@ -179,6 +243,13 @@ Tab / Shift+Tab    Move through fields
 Mouse              Focus/edit controls
 Ctrl+S             Save
 Esc                Cancel editor / return
+
+Channel Studio
+Mouse drag         Add/move/swap program blocks
+Day / Week / Month 24-hour editor / detailed week / calendar overview
+Auto Fill Range    Generate editable fixed blocks
+Ctrl+S             Validate and Apply to Channel
+Esc                Return to Broadcaster
 ```
 
 Text fields, combo boxes, spin boxes, check boxes, source controls, Preview, Save, and Cancel are all normal Qt controls, so mouse and keyboard behavior use the platform UI system rather than a parallel hand-coded text-entry mechanism.
@@ -199,12 +270,10 @@ indexed owned media
 
 The following Broadcaster work remains real future work rather than placeholder claims:
 
-- Add to Channel from Library,
 - explicit channel renumber workflow,
-- delete/remove channel with confirmation and continuity rules,
-- reorderable/manual programming lists,
-- programming blocks,
-- time-of-day schedules,
+- restoring a channel directly from its dated deletion backup,
+- undo/redo and durable unsaved-draft recovery,
+- configurable timeline snapping beyond the Day editor's 15-minute grid,
 - weighted rotations,
 - marathons,
 - feature/movie slots,
@@ -215,3 +284,22 @@ The following Broadcaster work remains real future work rather than placeholder 
 - full export/import integration.
 
 The architectural target remains the same: ChannelOS should make operating a personal television network approachable without hiding or confiscating the durable definitions that make that television recognizable.
+
+## Release-audit behavior
+
+Library Add to Channel adds one indexed asset through a narrow service operation;
+it does not rebuild a channel from the list summary. Calendars retain their fixed
+blocks, and ads/settings remain intact. Adding an already included item is a no-op.
+
+Unavailable channels stay listed with a recovery message. Reconnect or scan their
+sources in Library. Removal uses the same dependency report in the UI and backend,
+including program files, subfolders, scheduled/filler assets and advertising references.
+
+Deleting a managed station leaves its YAML recovery backup and archives its runtime
+history. Reusing the number starts a new active station without the predecessor's
+clocks or profile assignment. An interrupted operation is recovered at next launch.
+
+Studio invalidates affected reservations after arranging shows. Card/overlap ends
+include saved ad windows. Swaps and moves do not silently shift neighboring fixed
+starts; Preview/Apply rejects an arrangement that cannot fit. Auto Fill returns new
+blocks and reconciled later reservations as one detached draft update.

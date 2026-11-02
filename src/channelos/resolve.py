@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .library import IndexedMedia, MediaLibrary, normalize_path
 from .models import ChannelDefinition
@@ -16,6 +16,10 @@ class ChannelResolutionError(RuntimeError):
 class ResolvedChannel:
     definition: ChannelDefinition
     media: tuple[IndexedMedia, ...]
+    # Advertising media is resolved independently and never added to the
+    # ordinary program pool merely because it is used by ad breaks.
+    ad_media: tuple[IndexedMedia, ...] = ()
+    library: MediaLibrary | None = field(default=None, repr=False, compare=False)
 
     @property
     def first(self) -> IndexedMedia:
@@ -162,12 +166,64 @@ def _resolve_preserved_sequence(
     return tuple(selected)
 
 
-def resolve_channel(channel: ChannelDefinition, library: MediaLibrary) -> ResolvedChannel:
+def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
+                    allow_offline_ads: bool = False,
+                    include_offline_programs: bool = False) -> ResolvedChannel:
     source_keys = [normalize_path(source.path)[1] for source in channel.sources]
+    ad_media: list[IndexedMedia] = []
+    policies = (channel.advertising,) + (tuple(item.policy for item in channel.advertising.placements)
+                                         if channel.advertising.setup_mode == "advanced" else ())
+    configured_ad_ids = {asset_id for policy in policies for asset_id in policy.asset_ids}
+    for policy in policies:
+        for source in policy.sources:
+            configured_ad_ids.update(item.asset.asset_id for item in (
+                library.list_cached_media(source.path) if include_offline_programs
+                else library.list_online_media_for_source(source.path)))
+    if channel.advertising.enabled:
+        active_policies = (tuple(item.policy for item in channel.advertising.placements if item.policy.enabled)
+                           if channel.advertising.placements and channel.advertising.setup_mode == "advanced" else (channel.advertising,))
+        seen_ad_assets: set[str] = set()
+        for source in (source for policy in active_policies for source in policy.sources):
+            for item in library.list_online_media_for_source(source.path):
+                if allow_offline_ads and not item.location.path.is_file():
+                    continue
+                if item.asset.asset_id in seen_ad_assets:
+                    continue
+                seen_ad_assets.add(item.asset.asset_id)
+                ad_media.append(item)
+        ad_media.sort(key=lambda item: library.order_key(item.location.path))
+        requested_ids = tuple(dict.fromkeys(asset_id for policy in active_policies for asset_id in policy.asset_ids))
+        if requested_ids:
+            # The YAML carries a complete, portable snapshot of its collection.
+            # Resolve by canonical identity, not by the Studio catalog database.
+            indexed_ads: dict[str, IndexedMedia] = {}
+            for item in library.list_online_media():
+                indexed_ads.setdefault(item.asset.asset_id, item)
+            missing = [
+                asset_id for asset_id in requested_ids
+                if asset_id not in indexed_ads
+            ]
+            if missing and not allow_offline_ads:
+                raise ChannelResolutionError(
+                    "advertising references missing or offline assets: "
+                    + ", ".join(missing)
+                )
+            for asset_id in requested_ids:
+                if asset_id not in indexed_ads or (allow_offline_ads and not indexed_ads[asset_id].location.path.is_file()):
+                    continue
+                if asset_id not in seen_ad_assets:
+                    seen_ad_assets.add(asset_id)
+                    ad_media.append(indexed_ads[asset_id])
+    if not channel.advertising.placements or channel.advertising.setup_mode != "advanced":
+        ad_media = [item for item in ad_media if item.asset.asset_id not in channel.advertising.excluded_asset_ids]
     indexed: list[IndexedMedia] = []
+    advertising_ids = configured_ad_ids | {item.asset.asset_id for item in ad_media}
     seen_locations: set[str] = set()
     for source in channel.sources:
-        for item in library.list_online_media_for_source(source.path):
+        for item in (library.list_cached_media(source.path) if include_offline_programs
+                     else library.list_online_media_for_source(source.path)):
+            if item.asset.asset_id in advertising_ids:
+                continue
             if item.location.path_key in seen_locations:
                 continue
             seen_locations.add(item.location.path_key)
@@ -178,7 +234,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary) -> Resolv
         and channel.programming.preserve_episode_order
     ):
         media = _resolve_preserved_sequence(channel, indexed, source_keys)
-        return ResolvedChannel(definition=channel, media=media)
+        return ResolvedChannel(definition=channel, media=media, ad_media=tuple(ad_media), library=library)
 
     # Compatibility/default behavior: resolve from the canonical library's
     # stable path ordering. Shuffle later derives its own deterministic order.
@@ -194,5 +250,5 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary) -> Resolv
             selected.append(item)
             seen_assets.add(item.asset.asset_id)
 
-    selected.sort(key=lambda item: item.location.path_key)
-    return ResolvedChannel(definition=channel, media=tuple(selected))
+    selected.sort(key=lambda item: library.order_key(item.location.path))
+    return ResolvedChannel(definition=channel, media=tuple(selected), ad_media=tuple(ad_media), library=library)

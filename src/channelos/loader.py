@@ -5,6 +5,7 @@ from pathlib import Path
 import yaml
 
 from .models import ChannelDefinition, ChannelValidationError
+from .portable import decode_tree, find_setup
 
 
 def load_channel(path: str | Path) -> ChannelDefinition:
@@ -22,4 +23,4 @@ def load_channel(path: str | Path) -> ChannelDefinition:
     if not isinstance(raw, dict):
         raise ChannelValidationError("channel file must contain a top-level mapping")
 
-    return ChannelDefinition.from_mapping(raw)
+    return ChannelDefinition.from_mapping(decode_tree(raw, find_setup(channel_path)))

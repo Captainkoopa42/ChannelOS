@@ -727,6 +727,16 @@ class CouchController(QObject):
                 "nextEndMs": int(next_program.end_utc.timestamp() * 1000),
             }
 
+        broadcaster = getattr(self, "_broadcaster", None)
+        if not runtime.channel_numbers and broadcaster is not None and broadcaster.records:
+            definition = broadcaster.records[0].definition
+            return {"active": False, "mode": "static", "isUnassigned": False,
+                    "unavailable": True, "stateLabel": "MEDIA UNAVAILABLE",
+                    "continueLabel": "Reconnect media in Library", "channelNumber": definition.channel,
+                    "displayNumber": definition.display_number, "channelName": definition.name,
+                    "title": "MEDIA UNAVAILABLE", "paused": False,
+                    "message": "No channel media is available. Reconnect or scan a source in Library."}
+
         return {
             "active": False,
             "mode": "static",
@@ -1777,7 +1787,7 @@ class CouchKeyFilter(QObject):
             if str(home.get("mode", "static")) == "static":
                 self._notify(
                     {
-                        "message": (
+                        "message": home.get("message") or (
                             "Channel 001 is unassigned - create "
                             "Channel 001 in Broadcaster to start watching"
                         )

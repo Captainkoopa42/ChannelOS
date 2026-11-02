@@ -116,7 +116,7 @@ def test_new_pc_first_run_can_open_existing_setup_without_indexing(portable, tmp
     assert not (host / PORTABLE_HANDOFF).exists()
 
 
-def test_offline_portable_channel_opens_using_cached_metadata_without_resetting_clock(portable):
+def test_offline_portable_channel_retains_metadata_without_a_playable_runtime(portable):
     library = MediaLibrary(portable.data_directory / 'library.db')
     store = RuntimeStore(portable.data_directory / 'runtime.db')
     before = store.load_channel(7)

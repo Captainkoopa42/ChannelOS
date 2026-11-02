@@ -256,28 +256,14 @@ class BroadcasterCouchController(CouchController):
         # CouchController builds an initial library view before the broadcaster
         # service is attached. Rebuild once so source rows can expose channel use.
         self._library_snapshot = self._build_library_snapshot()
+        self._home_television = self._build_home_television_view()
 
     def _channels_using_source(self, source_path: str | Path) -> list[dict[str, object]]:
         broadcaster = getattr(self, "_broadcaster", None)
         if broadcaster is None:
             return []
 
-        _, requested_key = normalize_path(source_path)
-        matches: list[dict[str, object]] = []
-        for record in broadcaster.records:
-            for source in record.definition.sources:
-                _, source_key = normalize_path(source.path)
-                if source_key != requested_key:
-                    continue
-                matches.append(
-                    {
-                        "channelNumber": record.definition.channel,
-                        "displayNumber": record.definition.display_number,
-                        "name": record.definition.name,
-                    }
-                )
-                break
-        return matches
+        return broadcaster.source_dependencies(source_path)
 
     def _build_library_snapshot(self) -> dict[str, object]:
         snapshot = super()._build_library_snapshot()
@@ -313,6 +299,8 @@ class BroadcasterCouchController(CouchController):
                 if not isinstance(channel, dict):
                     continue
                 number = int(channel.get("channelNumber", 0))
+                channel["available"] = number in self._service.channel_numbers
+                channel["availabilityMessage"] = "" if channel["available"] else "Media unavailable — reconnect or scan its source in Library"
                 try:
                     now_next = self._service.now_next(number)
                 except Exception:
@@ -573,7 +561,7 @@ class BroadcasterCouchController(CouchController):
             }
 
         try:
-            result = self._library.remove_source_from_index(source_path)
+            result = self._broadcaster.remove_library_source(source_path)
             self.refreshLibrary()
             self.refreshBroadcaster()
             return {
@@ -585,7 +573,7 @@ class BroadcasterCouchController(CouchController):
                 "removedLocations": result.removed_locations,
                 "prunedAssets": result.pruned_assets,
             }
-        except (OSError, ValueError) as exc:
+        except (BroadcasterError, OSError, ValueError) as exc:
             return self._error(exc)
 
     def _reload_lineup(
@@ -604,22 +592,8 @@ class BroadcasterCouchController(CouchController):
         )
         prior_paused = bool(self._playback.get("paused", False))
 
-        runtimes: list[ChannelRuntime] = []
-        for record in self._broadcaster.records:
-            resolved = resolve_channel(record.definition, self._library,
-                allow_offline_ads=self._library.portable is not None,
-                include_offline_programs=self._library.portable is not None)
-            if not resolved.media:
-                raise BroadcasterError(
-                    f"Channel {record.definition.display_number} - "
-                    f"{record.definition.name} no longer resolves indexed media"
-                )
-            transient = self._library.portable is not None and any(
-                not item.location.online or not item.location.path.is_file() for item in resolved.media)
-            runtimes.append(ChannelRuntime.open(resolved, self._runtime_store, transient=transient))
-
-        if not runtimes:
-            raise BroadcasterError("the active television lineup cannot be empty")
+        from .couch import _open_runtimes
+        runtimes = _open_runtimes(self._broadcaster.paths, self._library, self._runtime_store)
 
         service = GuideService(tuple(runtimes))
         television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
@@ -638,7 +612,7 @@ class BroadcasterCouchController(CouchController):
             actions.attach_video_surface(self._video_surface)
 
         restore_channel_number: int | None = None
-        if restore_playback:
+        if restore_playback and television.channel_numbers:
             if prior_channel_number in television.channels:
                 restore_channel_number = prior_channel_number
             elif replacement_channel_number in television.channels:
@@ -653,6 +627,9 @@ class BroadcasterCouchController(CouchController):
         # object and presentation target above has been accepted.
         previous_actions = self._actions
         previous_actions.stop()
+        for runtime in previous_actions.runtime.channels.values():
+            if runtime.break_store is not None:
+                runtime.break_store.close()
 
         self._service = service
         self._actions = actions

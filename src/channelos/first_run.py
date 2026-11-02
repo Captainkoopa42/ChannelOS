@@ -39,8 +39,8 @@ def first_run_required(data_directory: str | Path) -> bool:
         return True
 
     try:
-        library = MediaLibrary(database)
-        return not bool(library.list_online_media())
+        MediaLibrary(database)
+        return False
     except (OSError, ValueError):
         return True
 

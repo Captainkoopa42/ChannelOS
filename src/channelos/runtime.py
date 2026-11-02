@@ -1917,8 +1917,6 @@ class TelevisionRuntime:
     """Multi-channel television state independent of the decoder/player backend."""
 
     def __init__(self, channels: tuple[ChannelRuntime, ...], store: RuntimeStore) -> None:
-        if not channels:
-            raise ChannelRuntimeError("television runtime requires at least one channel")
         by_number: dict[int, ChannelRuntime] = {}
         for channel in channels:
             if channel.channel_number in by_number:
@@ -2008,6 +2006,8 @@ class TelevisionRuntime:
         return self._decision(current_time)
 
     def channel_up(self, *, now: datetime | None = None) -> TuneDecision:
+        if not self.channel_numbers:
+            raise ChannelRuntimeError("No channels have available media. Reconnect or scan a source in Library.")
         current_time = self._now(now)
         if self.current_channel is None:
             return self.tune(self.channel_numbers[0], now=current_time)
@@ -2016,6 +2016,8 @@ class TelevisionRuntime:
         return self.tune(target, now=current_time)
 
     def channel_down(self, *, now: datetime | None = None) -> TuneDecision:
+        if not self.channel_numbers:
+            raise ChannelRuntimeError("No channels have available media. Reconnect or scan a source in Library.")
         current_time = self._now(now)
         if self.current_channel is None:
             return self.tune(self.channel_numbers[-1], now=current_time)

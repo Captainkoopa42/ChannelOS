@@ -40,25 +40,19 @@ def _open_runtimes(
             definition = load_channel(path)
         except ChannelValidationError as exc:
             raise CouchUIError(str(exc)) from exc
-        resolved = resolve_channel(definition, library, allow_offline_ads=True,
-                                   include_offline_programs=library.portable is not None)
-        if not resolved.media:
-            raise CouchUIError(
-                f"Channel {definition.display_number} — {definition.name} has no indexed online media. "
-                "Scan its source folders first."
-            )
         try:
-            transient = library.portable is not None and any(
-                not item.location.online or not item.location.path.is_file()
-                for item in resolved.media)
-            opened.append(ChannelRuntime.open(resolved, store, transient=transient))
+            from .media_resilience import _resolved_runtime
+            runtime = _resolved_runtime(definition, library, store,
+                persistent_when_complete=True, verify_files=True)
+            if runtime is not None:
+                opened.append(runtime)
+            else:
+                logger.warning("Channel %s has no available media; retained in Broadcaster", definition.display_number)
         except ChannelRuntimeError as exc:
+            for runtime in opened:
+                if runtime.break_store is not None:
+                    runtime.break_store.close()
             raise CouchUIError(str(exc)) from exc
-    if not opened:
-        raise CouchUIError(
-            "couch UI requires at least one channel. Provide a channel YAML "
-            f"or create one in {DEFAULT_CHANNEL_DIRECTORY}."
-        )
     return tuple(opened)
 
 

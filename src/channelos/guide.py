@@ -246,8 +246,6 @@ class GuideService:
     """Read-only Guide projection over authoritative ChannelRuntime timelines."""
 
     def __init__(self, runtimes: tuple[ChannelRuntime, ...]) -> None:
-        if not runtimes:
-            raise GuideError("Guide requires at least one channel runtime")
         by_number: dict[int, ChannelRuntime] = {}
         for runtime in runtimes:
             if runtime.channel_number in by_number:

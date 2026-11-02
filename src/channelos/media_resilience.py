@@ -167,19 +167,27 @@ def _resolved_runtime(
     definition,
     library: MediaLibrary,
     store,
+    *,
+    persistent_when_complete: bool = False,
+    verify_files: bool = False,
 ) -> ChannelRuntime | None:
     """Resolve one channel against media that is usable for this launch."""
 
     resolved = resolve_channel(definition, library, allow_offline_ads=True)
     available = _transient_available_media(resolved, library)
+    if verify_files:
+        available = tuple(item for item in available if _path_is_usable(item.location.path))
     if not available:
         return None
 
+    complete = available == resolved.media
     resolved = replace(resolved, media=available)
+    original_definition = resolved.definition
     resolved = _degrade_calendar_for_available_media(resolved)
 
     try:
-        return ChannelRuntime.open(resolved, store, transient=True)
+        return ChannelRuntime.open(resolved, store, transient=not (
+            persistent_when_complete and complete and resolved.definition == original_definition))
     except ChannelRuntimeError:
         # A temporarily smaller shuffle pool can invalidate a repeat-avoidance
         # promise even though the remaining media is perfectly playable. Relax
@@ -359,17 +367,6 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
                     continue
                 runtimes.append(runtime)
 
-            if not runtimes:
-                logger.warning(
-                    "No channels currently have usable media; preserving definitions and metadata"
-                )
-                if restore_if_active:
-                    self._publish_temporary_unavailable(
-                        "This channel's media is temporarily unavailable. "
-                        "ChannelOS will use it again when the media returns."
-                    )
-                return False
-
             service = GuideService(tuple(runtimes))
             television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
 
@@ -395,7 +392,7 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
                 actions.attach_video_surface(self._video_surface)
 
             restore_channel: int | None = None
-            if should_restore:
+            if should_restore and television.channel_numbers:
                 if prior_channel in television.channels:
                     restore_channel = int(prior_channel)
                 else:
@@ -404,6 +401,9 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
 
             previous_actions = self._actions
             previous_actions.stop()
+            for runtime in previous_actions.runtime.channels.values():
+                if runtime.break_store is not None:
+                    runtime.break_store.close()
 
             self._service = service
             self._actions = actions

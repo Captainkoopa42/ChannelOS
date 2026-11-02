@@ -18,7 +18,7 @@ from .ad_catalog import (
 )
 from .ad_break_engine import ProgramOccurrence
 from .ad_scheduling import calendar_ad_room, calendar_gap_policy, configured_policies, eligible_media, select_segments
-from .library import MediaLibrary, normalize_path
+from .library import MediaLibrary, normalize_path, path_key_is_within
 from .loader import load_channel
 from .models import (
     CalendarBlockDefinition,
@@ -475,6 +475,49 @@ class BroadcasterService:
             for source_root in self.library.list_online_source_roots()
         }
         return tuple(sorted(roots, key=os.path.normcase))
+
+    def source_dependencies(self, source_root: str | Path) -> list[dict[str, object]]:
+        """Report references that would lose an indexed location on removal."""
+        _, root_key = self.library.storage_path(source_root)
+        affected = [item for item in self.library.list_cached_media()
+                    if self.library.storage_path(item.location.source_root)[1] == root_key]
+        matches = []
+        for record in self.records:
+            definition = record.definition
+            policies = (definition.advertising,) + tuple(p.policy for p in definition.advertising.placements)
+            selectors = tuple(s.path for s in definition.sources) + tuple(s.path for p in policies for s in p.sources)
+            explicit = {asset for p in policies for asset in p.asset_ids}
+            for block in definition.programming.calendar:
+                explicit.add(block.asset_id)
+                if block.filler:
+                    explicit.update(block.filler.asset_ids)
+            reasons = set()
+            for item in affected:
+                asset_id = item.asset.asset_id
+                path_key = normalize_path(item.location.path)[1]
+                required_selectors = [normalize_path(path)[1] for path in selectors
+                                      if path_key_is_within(path_key, normalize_path(path)[1])]
+                survivors = [loc for loc in self.library.locations_for_asset(asset_id)
+                             if self.library.storage_path(loc.source_root)[1] != root_key and loc.online]
+                if asset_id in explicit and not survivors:
+                    reasons.add("scheduled or advertising asset")
+                for selector in required_selectors:
+                    if not any(path_key_is_within(normalize_path(loc.path)[1], selector) for loc in survivors):
+                        reasons.add("program or advertising source")
+            # Empty/offline folders still express saved intent.
+            if not affected and any(path_key_is_within(normalize_path(path)[1], normalize_path(source_root)[1]) for path in selectors):
+                reasons.add("saved source")
+            if reasons:
+                matches.append({"channelNumber": definition.channel, "displayNumber": definition.display_number,
+                                "name": definition.name, "reasons": sorted(reasons)})
+        return matches
+
+    def remove_library_source(self, source_root: str | Path):
+        dependencies = self.source_dependencies(source_root)
+        if dependencies:
+            labels = ", ".join(str(item["displayNumber"]) for item in dependencies)
+            raise BroadcasterError(f"This source is still used by channels {labels}. Edit them before removing it.")
+        return self.library.remove_source_from_index(source_root)
 
     def suggested_channel_number(self) -> int:
         used = set(self.channel_numbers)
@@ -1551,10 +1594,7 @@ class BroadcasterService:
             min(removed_index, len(remaining_numbers) - 1)
         ]
 
-        # Prove the remaining lineup can still open before moving anything.
-        for record in self.records:
-            if record.channel_number != number:
-                self._resolve_and_validate(record.definition)
+        # Unavailable media does not prevent management of saved definitions.
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         backup = existing.path.with_name(

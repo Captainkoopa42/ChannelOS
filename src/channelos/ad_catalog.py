@@ -312,6 +312,10 @@ class AdCatalogStore:
             row["channel_number"], row["collection_id"], row["profile_id"], self._load(row["overrides_json"]),
             tuple(AdPlacementAssignment(**item) for item in self._load(row["placements_json"])))
 
+    def clear_channel_assignment(self, channel_number: int) -> None:
+        with self._connect() as db:
+            db.execute("DELETE FROM channel_ad_assignments WHERE channel_number=?", (channel_number,))
+
     def resolve_channel(self, channel_number: int, library: AssetLibrary, *,
                         legacy_settings: Mapping[str, Any] | None = None,
                         explicitly_enabled: bool = False) -> ResolvedAdAssignment:

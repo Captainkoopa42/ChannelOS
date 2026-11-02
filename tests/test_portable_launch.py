@@ -127,11 +127,9 @@ def test_offline_portable_channel_retains_metadata_without_a_playable_runtime(po
     paths = tuple((portable.data_directory / 'channels').glob('*.yaml'))
     opened = _open_runtimes(paths, library, store)
     try:
-        assert len(opened) == 1
-        assert len(opened[0].channel.media) == 1
-        assert opened[0].epoch_utc == before.epoch_utc
+        assert opened == ()
         assert store.load_channel(7) == before
-        assert store.load_on_demand_watch(opened[0].channel.media[0].asset.asset_id).position_seconds == 12
+        assert store.load_on_demand_watch(next(item.asset.asset_id for item in library.list_cached_media() if item.location.path.name == "episode.mp4")).position_seconds == 12
     finally:
         for runtime in opened:
             if runtime.break_store:

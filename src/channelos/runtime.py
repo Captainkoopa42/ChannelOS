@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import sqlite3
+import uuid
 from bisect import bisect_right
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
@@ -24,7 +25,7 @@ from .storage import (
     prepare_database,
 )
 
-RUNTIME_SCHEMA_VERSION = 2
+RUNTIME_SCHEMA_VERSION = 3
 SECONDS_PER_DAY = 86400.0
 DEFAULT_VIEWER_ID = "default"
 
@@ -1041,6 +1042,14 @@ class RuntimeStore:
                     value TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS deleted_channel_archives (
+                    archive_id TEXT PRIMARY KEY,
+                    channel_number INTEGER NOT NULL,
+                    deleted_at TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    restored_at TEXT
+                );
+
                 CREATE TABLE IF NOT EXISTS channel_runtime (
                     channel_number INTEGER PRIMARY KEY,
                     schedule_signature TEXT NOT NULL,
@@ -1196,24 +1205,59 @@ class RuntimeStore:
             running=bool(row["running"]),
         )
 
-    def delete_channel(self, channel_number: int) -> None:
-        """Forget channel-specific clocks and stale tuning references."""
+    def delete_channel(self, channel_number: int, *, archive_id: str | None = None) -> str:
+        """Archive a retired station and clear every active channel-owned row.
 
+        Archived histories remain inspectable without entering a new station's
+        rotation, occurrence IDs, or play counts. The archive and cleanup share
+        one SQLite transaction, and a supplied operation ID makes retries safe.
+        """
         number = int(channel_number)
+        identity = archive_id or uuid.uuid4().hex
         with self.connect() as connection:
-            connection.execute(
-                "DELETE FROM viewer_runtime WHERE channel_number = ?",
-                (number,),
-            )
-            connection.execute(
-                "DELETE FROM channel_runtime WHERE channel_number = ?",
-                (number,),
-            )
-            for key in ("current_channel", "previous_channel"):
-                connection.execute(
-                    "DELETE FROM runtime_meta WHERE key = ? AND value = ?",
-                    (key, str(number)),
-                )
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute("SELECT 1 FROM deleted_channel_archives WHERE archive_id=?", (identity,)).fetchone():
+                return identity
+            tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            payload = {}
+            order = ("channel_runtime", "viewer_runtime", "ad_break_plans", "ad_plan_metadata",
+                     "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans",
+                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state")
+            for table in order:
+                if table not in tables:
+                    continue
+                columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+                where = "channel_number=?" if "channel_number" in columns else "plan_id IN (SELECT plan_id FROM ad_break_plans WHERE channel_number=?)"
+                payload[table] = [dict(row) for row in connection.execute(f"SELECT * FROM {table} WHERE {where}", (number,))]
+            payload["runtime_meta"] = [dict(row) for row in connection.execute(
+                "SELECT * FROM runtime_meta WHERE key IN ('current_channel','previous_channel') AND value=?", (str(number),))]
+            connection.execute("INSERT INTO deleted_channel_archives(archive_id,channel_number,deleted_at,payload) VALUES(?,?,?,?)",
+                (identity, number, datetime_to_text(utc_now()), json.dumps(payload, sort_keys=True)))
+            for table in reversed(order):
+                for row in payload.get(table, ()):
+                    columns = tuple(row)
+                    where = " AND ".join(f"{column} IS ?" for column in columns)
+                    connection.execute(f"DELETE FROM {table} WHERE {where}", tuple(row.values()))
+            connection.execute("DELETE FROM runtime_meta WHERE key IN ('current_channel','previous_channel') AND value=?", (str(number),))
+        return identity
+
+    def restore_deleted_channel(self, archive_id: str) -> None:
+        """Restore one interrupted deletion, without replaying a completed undo."""
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            archive = connection.execute("SELECT * FROM deleted_channel_archives WHERE archive_id=?", (archive_id,)).fetchone()
+            if archive is None or archive["restored_at"]:
+                return
+            payload = json.loads(archive["payload"])
+            order = ("channel_runtime", "viewer_runtime", "ad_break_plans", "ad_plan_metadata",
+                     "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans",
+                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "runtime_meta")
+            for table in order:
+                for row in payload.get(table, ()):
+                    columns = ','.join(row)
+                    placeholders = ','.join('?' for _ in row)
+                    connection.execute(f"INSERT OR REPLACE INTO {table}({columns}) VALUES({placeholders})", tuple(row.values()))
+            connection.execute("UPDATE deleted_channel_archives SET restored_at=? WHERE archive_id=?", (datetime_to_text(utc_now()), archive_id))
 
     def save_on_demand_watch(
         self,

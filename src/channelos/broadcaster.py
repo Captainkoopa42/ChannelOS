@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 import hashlib
+import json
 import shutil
 import tempfile
 import uuid
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -76,6 +77,8 @@ class ChannelDeleteResult:
     record: ChannelRecord
     backup_path: Path
     replacement_channel_number: int
+    archive_id: str = ""
+    assignment: ChannelAdAssignment | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -395,7 +398,39 @@ class BroadcasterService:
             for path in channel_paths
         )
         self._records: dict[int, ChannelRecord] = {}
+        self._recover_deletions()
         self.refresh()
+
+    def _recover_deletions(self) -> None:
+        for journal in self.managed_directory.glob("channel-deletion-*.json"):
+            self._finish_deletion(journal)
+
+    def _finish_deletion(self, journal: Path) -> None:
+        operation = json.loads(journal.read_text(encoding="utf-8"))
+        original, backup = Path(operation["original"]), Path(operation["backup"])
+        store = RuntimeStore(operation["runtime_database"])
+        number, identity = int(operation["channel"]), operation["archive_id"]
+        if operation.get("restore"):
+            store.restore_deleted_channel(identity)
+            assignment = operation.get("assignment")
+            if assignment:
+                assignment["placements"] = tuple(AdPlacementAssignment(**item) for item in assignment.get("placements", ()))
+                self.ad_catalog.assign_channel(ChannelAdAssignment(**assignment))
+            else:
+                self.ad_catalog.clear_channel_assignment(number)
+            if not original.exists():
+                os.replace(backup, original)
+        elif not original.exists():
+            if not backup.is_file():
+                raise BroadcasterError(f"Cannot recover channel deletion: {backup} is unavailable")
+            store.delete_channel(number, archive_id=identity)
+            self.ad_catalog.clear_channel_assignment(number)
+        journal.unlink()
+
+    def _deletion_journal(self, operation: dict[str, Any]) -> Path:
+        journal = self.managed_directory / f"channel-deletion-{operation['archive_id']}.json"
+        self._atomic_write(journal, json.dumps(operation, sort_keys=True))
+        return journal
 
     @staticmethod
     def _normalize_path(path: str | Path) -> Path:
@@ -1607,11 +1642,19 @@ class BroadcasterService:
             )
             suffix += 1
 
-        os.replace(existing.path, backup)
+        assignment = self.ad_catalog.get_assignment(number)
+        identity = uuid.uuid4().hex
+        operation = {"channel": number, "archive_id": identity, "original": str(existing.path),
+                     "backup": str(backup), "runtime_database": str(self.runtime_database_path),
+                     "assignment": asdict(assignment) if assignment else None}
+        journal = self._deletion_journal(operation)
         try:
+            os.replace(existing.path, backup)
+            self._finish_deletion(journal)
             self.refresh()
         except Exception:
-            os.replace(backup, existing.path)
+            operation["restore"] = True
+            self._finish_deletion(self._deletion_journal(operation))
             self.refresh()
             raise
 
@@ -1619,6 +1662,8 @@ class BroadcasterService:
             record=existing,
             backup_path=backup,
             replacement_channel_number=replacement_channel_number,
+            archive_id=identity,
+            assignment=assignment,
         )
 
     def restore_deleted(self, result: ChannelDeleteResult) -> None:
@@ -1639,5 +1684,12 @@ class BroadcasterService:
                 f"cannot restore Channel {result.record.definition.display_number}; "
                 f"recovery backup {backup} is unavailable"
             )
-        os.replace(backup, original)
+        if result.archive_id:
+            operation = {"channel": result.record.channel_number, "archive_id": result.archive_id,
+                         "original": str(original), "backup": str(backup),
+                         "runtime_database": str(self.runtime_database_path), "restore": True,
+                         "assignment": asdict(result.assignment) if result.assignment else None}
+            self._finish_deletion(self._deletion_journal(operation))
+        else:
+            os.replace(backup, original)
         self.refresh()

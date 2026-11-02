@@ -1042,7 +1042,6 @@ class BroadcasterCouchController(CouchController):
                 self._reload_lineup()
                 self.refreshBroadcaster()
                 raise
-            self._runtime_store.delete_channel(result.record.channel_number)
             definition = result.record.definition
             return {
                 "ok": True,

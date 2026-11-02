@@ -85,3 +85,72 @@ def test_source_guard_covers_program_files_and_ads_and_checks_backend(tmp_path):
     with pytest.raises(BroadcasterError, match='still used'):
         service.remove_library_source(tmp_path / 'commercials')
     assert all(item.location.path.is_file() for item in library.list_online_media())
+
+
+def test_channel_deletion_archives_history_and_reuse_starts_fresh(tmp_path):
+    import json
+    from datetime import timedelta
+    from channelos.ad_catalog import AdCollection, BreakProfile, ChannelAdAssignment
+    from channelos.resolve import resolve_channel
+    from channelos.runtime import ChannelRuntime, RuntimeStore
+    from test_broadcaster import editor
+    library, service, raw = setup(tmp_path)
+    original = service.create(raw).record
+    service.create(editor(8, tmp_path / 'programs'))
+    ids = tuple(item.asset.asset_id for item in library.list_online_media_for_source(tmp_path / 'commercials'))
+    service.ad_catalog.save_collection(AdCollection('ads', 'Ads', ids))
+    service.ad_catalog.save_profile(BreakProfile('profile', 'Profile', {'enabled': True, 'duration_seconds': 10}))
+    service.ad_catalog.assign_channel(ChannelAdAssignment(7, 'ads', 'profile'))
+    store = RuntimeStore(service.runtime_database_path)
+    runtime = ChannelRuntime.open(resolve_channel(original.definition, library), store, now=START)
+    runtime.events_between(START, START + timedelta(seconds=300))
+    runtime.break_store.reconcile_completed(7, through=START + timedelta(seconds=300))
+    assert runtime.break_store.play_counts()
+    runtime.break_store.close()
+    before = store.load_channel(7)
+    deleted = service.delete(7)
+    assert service.ad_catalog.get_assignment(7) is None
+    assert store.load_channel(7) is None
+    with store.connect() as db:
+        assert db.execute('SELECT COUNT(*) FROM ad_program_clock WHERE channel_number=7').fetchone()[0] == 0
+        archive = json.loads(db.execute('SELECT payload FROM deleted_channel_archives WHERE archive_id=?', (deleted.archive_id,)).fetchone()[0])
+    assert archive['ad_break_history']
+    assert archive['ad_program_clock']
+    service.restore_deleted(deleted)
+    assert store.load_channel(7) == before
+    assert service.ad_catalog.get_assignment(7).profile_id == 'profile'
+    service.delete(7)
+    fresh = editor(7, tmp_path / 'programs')
+    fresh['adBreaksEnabled'] = False
+    definition = service.create(fresh).record.definition
+    assert not definition.advertising.enabled
+    assert not definition.advertising.profile_id
+    reopened = ChannelRuntime.open(resolve_channel(definition, library), store, now=START + timedelta(seconds=310))
+    try:
+        selected = reopened.project_at(START + timedelta(seconds=310))
+        assert selected.origin != 'advertisement'
+        assert selected.offset_seconds == 0
+        assert reopened.break_store is None
+    finally:
+        if reopened.break_store: reopened.break_store.close()
+
+
+def test_interrupted_delete_recovers_without_stale_assignment(tmp_path, monkeypatch):
+    from channelos.broadcaster import BroadcasterService
+    from channelos.ad_catalog import AdCollection, BreakProfile, ChannelAdAssignment
+    from test_broadcaster import editor
+    library, service, raw = setup(tmp_path)
+    service.create(raw)
+    service.create(editor(8, tmp_path / 'programs'))
+    ids = tuple(item.asset.asset_id for item in library.list_online_media_for_source(tmp_path / 'commercials'))
+    service.ad_catalog.save_collection(AdCollection('ads', 'Ads', ids))
+    service.ad_catalog.save_profile(BreakProfile('p', 'Profile', {'enabled': True}))
+    service.ad_catalog.assign_channel(ChannelAdAssignment(7, 'ads', 'p'))
+    monkeypatch.setattr(service.ad_catalog, 'clear_channel_assignment', lambda number: (_ for _ in ()).throw(SystemExit('power loss')))
+    with pytest.raises(SystemExit):
+        service.delete(7)
+    assert list((tmp_path / 'channels').glob('channel-deletion-*.json'))
+    recovered = BroadcasterService((), tmp_path / 'channels', library)
+    assert recovered.channel_numbers == (8,)
+    assert recovered.ad_catalog.get_assignment(7) is None
+    assert not list((tmp_path / 'channels').glob('channel-deletion-*.json'))

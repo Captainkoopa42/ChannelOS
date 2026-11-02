@@ -135,3 +135,12 @@ Linux package remain hardware/release acceptance checks.
 
 For source checkouts, `channelos-couch --portable-setup /path/to/setup --windowed`
 uses the same selection, validation and lifetime lock as the packaged launcher.
+
+## 0.0.6 compatibility
+
+Runtime schema 3, channel schemas 0.1–0.6, catalog assignments and archived history
+travel with the setup. Calendar intent comparison excludes host paths, preserving
+chosen clips and queues across drive-letter/folder changes. Missing media does not
+start first-run setup or erase saved clocks; an empty playable lineup remains
+manageable until sources are reconnected or scanned. Validate a physical USB move
+using [the Windows acceptance route](releases/WINDOWS_0.0.6_ACCEPTANCE.md).

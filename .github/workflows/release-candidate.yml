@@ -1,0 +1,60 @@
+name: release-candidate
+
+on:
+  push:
+    branches: ["release/windows-0.0.6"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: channelos-windows-0.0.6-candidate
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    uses: ./.github/workflows/tests.yml
+  windows:
+    needs: tests
+    uses: ./.github/workflows/windows-package.yml
+  publish:
+    needs: [tests, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      CANDIDATE_TAG: v0.0.6-rc.1
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: ChannelOS-Windows-x64
+          path: release-output
+      - name: Verify candidate identity and checksum
+        shell: bash
+        run: |
+          python - <<'PYCODE'
+          import hashlib, json, os, pathlib, zipfile
+          path = pathlib.Path('release-output/ChannelOS-0.0.6-windows-x64.zip')
+          with zipfile.ZipFile(path) as archive:
+              bom = json.loads(archive.read('ChannelOS/PACKAGE-BOM.json'))
+          assert bom['product']['version'] == '0.0.6', bom['product']
+          assert bom['product']['git_commit'] == os.environ['GITHUB_SHA'], bom['product']
+          digest = hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
+          pathlib.Path('release-output/SHA256SUMS.txt').write_text(f'{digest}  {path.name}\n')
+          notes = pathlib.Path('docs/releases/v0.0.6-rc.1.md').read_text()
+          notes += '\nVerified source commit: `' + os.environ['GITHUB_SHA'] + '`\n'
+          notes += '\nBuild and smoke checks: https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '\n'
+          pathlib.Path('release-output/RELEASE-NOTES.md').write_text(notes)
+          PYCODE
+      - name: Publish verified Windows test candidate
+        shell: bash
+        run: |
+          if gh release view "$CANDIDATE_TAG" >/dev/null 2>&1; then
+            published=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_TAG" --jq .object.sha)
+            test "$published" = "$GITHUB_SHA" || { echo "Existing candidate tag names another commit; retained its files."; exit 1; }
+            gh release view "$CANDIDATE_TAG"
+          else
+            gh release create "$CANDIDATE_TAG"               release-output/ChannelOS-0.0.6-windows-x64.zip               release-output/SHA256SUMS.txt               --target "$GITHUB_SHA" --prerelease               --title "ChannelOS 0.0.6 — Windows release candidate 1"               --notes-file release-output/RELEASE-NOTES.md
+          fi

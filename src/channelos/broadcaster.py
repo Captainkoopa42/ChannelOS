@@ -30,7 +30,7 @@ from .models import (
     SourceDefinition,
     advertising_to_mapping,
 )
-from .portable import PortablePaths, path_tree
+from .portable import PortablePaths, path_tree, decode_tree
 from .resolve import ResolvedChannel, resolve_channel
 from .runtime import (
     ChannelRuntime,
@@ -388,9 +388,10 @@ class BroadcasterService:
         channel_paths: Iterable[str | Path],
         managed_directory: str | Path,
         library: MediaLibrary,
+        *, runtime_database_path: str | Path | None = None,
     ) -> None:
         self.library = library
-        self.runtime_database_path = library.database_path.with_name("runtime.db")
+        self.runtime_database_path = Path(runtime_database_path) if runtime_database_path is not None else library.database_path.with_name("runtime.db")
         self.ad_catalog = AdCatalogStore(
             self.library.database_path.with_name("ad_catalog.sqlite")
         )
@@ -408,10 +409,19 @@ class BroadcasterService:
             self._finish_deletion(journal)
 
     def _finish_deletion(self, journal: Path) -> None:
-        operation = json.loads(journal.read_text(encoding="utf-8"))
+        operation = decode_tree(json.loads(journal.read_text(encoding="utf-8")), self.library.portable)
         original, backup = Path(operation["original"]), Path(operation["backup"])
-        store = RuntimeStore(operation["runtime_database"])
         number, identity = int(operation["channel"]), operation["archive_id"]
+        managed = self._normalize_path(self.managed_directory)
+        if (len(identity) != 32 or any(character not in "0123456789abcdef" for character in identity)
+                or journal.name != f"channel-deletion-{identity}.json"
+                or self._normalize_path(original).parent != managed
+                or self._normalize_path(backup).parent != managed
+                or not backup.name.startswith(original.name + ".deleted-")
+                or self._normalize_path(operation["runtime_database"]) != self._normalize_path(self.runtime_database_path)
+                or operation.get("assignment") and operation["assignment"].get("channel_number") != number):
+            raise BroadcasterError("The channel recovery record does not match this setup. No recovery files were changed.")
+        store = RuntimeStore(self.runtime_database_path)
         if operation.get("restore"):
             store.restore_deleted_channel(identity)
             assignment = operation.get("assignment")
@@ -431,7 +441,8 @@ class BroadcasterService:
 
     def _deletion_journal(self, operation: dict[str, Any]) -> Path:
         journal = self.managed_directory / f"channel-deletion-{operation['archive_id']}.json"
-        self._atomic_write(journal, json.dumps(operation, sort_keys=True))
+        encoded = path_tree(operation, self.library.portable.encode) if self.library.portable else operation
+        self._atomic_write(journal, json.dumps(encoded, sort_keys=True))
         return journal
 
     @staticmethod
@@ -522,7 +533,8 @@ class BroadcasterService:
         for record in self.records:
             definition = record.definition
             policies = (definition.advertising,) + tuple(p.policy for p in definition.advertising.placements)
-            selectors = tuple(s.path for s in definition.sources) + tuple(s.path for p in policies for s in p.sources)
+            selector_groups = [tuple(s.path for s in definition.sources)] + [tuple(s.path for s in p.sources) for p in policies]
+            selectors = tuple(path for group in selector_groups for path in group)
             explicit = {asset for p in policies for asset in p.asset_ids}
             for block in definition.programming.calendar:
                 explicit.add(block.asset_id)
@@ -535,19 +547,21 @@ class BroadcasterService:
                     collection = self.ad_catalog.get_collection(collection_id)
                     if collection:
                         explicit.update(set(collection.asset_ids) - set(collection.excluded_asset_ids))
-                        selectors += tuple(Path(path) for path in collection.source_paths)
+                        group = tuple(Path(path) for path in collection.source_paths)
+                        selector_groups.append(group)
+                        selectors += group
             reasons = set()
             for item in affected:
                 asset_id = item.asset.asset_id
                 path_key = normalize_path(item.location.path)[1]
-                required_selectors = [normalize_path(path)[1] for path in selectors
-                                      if path_key_is_within(path_key, normalize_path(path)[1])]
+                required_groups = [tuple(normalize_path(path)[1] for path in group) for group in selector_groups
+                                   if any(path_key_is_within(path_key, normalize_path(path)[1]) for path in group)]
                 survivors = [loc for loc in self.library.locations_for_asset(asset_id)
                              if self.library.storage_path(loc.source_root)[1] != root_key and loc.online]
                 if asset_id in explicit and not survivors:
                     reasons.add("scheduled or advertising asset")
-                for selector in required_selectors:
-                    if not any(path_key_is_within(normalize_path(loc.path)[1], selector) for loc in survivors):
+                for group in required_groups:
+                    if not any(path_key_is_within(normalize_path(loc.path)[1], selector) for loc in survivors for selector in group):
                         reasons.add("program or advertising source")
             # Empty/offline folders still express saved intent.
             if not affected and any(path_key_is_within(normalize_path(path)[1], normalize_path(source_root)[1]) for path in selectors):
@@ -839,7 +853,14 @@ class BroadcasterService:
         self._save_studio_groups(retained)
 
     def ad_catalog_snapshot(self) -> dict[str, Any]:
+        history_review_count = 0
+        if Path(self.runtime_database_path).is_file():
+            with closing(sqlite3.connect(Path(self.runtime_database_path).resolve().as_uri() + "?mode=ro", uri=True)) as db:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='ad_history_review'").fetchone():
+                    history_review_count = db.execute("SELECT COUNT(*) FROM ad_history_review").fetchone()[0]
         return {
+            "historyReviewCount": history_review_count,
+            "historyReviewMessage": "Older airing records need review after calendar changes; the original records were retained." if history_review_count else "",
             "collections": [
                 {
                     "collectionId": item.collection_id,
@@ -928,7 +949,7 @@ class BroadcasterService:
             media = by_id.get(block.asset_id)
             if media is None:
                 raise BroadcasterError("A scheduled show is outside this channel's indexed sources")
-            if not snapshot_matches(block.ad_plan, media, block.start_utc, revision, definition.channel, resolved.ad_media):
+            if not snapshot_matches(block.ad_plan, media, block.start_utc, revision, definition.channel, resolved.ad_media, program_media=resolved.media):
                 changes.append(block.start_utc)
         if not changes:
             return definition

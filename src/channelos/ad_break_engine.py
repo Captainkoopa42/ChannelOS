@@ -492,6 +492,11 @@ class BreakPlanStore:
             );
             CREATE INDEX IF NOT EXISTS idx_ad_program_clock_channel
                 ON ad_program_clock(channel_number, broadcast_start);
+            CREATE TABLE IF NOT EXISTS ad_history_review (
+                plan_id TEXT PRIMARY KEY REFERENCES ad_break_plans(plan_id) ON DELETE CASCADE,
+                reason TEXT NOT NULL,
+                observed_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS ad_calendar_state (
                 channel_number INTEGER PRIMARY KEY,
                 payload TEXT NOT NULL
@@ -531,6 +536,16 @@ class BreakPlanStore:
         valid = set(new) if valid_occurrences is None else set(valid_occurrences)
         changed = {key for key in old.keys() | new.keys() if old.get(key) != new.get(key)} if prior else set()
         instant = _utc(at)
+        if row is None:
+            # A legacy calendar may already contain false catch-up airings.
+            # Keep factual rows, flag ambiguity and retire orphan reservations.
+            legacy = self.connection.execute("SELECT DISTINCT p.plan_id,p.occurrence_id FROM ad_break_plans p JOIN ad_break_history h ON p.plan_id=h.plan_id WHERE p.channel_number=?", (channel_number,)).fetchall()
+            with self.connection:
+                for identity, occurrence in legacy:
+                    if occurrence not in valid:
+                        self.connection.execute("INSERT OR IGNORE INTO ad_history_review VALUES(?,?,?)",
+                            (identity, "Legacy airing has no occurrence in the saved calendar; review retained history", instant.isoformat()))
+                        self.connection.execute("INSERT OR IGNORE INTO ad_retired_plans VALUES(?,?)", (identity, instant.isoformat()))
         for key in changed & old.keys():
             item = old[key]
             if (datetime.fromisoformat(item['start']) <= instant < datetime.fromisoformat(item['end'])
@@ -901,6 +916,7 @@ class BreakPlanStore:
         """, (number,)).fetchall()
         return {
             "channelNumber": number,
+            "legacyHistoryReviewCount": int(self.connection.execute("SELECT COUNT(*) FROM ad_history_review r JOIN ad_break_plans p ON p.plan_id=r.plan_id WHERE p.channel_number=?", (number,)).fetchone()[0]),
             "plannedBreaks": int(plans),
             "completedAirings": int(aired[0]),
             "completedViewings": int(viewed),

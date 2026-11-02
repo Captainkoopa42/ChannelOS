@@ -285,7 +285,7 @@ def auto_fill(resolved, ordered, raw, start, end, runtime_path, *, publish, chec
             fill_to(min(begins, end))
         from .calendar_reconcile import snapshot_matches
         saved = block.get("adPlan")
-        valid = snapshot_matches(saved, media, begins, revision, channel, resolved.ad_media)
+        valid = snapshot_matches(saved, media, begins, revision, channel, resolved.ad_media, program_media=resolved.media)
         if valid and begins < start:
             plans = snapshot_plans(saved)
             finish = datetime.fromisoformat(saved["end_utc"])

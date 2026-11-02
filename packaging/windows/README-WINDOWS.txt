@@ -1,4 +1,4 @@
-ChannelOS Windows x64 alpha
+ChannelOS 0.0.6 Windows x64 release candidate
 ===========================
 
 START
@@ -108,3 +108,9 @@ replacement/compliance information.
 
 ChannelOS is free and open-source software under MPL-2.0.
 Copyright (c) 2026 William Robert Adams.
+
+RELEASE-CANDIDATE CHECKS
+------------------------
+Use docs/releases/WINDOWS_0.0.6_ACCEPTANCE.md for the test route. Physical audio,
+controller and USB acceptance results are separate from automated smoke checks.
+Keep a copy of an existing setup before testing runtime schema-3 migration.

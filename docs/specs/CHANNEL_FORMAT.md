@@ -182,3 +182,11 @@ migrations are explicit; a 0.1 channel never silently acquires 0.2 semantics.
 ## Portability rule
 
 A third-party program should be able to implement this specification without importing ChannelOS source code. That is a feature, not a leak.
+
+## Application 0.0.6 compatibility
+
+The application continues to read channel schemas 0.1–0.6. No new keys are added to
+the strict schema-0.6 ad snapshot: its occurrence IDs, start/end, policy revision
+and segment timing bind it to the current parent. Stale future snapshots are
+rebuilt through chronological reconciliation. Runtime schema 3 stores lifecycle,
+calendar provenance and program-clock scope separately from portable channel intent.

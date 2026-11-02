@@ -1,7 +1,6 @@
 # ChannelOS Architecture
 
-**Status:** Draft 0.5  
-**Current phase:** 2 — Guide / UI-facing plumbing
+**Status:** Windows 0.0.6 candidate, runtime schema 3
 
 ## Architectural objective
 
@@ -15,50 +14,15 @@ The canonical product-level description is [MASTER_DESIGN.md](MASTER_DESIGN.md).
 
 ## System boundaries
 
-```text
-+---------------------------------------------------------+
-|                    TV / Remote UI                      |
-|            Live View | Guide | Library                 |
-+---------------------------+-----------------------------+
-                            |
-                            | local service / API / IPC
-                            v
-+---------------------------------------------------------+
-|             Guide / Television Boundary                |
-| horizon | Now/Next | detail | explain-why | intents    |
-+---------------------------+-----------------------------+
-                            |
-                            v
-+---------------------------------------------------------+
-|                 Television Runtime                     |
-| TUNE | channel +/- | previous | GO_LIVE | continuity  |
-+---------------------------+-----------------------------+
-                            |
-                            v
-+---------------------------------------------------------+
-|                  Channel Runtime                       |
-| numeric identity | schedule epoch | Broadcast Clock    |
-| Viewer Clock | generated timeline | restart state      |
-+---------------------+-------------------+---------------+
-                      |                   |
-                      v                   v
-+---------------------------+   +-------------------------+
-|    Programming Engine     |   |    Playback Adapter     |
-| sequence | shuffle        |   | libVLC / future        |
-+-------------+-------------+   +------------+------------+
-              |                              |
-              +---------------+--------------+
-                              v
-+---------------------------------------------------------+
-|                 Media Index / State                    |
-| assets | locations | technical metadata | mappings     |
-+---------------------------+-----------------------------+
-                            |
-                            v
-+---------------------------------------------------------+
-|                    Source Adapters                     |
-|        local filesystem | NAS | removable media        |
-+---------------------------------------------------------+
+```mermaid
+flowchart TD
+    UI["Home, Guide, Library and Broadcaster"] --> TV["Guide and television runtime"]
+    UI --> Draft["Detached authoring and validation"]
+    Draft --> Intent["Portable channel YAML"]
+    Intent --> Runtime["Channel runtime"]
+    TV --> Runtime
+    Runtime --> State["Library and runtime SQLite state"]
+    Runtime --> VLC["Replaceable libVLC backend"]
 ```
 
 The authoritative scheduling logic belongs below the UI boundary. The interface can request television state and issue user intents; it must not independently decide what a channel is airing.
@@ -510,3 +474,22 @@ Phase 1 has passed the required behaviors:
 12. deterministic shuffle over genuine indexed media.
 
 The architectural focus now moves to Phase 2: projecting this runtime truth into a Guide and stable UI-facing service boundary.
+
+## Release-audit boundaries in 0.0.6
+
+`calendar_reconcile` binds reservations to the parent asset, start and duration,
+and replays the affected suffix through the shared simple planner. Studio updates
+fixed-start reservations together; a fit failure rejects the draft. Validation and
+Preview use detached database copies, preserving the live queue and ledgers.
+
+Runtime schema 3 stores calendar intent and archives superseded future plans.
+Actual airing/viewing rows protect immutable reservations. Program clock rows carry
+the resolved schedule signature, so a temporary smaller pool cannot borrow timing
+from a different program. Channel deletion archives all channel-owned runtime rows
+in one SQLite transaction and clears the catalog assignment. A durable operation
+journal coordinates the definition move, runtime cleanup and catalog change and
+supports interrupted deletion and failed-lineup rollback.
+
+Saved definitions are distinct from available playback runtimes. An empty playable
+lineup is a valid management/recovery state. Database-version, integrity and portable
+identity failures retain their existing fail-closed behavior.

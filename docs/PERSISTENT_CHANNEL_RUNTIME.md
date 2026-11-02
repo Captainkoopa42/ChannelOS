@@ -253,3 +253,14 @@ The Phase 1 gate passed on Windows with genuine indexed NVIDIA-recorded MP4 medi
 11. Channel 012 was changed from sequential to shuffle and real playback opened a shuffled program rather than source order.
 
 That validates the fundamental ChannelOS television runtime on a real decoder and real user media. Phase 2 now exposes this truth through Guide and UI-facing data rather than changing the underlying clock model.
+
+## Runtime schema 3 — 0.0.6
+
+Opening an existing schema-2 database creates a consistent backup before migration.
+Schema 3 retains valid epochs, viewer positions, history and plan IDs. Program clocks
+carry their resolved schedule signature, isolating temporary partial-source lineups.
+Deleted channels move their state into `deleted_channel_archives`; active queries
+do not include a predecessor after its number is reused. Future calendar edits
+archive superseded reservations and preserve actual airing/viewing evidence. An older
+ChannelOS build refuses the newer runtime schema. To roll back the build, restore
+the matching pre-upgrade setup/database backup rather than opening schema 3 in 0.0.5.

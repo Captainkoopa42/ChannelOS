@@ -114,7 +114,7 @@ def download_locked_runtime(lock: dict[str, Any], cache_directory: Path) -> Path
         try:
             request = urllib.request.Request(
                 lock["download_url"],
-                headers={"User-Agent": "ChannelOS-Windows-Packager/0.0.5"},
+                headers={"User-Agent": "ChannelOS-Windows-Packager/0.0.6"},
             )
             with urllib.request.urlopen(request, timeout=120) as response:
                 with temporary.open("wb") as output:
@@ -275,6 +275,11 @@ def copy_release_documents(package_root: Path) -> None:
         source = PROJECT_ROOT / relative
         output = licenses / Path(relative).name
         shutil.copy2(source, output)
+
+    for relative in ("docs/releases/v0.0.6-rc.1.md", "docs/releases/WINDOWS_0.0.6_ACCEPTANCE.md"):
+        target = package_root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(PROJECT_ROOT / relative, target)
 
     for filename in ("LGPL-2.1.txt", "LGPL-3.0.txt", "PYTHON.txt"):
         shutil.copy2(PACKAGING_ROOT / "licenses" / filename, licenses / filename)
@@ -496,7 +501,7 @@ def build_package(output_directory: Path, supplied_nupkg: Path | None = None) ->
     write_bom(package_root, lock, nupkg, vlc_inventory)
     validate_package_root(package_root)
 
-    archive_base = output_directory / "ChannelOS-0.0.5-windows-x64"
+    archive_base = output_directory / "ChannelOS-0.0.6-windows-x64"
     archive = Path(shutil.make_archive(str(archive_base), "zip", output_directory, "ChannelOS"))
     return archive
 

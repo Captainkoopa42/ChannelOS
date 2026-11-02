@@ -406,3 +406,51 @@ def test_calendar_edits_preserve_active_break_and_reject_viewed_future_change(tm
     with pytest.raises(ChannelRuntimeError, match='previously aired or viewed'):
         ChannelRuntime.open(resolve_channel(rejected, library), store, now=at)
     assert store.load_channel(7) == clock
+
+
+def test_legacy_orphan_airings_are_retained_and_flagged_for_review(tmp_path):
+    from datetime import timedelta
+    from channelos.resolve import resolve_channel
+    from channelos.runtime import ChannelRuntime, RuntimeStore
+    library, service, raw = setup(tmp_path)
+    raw['mode'] = 'calendar'
+    raw['calendarBlocks'] = service.auto_fill_studio(raw, START.isoformat(), (START + timedelta(seconds=240)).isoformat())['blocks']
+    definition = service.create(raw).record.definition
+    store = RuntimeStore(service.runtime_database_path)
+    runtime = ChannelRuntime.open(resolve_channel(definition, library), store, now=START)
+    runtime.events_between(START, START + timedelta(seconds=240))
+    runtime.break_store.reconcile_completed(7, through=START + timedelta(seconds=239))
+    with runtime.break_store.connection:
+        runtime.break_store.connection.execute('DELETE FROM ad_calendar_state')  # Legacy setup has no intent provenance.
+    runtime.break_store.close()
+    trimmed = replace(definition, programming=replace(definition.programming, calendar=definition.programming.calendar[:1]))
+    reopened = ChannelRuntime.open(resolve_channel(trimmed, library), store, now=START + timedelta(seconds=240))
+    try:
+        assert sum(reopened.break_store.play_counts(7).values()) == 3  # Evidence is not silently rewritten.
+        assert reopened.break_store.diagnostics(7)['legacyHistoryReviewCount'] == 2
+        assert service.ad_catalog_snapshot()['historyReviewCount'] == 2
+    finally:
+        reopened.break_store.close()
+
+
+def test_source_removal_allows_duplicates_inside_permitted_source_union(tmp_path):
+    from test_broadcaster import make_library, editor, FixedProbe
+    from channelos.broadcaster import BroadcasterService
+    from channelos.scanner import MediaScanner
+    library, first = make_library(tmp_path)
+    second = tmp_path / 'second'
+    second.mkdir()
+    for path in first.glob('*.mp4'):
+        (second / path.name).write_bytes(path.read_bytes())
+    MediaScanner(library, FixedProbe()).scan(second)
+    service = BroadcasterService((), tmp_path / 'channels', library)
+    raw = editor(7, first)
+    raw['sources'].append(str(second))
+    service.create(raw)
+    service.create(editor(8, sorted(first.glob('*.mp4'))[0]))
+    assert [item['channelNumber'] for item in service.source_dependencies(first)] == [8]
+    service.delete(8)
+    assert service.source_dependencies(first) == []
+    service.remove_library_source(first)
+    assert all(path.is_file() for path in first.glob('*.mp4'))
+    assert library.list_online_media_for_source(second)

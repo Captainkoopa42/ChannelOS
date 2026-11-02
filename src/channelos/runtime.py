@@ -365,7 +365,8 @@ class CalendarTimeline:
                 from .simple_ads import snapshot
                 observed = snapshot(existing, start, natural_end + timedelta(seconds=sum(plan.duration_seconds for plan in existing)), existing[0].policy_revision or self.ad_revision)
                 if not snapshot_matches(observed, self.programs[index].media, start, observed["revision"],
-                                        self.channel_number, self.ad_media, allow_legacy_ads=True):
+                                        self.channel_number, self.ad_media, allow_legacy_ads=True,
+                                        program_media=tuple(p.media for p in self.filler.programs)):
                     instant = getattr(self, 'opened_at', utc_now())
                     if start < instant:
                         raise ChannelRuntimeError("An existing airing reservation no longer matches its parent show. Keep its original media duration or rebuild an unstarted range.")
@@ -375,7 +376,8 @@ class CalendarTimeline:
             if not existing:
                 saved = self._simple_snapshots[index]
                 if snapshot_matches(saved, self.programs[index].media, start, self.ad_revision,
-                                    self.channel_number, self.ad_media):
+                                    self.channel_number, self.ad_media,
+                                    program_media=tuple(p.media for p in self.filler.programs)):
                     existing = list(snapshot_plans(saved))
                     allowed_ads = {item.asset.asset_id: item for item in self.ad_media}
                     for plan in existing:
@@ -1242,7 +1244,7 @@ class RuntimeStore:
             tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             payload = {}
             order = ("channel_runtime", "viewer_runtime", "ad_break_plans", "ad_plan_metadata",
-                     "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans",
+                     "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans", "ad_history_review",
                      "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans")
             for table in order:
                 if table not in tables:
@@ -1271,7 +1273,7 @@ class RuntimeStore:
                 return
             payload = json.loads(archive["payload"])
             order = ("channel_runtime", "viewer_runtime", "ad_break_plans", "ad_plan_metadata",
-                     "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans",
+                     "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans", "ad_history_review",
                      "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans", "runtime_meta")
             for table in order:
                 for row in payload.get(table, ()):

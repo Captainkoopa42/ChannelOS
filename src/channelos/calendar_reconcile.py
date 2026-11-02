@@ -10,7 +10,7 @@ def occurrence_id(channel: int, asset_id: str, start: datetime) -> str:
     return hashlib.sha256(f'calendar:{channel}:{asset_id}:{start.isoformat()}'.encode()).hexdigest()
 
 
-def snapshot_matches(saved, media, start, revision, channel, ad_media, *, allow_legacy_ads=False) -> bool:
+def snapshot_matches(saved, media, start, revision, channel, ad_media, *, allow_legacy_ads=False, program_media=()) -> bool:
     """Bind a reservation to its parent, current durations and source bounds."""
     from .simple_ads import snapshot_plans, validate_snapshot
     if not saved:
@@ -23,6 +23,7 @@ def snapshot_matches(saved, media, start, revision, channel, ad_media, *, allow_
         identity = occurrence_id(channel, media.asset.asset_id, start)
         duration = float(media.asset.duration_seconds)
         by_id = {item.asset.asset_id: item for item in ad_media}
+        programs = {item.asset.asset_id: item for item in (*program_media, media)}
         elapsed = 0.0
         for plan in plans:
             position = (plan.scheduled_at - start).total_seconds() - elapsed
@@ -40,6 +41,11 @@ def snapshot_matches(saved, media, start, revision, channel, ad_media, *, allow_
                                          part.original_duration_seconds if allow_legacy_ads else None)
                     if (expected_duration is None or part.source_offset_seconds != 0
                             or abs(expected_duration - part.duration_seconds) > .001):
+                        return False
+                elif part.event_type == 'filler':
+                    item = programs.get(part.asset_id)
+                    bound = float(item.asset.duration_seconds) if item else part.original_duration_seconds
+                    if bound is None or part.source_offset_seconds + part.duration_seconds > bound + .001:
                         return False
             elapsed += plan.duration_seconds
         return abs((datetime.fromisoformat(saved['end_utc']) - start).total_seconds() - duration - elapsed) < .001
@@ -66,11 +72,11 @@ def replay_blocks(resolved, blocks, *, store=None, replay_from=None):
     result = []
     for index, block in enumerate(ordered):
         media = by_id[block.asset_id]
-        valid = snapshot_matches(block.ad_plan, media, block.start_utc, revision, channel, resolved.ad_media)
+        valid = snapshot_matches(block.ad_plan, media, block.start_utc, revision, channel, resolved.ad_media, program_media=resolved.media)
         preserve = replay_from is not None and block.start_utc < replay_from and block.ad_plan
         if preserve:
             preserve = snapshot_matches(block.ad_plan, media, block.start_utc, block.ad_plan['revision'],
-                                        channel, resolved.ad_media, allow_legacy_ads=True)
+                                        channel, resolved.ad_media, allow_legacy_ads=True, program_media=resolved.media)
         if preserve:
             saved = block.ad_plan
             plans = snapshot_plans(saved)

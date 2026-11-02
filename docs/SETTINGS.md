@@ -117,3 +117,10 @@ User-editable controller bindings, a light-color theme, audio-channel mapping,
 playback-runtime selection, server/remote permissions, and startup/crash-recovery
 controls remain later work. Household viewer profiles are a separate roadmap
 feature.
+
+## Release candidate validation
+
+Settings remain separate from channel/ad policy. In 0.0.6, leaving playback for
+Settings cancels pending numeric tuning. An unavailable lineup can still reach
+Library, Broadcaster and Settings. Physical speaker/headphone and controller
+checks are recorded separately in [Windows acceptance](releases/WINDOWS_0.0.6_ACCEPTANCE.md).

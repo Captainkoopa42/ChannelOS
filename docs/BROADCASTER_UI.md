@@ -1,6 +1,6 @@
 # ChannelOS Broadcaster / Channel Builder
 
-**Status:** Classic Builder plus first functional Channel Studio slice
+**Status:** Windows 0.0.6 candidate — Classic Builder and Channel Studio
 
 **Product mode:** Broadcaster / Management
 
@@ -12,21 +12,12 @@ Broadcaster mode exists to let a person create and program persistent television
 
 It does not replace the channel-definition format, the scheduler, or the television runtime. The interface edits durable user intent; the existing ChannelOS runtime remains authoritative for what actually airs.
 
-```text
-Broadcaster UI
-      |
-      v
-portable channel definition (YAML)
-      |
-      v
-resolver + programming/runtime validation
-      |
-      v
-ChannelRuntime / Broadcast Clock
-      |
-      +----> Guide
-      |
-      +----> Live TV
+```mermaid
+flowchart TD
+    Draft["Broadcaster draft"] --> Validate["Resolve and validate detached state"]
+    Validate --> YAML["Portable channel definition"]
+    YAML --> Clock["Channel runtime and Broadcast Clock"]
+    Clock --> Guide["Guide and live playback"]
 ```
 
 ## Implemented authoring surfaces
@@ -293,3 +284,22 @@ The following Broadcaster work remains real future work rather than placeholder 
 - full export/import integration.
 
 The architectural target remains the same: ChannelOS should make operating a personal television network approachable without hiding or confiscating the durable definitions that make that television recognizable.
+
+## Release-audit behavior
+
+Library Add to Channel adds one indexed asset through a narrow service operation;
+it does not rebuild a channel from the list summary. Calendars retain their fixed
+blocks, and ads/settings remain intact. Adding an already included item is a no-op.
+
+Unavailable channels stay listed with a recovery message. Reconnect or scan their
+sources in Library. Removal uses the same dependency report in the UI and backend,
+including program files, subfolders, scheduled/filler assets and advertising references.
+
+Deleting a managed station leaves its YAML recovery backup and archives its runtime
+history. Reusing the number starts a new active station without the predecessor's
+clocks or profile assignment. An interrupted operation is recovered at next launch.
+
+Studio invalidates affected reservations after arranging shows. Card/overlap ends
+include saved ad windows. Swaps and moves do not silently shift neighboring fixed
+starts; Preview/Apply rejects an arrangement that cannot fit. Auto Fill returns new
+blocks and reconciled later reservations as one detached draft update.

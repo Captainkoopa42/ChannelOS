@@ -73,6 +73,7 @@ def run_couch(
             paths,
             channels_dir,
             library,
+            runtime_database_path=state_db,
         )
         broadcaster.runtime_database_path = Path(state_db)
     except (BroadcasterError, ChannelValidationError) as exc:

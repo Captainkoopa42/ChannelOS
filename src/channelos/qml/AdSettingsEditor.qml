@@ -868,6 +868,13 @@ Item {
                 }
                 Text {
                     Layout.fillWidth: true
+                    visible: Boolean(adCatalogDialog.catalogData.historyReviewMessage)
+                    text: String(adCatalogDialog.catalogData.historyReviewMessage || "")
+                    color: adsRoot.warning
+                    wrapMode: Text.Wrap
+                }
+                Text {
+                    Layout.fillWidth: true
                     color: adsRoot.textSecondary
                     wrapMode: Text.Wrap
                     font.pixelSize: 10

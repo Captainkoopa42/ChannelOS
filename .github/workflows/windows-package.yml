@@ -1,6 +1,7 @@
 name: windows-package
 
 on:
+  workflow_call:
   push:
     branches: ["agent/broadcaster-channel-builder"]
     tags: ["working-studio-beta-testing-*"]
@@ -47,6 +48,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ChannelOS-Windows-x64
-          path: dist/windows/ChannelOS-0.0.5-windows-x64.zip
+          path: dist/windows/ChannelOS-0.0.6-windows-x64.zip
           if-no-files-found: error
           compression-level: 0

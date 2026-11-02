@@ -10,7 +10,7 @@ The goal is not to build another streaming service or another thumbnail browser.
 
 ## Project status
 
-**Working local alpha / Phase 3 active / Phase 4 first slice functional**
+**Windows 0.0.6 release candidate — automated release gate and device acceptance**
 
 Phase 0, Phase 1, and Phase 2 are complete. The active couch implementation now exercises the real ChannelOS television path on Windows rather than only a console or visual-shell proof.
 
@@ -66,6 +66,15 @@ Sequential/Shuffle rotation, or optional timed breaks/aligned show starts.
 Detailed rules remain under **Advanced Ad Settings**, with all reusable profiles,
 collections and IDs in its **Profiles** tab. See
 [Simple ad controls](docs/SIMPLE_AD_CONTROLS.md) for behavior and compatibility.
+
+Version 0.0.6 repairs Library additions, numeric tuning, unavailable-source startup,
+source dependency checks, channel deletion/recreation, profile overrides and calendar
+reservation reconciliation. It retains all 0.0.3–0.0.5 features. See the
+[release notes](docs/releases/v0.0.6-rc.1.md) and
+[Windows acceptance route](docs/releases/WINDOWS_0.0.6_ACCEPTANCE.md).
+
+Public test builds appear under [GitHub Releases](https://github.com/Captainkoopa42/ChannelOS/releases).
+Use the Windows x64 ZIP and its SHA-256 checksum; Actions artifacts are development outputs.
 
 The key runtime rule remains:
 

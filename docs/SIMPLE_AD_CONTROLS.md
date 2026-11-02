@@ -1,4 +1,4 @@
-# Simple ad controls — 0.0.5
+# Simple ad controls — 0.0.6
 
 Studio keeps its existing calendar, timeline and draft/apply workflow. The left
 panel now has Media Bin and Ad Bin tabs. The Ad Bin shows selected indexed source
@@ -81,3 +81,17 @@ Verification covers exact whole-clip selection, rotation/restart, wall-clock
 resume positions, aligned starts, protected calendar boundaries, Qt map and
 snapshot round-trips, Studio Auto Fill/Preview/Apply, dialog cancellation,
 advanced profile controls, and portable copy/relocation.
+
+## 0.0.6 reservation and profile repairs
+
+Reservations bind to the parent show, indexed duration, start and effective policy.
+Moving, swapping or inserting before a show replays the affected future queue in
+order. Later fixed starts remain protected; a whole clip that cannot fit produces
+a validation error. Removed future reservations are archived and excluded from
+airing reconciliation. Already airing or viewed reservations remain protected.
+
+Advanced controls override inherited profile defaults. Placement-specific overrides
+apply last. Main Ads Off stays off. Profiles → Use Assignment in This Draft stages
+the choice until the channel is saved; Cancel discards it. Use Profile Defaults
+clears channel overrides and restores inheritance. Saving reusable named profiles
+and collections remains an explicit catalog operation.

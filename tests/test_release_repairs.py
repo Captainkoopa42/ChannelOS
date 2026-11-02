@@ -518,7 +518,13 @@ def test_deleting_during_ad_archives_final_viewing_or_restores_decoder(tmp_path,
     service.create(raw)
     if not last_channel:
         service.create(editor(8, tmp_path / 'programs'))
-    now = datetime.now(timezone.utc)
+    now = START + timedelta(seconds=61)
+    # UI construction and database I/O take different amounts of real time on
+    # Windows. All participants must observe the same simulated playback clock.
+    from channelos import runtime as runtime_module, guide as guide_module
+    from channelos import couch_model, couch_qt, couch_actions, television
+    for module in (runtime_module, guide_module, couch_model, couch_qt, couch_actions, television):
+        monkeypatch.setattr(module, 'utc_now', lambda: now)
     store = RuntimeStore(service.runtime_database_path)
     runtimes = tuple(ChannelRuntime.open(resolve_channel(record.definition, library), store,
         now=now - timedelta(seconds=61)) for record in service.records)

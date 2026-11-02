@@ -393,6 +393,7 @@ def export_portable_channel(
     store: AdCatalogStore,
     library: MediaLibrary,
     *, enabled_override: bool | None = None,
+    assignment_override: ChannelAdAssignment | None = None,
 ) -> ChannelDefinition:
     """Embed the assigned catalog and effective profile into a portable v0.5 YAML.
 
@@ -402,7 +403,7 @@ def export_portable_channel(
     """
     if channel.advertising.setup_mode != "advanced":
         return channel
-    assignment = store.get_assignment(channel.channel)
+    assignment = assignment_override or store.get_assignment(channel.channel)
     if assignment is None:
         return channel
     effective_assignment = replace(assignment, overrides={**assignment.overrides, "enabled": enabled_override}) if enabled_override is not None else assignment
@@ -461,6 +462,7 @@ def export_portable_channel(
             if profile is None:
                 raise AdCatalogValidationError(f"missing profile {item.profile_id}")
             defaults.update(profile.defaults)
+        defaults.update(assignment.overrides)
         defaults.update(item.overrides)
         defaults["enabled"] = bool(enabled and defaults.get("enabled", True))
         defaults["triggers"] = [item.trigger]

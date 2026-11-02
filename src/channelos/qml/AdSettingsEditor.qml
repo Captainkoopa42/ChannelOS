@@ -24,6 +24,9 @@ Item {
     property real smooshMinimum: 5
     property var excludedAssetIds: []
     property var loadedData: ({})
+    property var baselineValues: ({})
+    property var inheritedEditedKeys: []
+    property var catalogAssignment: null
     property var adPlacementSnapshots: []
     property bool advancedDirty: false
     property string feedbackMessage: ""
@@ -161,7 +164,7 @@ Item {
         background: Rectangle { color: tab.checked ? "#12527f" : adsRoot.panel; border.color: tab.checked || tab.activeFocus ? adsRoot.accentBright : adsRoot.line; radius: 4 }
     }
     function split(value) { return String(value || "").split(";").map(function(x) { return x.trim() }).filter(function(x) { return x.length > 0 }) }
-    function editorObject() {
+    function editorValues() {
         return {
             adBreaksEnabled: adsRoot.adEnabled,
             adSources: adSourcesArea.text.split(";").map(function(value) {
@@ -201,8 +204,22 @@ Item {
             adExcludedAssetIds: excludedAssetIds
         }
     }
+    function editorObject() {
+        var values = editorValues()
+        var edited = inheritedEditedKeys.slice(0)
+        Object.keys(values).forEach(function(key) {
+            if (JSON.stringify(values[key]) !== JSON.stringify(baselineValues[key])
+                    && edited.indexOf(key) < 0)
+                edited.push(key)
+        })
+        values.adEditedKeys = edited
+        values.adCatalogAssignment = catalogAssignment
+        return values
+    }
     function load(data) {
         loadedData = Object.assign({}, data || ({}))
+        inheritedEditedKeys = (data.adEditedKeys || []).slice(0)
+        catalogAssignment = data.adCatalogAssignment || null
         adEnabled = Boolean(data.adBreaksEnabled)
         setupMode = String(data.adSetupMode || (data.adBreaksEnabled || (data.adSources || []).length || (data.adAssetIds || []).length || (data.adPlacements || []).length ? "advanced" : "after_show"))
         if (!data.adBreaksEnabled && !(data.adSources || []).length && !(data.adAssetIds || []).length && !(data.adPlacements || []).length && !data.adCollectionId && !data.adProfileId)
@@ -244,6 +261,7 @@ Item {
         adPlacementSnapshots = data.adPlacements || []
 
         advancedDirty = false
+        baselineValues = editorValues()
     }
     function setSources(paths) { adSourcesArea.text = paths.join("; "); settingsApplied() }
     function setExcluded(ids) { excludedAssetIds = ids; settingsApplied() }
@@ -788,18 +806,19 @@ Item {
                 }
                 StudioButton {
                     id: saveAdAssignmentButton
-                    text: "Save Assignment to Current Channel"
+                    text: "Use Assignment in This Draft"
                     highlighted: true
                     onClicked: {
                         try {
                             var overrides = JSON.parse(catalogAssignOverrides.text)
-                            var result = channelOS.assignAdBreakProfile({
+                            adsRoot.catalogAssignment = {
                                 channelNumber: adsRoot.channelNumber,
                                 collectionId: catalogAssignCollection.text.trim(),
                                 profileId: catalogAssignProfile.text.trim(),
                                 overrides: overrides,
                                 placements: adCatalogDialog.placementRules
-                            })
+                            }
+                            var result = {ok: true, message: "Assignment staged. Save the channel to apply it."}
                             adCatalogDialog.showResult(result)
                             if (result && result.ok) {
                                 adCollectionField.text = catalogAssignCollection.text.trim()

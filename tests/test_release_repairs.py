@@ -154,3 +154,51 @@ def test_interrupted_delete_recovers_without_stale_assignment(tmp_path, monkeypa
     assert recovered.channel_numbers == (8,)
     assert recovered.ad_catalog.get_assignment(7) is None
     assert not list((tmp_path / 'channels').glob('channel-deletion-*.json'))
+
+
+def test_advanced_edits_override_profile_in_preview_apply_and_restart(tmp_path):
+    from channelos.ad_catalog import AdCollection, BreakProfile, ChannelAdAssignment
+    library, service, raw = setup(tmp_path)
+    ids = tuple(item.asset.asset_id for item in library.list_online_media_for_source(tmp_path / 'commercials'))
+    service.ad_catalog.save_collection(AdCollection('ads', 'Ads', ids))
+    service.ad_catalog.save_profile(BreakProfile('p', 'Ten seconds', {
+        'enabled': True, 'duration_seconds': 10, 'timing_policy': 'strict_fit', 'triggers': ['breakpoint']}))
+    service.ad_catalog.assign_channel(ChannelAdAssignment(7, 'ads', 'p'))
+    raw.update(adSetupMode='advanced', adEditedKeys=[])
+    service.create(raw)
+    draft = service.studio_draft(7)
+    draft.update(adBreakDurationSeconds=30, adTimingPolicy='smoosh', adSmooshMaxTrimSeconds=2,
+                 adTransitionSeconds=0, adBreakpointsSeconds=[], adTriggers=['between_programs'],
+                 adEditedKeys=['adBreakDurationSeconds', 'adTimingPolicy', 'adSmooshMaxTrimSeconds',
+                               'adTransitionSeconds', 'adBreakpointsSeconds', 'adTriggers'])
+    original = service.ad_catalog.get_assignment(7)
+    preview_policy = service._configured_definition(draft).advertising
+    service.preview(draft)
+    assert service.ad_catalog.get_assignment(7) == original
+    assert preview_policy.break_duration_seconds == 30
+    assert preview_policy.timing_policy == 'smoosh'
+    assert preview_policy.smoosh_max_trim_seconds == 2
+    assert preview_policy.transition_seconds == 0
+    assert preview_policy.breakpoints_seconds == ()
+    assert service.update(7, draft).record.definition.advertising == preview_policy
+    reopened = service.studio_draft(7)
+    reopened['adEditedKeys'] = []
+    assert service._configured_definition(reopened).advertising == preview_policy
+    reopened['adBreaksEnabled'] = False
+    assert not service._configured_definition(reopened).advertising.enabled
+
+
+def test_staged_assignment_is_pure_until_channel_saved(tmp_path):
+    from channelos.ad_catalog import AdCollection, BreakProfile
+    library, service, raw = setup(tmp_path)
+    service.create(raw)
+    ids = tuple(item.asset.asset_id for item in library.list_online_media_for_source(tmp_path / 'commercials'))
+    service.ad_catalog.save_collection(AdCollection('ads', 'Ads', ids))
+    service.ad_catalog.save_profile(BreakProfile('p', 'Profile', {'enabled': True, 'duration_seconds': 10}))
+    draft = service.studio_draft(7)
+    draft.update(adSetupMode='advanced', adCollectionId='ads', adProfileId='p', adEditedKeys=[],
+        adCatalogAssignment={'collectionId': 'ads', 'profileId': 'p', 'overrides': {'priority': 0}, 'placements': []})
+    service.preview(draft)
+    assert service.ad_catalog.get_assignment(7) is None
+    service.update(7, draft)
+    assert service.ad_catalog.get_assignment(7).profile_id == 'p'

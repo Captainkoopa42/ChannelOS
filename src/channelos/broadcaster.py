@@ -903,15 +903,66 @@ class BroadcasterService:
     def _configured_definition(self, raw: dict[str, Any]) -> ChannelDefinition:
         """Resolve authoring references before validating an enabled snapshot."""
         editor = dict(raw)
-        assignment = self.ad_catalog.get_assignment(int(editor.get("channel", 0)))
+        assignment = self._catalog_assignment_for_editor(editor)
         if (assignment is not None and editor.get("adSetupMode", "advanced") == "advanced"
                 and editor.get("adBreaksEnabled") and not (
             editor.get("adSources") or editor.get("adAssetIds") or editor.get("adPlacements")
         )):
             editor["adBreaksEnabled"] = False
             base = definition_from_editor(editor)
-            return export_portable_channel(base, self.ad_catalog, self.library, enabled_override=True)
-        return self._apply_ad_catalog(definition_from_editor(editor))
+            return export_portable_channel(base, self.ad_catalog, self.library, enabled_override=True,
+                                           assignment_override=assignment)
+        definition = definition_from_editor(editor)
+        if assignment is not None:
+            return export_portable_channel(definition, self.ad_catalog, self.library,
+                enabled_override=definition.advertising.enabled if "adBreaksEnabled" in editor else None,
+                assignment_override=assignment)
+        return definition
+
+    def _catalog_assignment_for_editor(self, raw: dict[str, Any]) -> ChannelAdAssignment | None:
+        number = int(raw.get("channel", 0))
+        assignment = self.ad_catalog.get_assignment(number)
+        staged = raw.get("adCatalogAssignment")
+        if staged is not None:
+            assignment = ChannelAdAssignment(number, staged.get("collectionId") or None,
+                staged.get("profileId") or None, _editor_ad_policy(staged.get("overrides", {})),
+                tuple(AdPlacementAssignment(**item) for item in staged.get("placements", ())))
+        if assignment is None or raw.get("adSetupMode", "advanced") != "advanced":
+            return assignment
+        safe = dict(raw)
+        safe["adBreaksEnabled"] = False
+        safe["adProfileId"] = assignment.profile_id or "draft-policy"
+        policy = definition_from_editor(safe).advertising
+        baseline = self._records[number].definition.advertising if number in self._records else None
+        fields = {
+            "adBreaksEnabled": ("enabled", "enabled"),
+            "adSelectionStrategy": ("selection_strategy", "strategy"),
+            "adBreakDurationSeconds": ("break_duration_seconds", "duration_seconds"),
+            "adBreakpointsSeconds": ("breakpoints_seconds", "breakpoints_seconds"),
+            "adIntervalSeconds": ("interval_seconds", "interval_seconds"),
+            "adPriority": ("priority", "priority"), "adTimingPolicy": ("timing_policy", "timing_policy"),
+            "adSmooshMinimumSeconds": ("smoosh_minimum_seconds", "smoosh_minimum_seconds"),
+            "adSmooshMaxTrimSeconds": ("smoosh_max_trim_seconds", "smoosh_max_trim_seconds"),
+            "adExpandMaxSeconds": ("expand_max_seconds", "expand_max_seconds"),
+            "adTriggers": ("triggers", "triggers"),
+            "adTransitionBehavior": ("transition_behavior", "transition_behavior"),
+            "adTransitionSeconds": ("transition_seconds", "transition_seconds"),
+            "adSlotSeconds": ("slot_seconds", "slot_seconds"),
+            "adSchedulePriority": ("schedule_priority", "schedule_priority"),
+            "adExpandSource": ("expand_source", "expand_source"),
+        }
+        overrides = dict(assignment.overrides)
+        edited = set(raw["adEditedKeys"]) if "adEditedKeys" in raw else None
+        for key, (attribute, setting) in fields.items():
+            if key not in raw:
+                continue
+            value = bool(raw[key]) if key == "adBreaksEnabled" else getattr(policy, attribute)
+            changed = key in edited if edited is not None else baseline is None or value != getattr(baseline, attribute)
+            if changed:
+                overrides[setting] = list(value) if isinstance(value, tuple) else value
+        collection_id = str(raw.get("adCollectionId", assignment.collection_id or "")).strip() or None
+        profile_id = str(raw.get("adProfileId", assignment.profile_id or "")).strip() or None
+        return replace(assignment, collection_id=collection_id, profile_id=profile_id, overrides=overrides)
 
     def studio_draft(self, channel_number: int = 0) -> dict[str, Any]:
         """Build a detached Studio draft; opening it never alters live TV."""
@@ -1510,8 +1561,21 @@ class BroadcasterService:
                 "file."
             )
 
-        self._atomic_write(target, serialize_channel(definition, portable=self.library.portable))
-        self.refresh()
+        assignment = self._catalog_assignment_for_editor(raw)
+        previous_assignment = self.ad_catalog.get_assignment(definition.channel)
+        try:
+            self._atomic_write(target, serialize_channel(definition, portable=self.library.portable))
+            if assignment is not None and definition.advertising.setup_mode == "advanced":
+                self.ad_catalog.assign_channel(assignment)
+            self.refresh()
+        except Exception:
+            target.unlink(missing_ok=True)
+            if previous_assignment is not None:
+                self.ad_catalog.assign_channel(previous_assignment)
+            else:
+                self.ad_catalog.clear_channel_assignment(definition.channel)
+            self.refresh()
+            raise
         return ChannelSaveResult(self._records[definition.channel])
 
     def update(
@@ -1538,7 +1602,7 @@ class BroadcasterService:
                 "accidentally overwrite another station or continuity state."
             )
 
-        return self._save_existing(existing, definition)
+        return self._save_existing(existing, definition, self._catalog_assignment_for_editor(raw))
 
     def add_library_item(self, channel_number: int, asset_id: str, path: str) -> ChannelSaveResult:
         """Add a source without reconstructing the channel from a summary view."""
@@ -1559,7 +1623,8 @@ class BroadcasterService:
             definition, sources=(*definition.sources, SourceDefinition(Path(target)))
         ))
 
-    def _save_existing(self, existing: ChannelRecord, definition: ChannelDefinition) -> ChannelSaveResult:
+    def _save_existing(self, existing: ChannelRecord, definition: ChannelDefinition,
+                       assignment: ChannelAdAssignment | None = None) -> ChannelSaveResult:
         self._resolve_and_validate(definition)
         if not existing.path.exists():
             raise ChannelNotFoundError(
@@ -1573,8 +1638,20 @@ class BroadcasterService:
             existing.path.suffix + ".bak"
         )
         shutil.copy2(existing.path, backup)
-        self._atomic_write(existing.path, serialize_channel(definition, portable=self.library.portable))
-        self.refresh()
+        previous_assignment = self.ad_catalog.get_assignment(definition.channel)
+        try:
+            self._atomic_write(existing.path, serialize_channel(definition, portable=self.library.portable))
+            if assignment is not None and definition.advertising.setup_mode == "advanced":
+                self.ad_catalog.assign_channel(assignment)
+            self.refresh()
+        except Exception:
+            self._atomic_write(existing.path, backup.read_text(encoding="utf-8"))
+            if previous_assignment is not None:
+                self.ad_catalog.assign_channel(previous_assignment)
+            else:
+                self.ad_catalog.clear_channel_assignment(definition.channel)
+            self.refresh()
+            raise
 
         return ChannelSaveResult(
             record=self._records[definition.channel],

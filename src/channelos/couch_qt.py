@@ -1373,6 +1373,9 @@ class CouchKeyFilter(QObject):
         self._channel_generation = 0
         self._channel_digits = ""
         self._home_scan_dialog: QProgressDialog | None = None
+        screen_changed = getattr(window, "screenChanged", None)
+        if screen_changed is not None:
+            screen_changed.connect(self._channel_entry_screen_changed)
         scan_changed = getattr(controller, "libraryScanChanged", None)
         if scan_changed is not None:
             scan_changed.connect(self._update_home_scan_dialog)
@@ -1500,14 +1503,21 @@ class CouchKeyFilter(QObject):
         intent = bindings.get(key)
         return None if intent is None else ControlCommand(intent)
 
+    def _cancel_channel_entry(self) -> None:
+        self._channel_digits = ""
+        self._channel_generation += 1
+        self._window.setProperty("channelEntry", "")
+
+    def _channel_entry_screen_changed(self) -> None:
+        if str(self._window.property("screen")) not in {"live", "ondemand"}:
+            self._cancel_channel_entry()
+
     def _commit_channel_entry(self) -> None:
         digits = self._channel_digits
         if not digits:
             return
 
-        self._channel_digits = ""
-        self._channel_generation += 1
-        self._window.setProperty("channelEntry", "")
+        self._cancel_channel_entry()
 
         came_from_on_demand = (
             str(self._window.property("screen")) == "ondemand"
@@ -1542,11 +1552,11 @@ class CouchKeyFilter(QObject):
             return
 
         def commit_if_current() -> None:
-            if (
-                generation == self._channel_generation
-                and self._channel_digits
-                and str(self._window.property("screen")) in {"live", "ondemand"}
-            ):
+            if generation != self._channel_generation:
+                return
+            if str(self._window.property("screen")) not in {"live", "ondemand"}:
+                self._cancel_channel_entry()
+            elif self._channel_digits:
                 self._commit_channel_entry()
 
         QTimer.singleShot(1300, commit_if_current)
@@ -1880,6 +1890,11 @@ class CouchKeyFilter(QObject):
 
         intent = command.intent
         screen = str(self._window.property("screen"))
+        if intent in {ControlIntent.TUNE, ControlIntent.CHANNEL_UP,
+                      ControlIntent.CHANNEL_DOWN, ControlIntent.PREVIOUS_CHANNEL,
+                      ControlIntent.HOME, ControlIntent.GUIDE,
+                      ControlIntent.LIBRARY, ControlIntent.SETTINGS, ControlIntent.CHANNELS}:
+            self._cancel_channel_entry()
 
         if intent is ControlIntent.POWER:
             QGuiApplication.quit()

@@ -18,12 +18,13 @@ from .ad_catalog import (
 )
 from .ad_break_engine import ProgramOccurrence
 from .ad_scheduling import calendar_ad_room, calendar_gap_policy, configured_policies, eligible_media, select_segments
-from .library import MediaLibrary
+from .library import MediaLibrary, normalize_path
 from .loader import load_channel
 from .models import (
     CalendarBlockDefinition,
     ChannelDefinition,
     ChannelValidationError,
+    SourceDefinition,
     advertising_to_mapping,
 )
 from .portable import PortablePaths, path_tree
@@ -1459,13 +1460,36 @@ class BroadcasterService:
                 "accidentally overwrite another station or continuity state."
             )
 
-        self._resolve_and_validate(definition)
+        return self._save_existing(existing, definition)
 
+    def add_library_item(self, channel_number: int, asset_id: str, path: str) -> ChannelSaveResult:
+        """Add a source without reconstructing the channel from a summary view."""
+        try:
+            existing = self._records[int(channel_number)]
+        except KeyError as exc:
+            raise ChannelNotFoundError("That channel is no longer in the lineup") from exc
+        target, key = normalize_path(path)
+        if not any(item.asset.asset_id == asset_id and normalize_path(item.location.path)[1] == key
+                   for item in self.library.list_online_media()) or not Path(target).is_file():
+            raise BroadcasterError("The selected Library item is no longer available")
+        definition = existing.definition
+        for source in definition.sources:
+            source_key = normalize_path(source.path)[1]
+            if key == source_key or key.startswith(source_key + os.sep):
+                return ChannelSaveResult(existing)
+        return self._save_existing(existing, replace(
+            definition, sources=(*definition.sources, SourceDefinition(Path(target)))
+        ))
+
+    def _save_existing(self, existing: ChannelRecord, definition: ChannelDefinition) -> ChannelSaveResult:
+        self._resolve_and_validate(definition)
         if not existing.path.exists():
             raise ChannelNotFoundError(
                 f"cannot edit Channel {definition.display_number}; "
                 f"{existing.path} no longer exists"
             )
+        if load_channel(existing.path) != existing.definition:
+            raise ChannelConflictError("The channel changed on disk. Refresh it before saving.")
 
         backup = existing.path.with_suffix(
             existing.path.suffix + ".bak"

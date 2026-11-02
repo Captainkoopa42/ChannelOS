@@ -346,19 +346,8 @@ Item {
             }
         }
 
-        var updatedSources = existingSources.slice(0)
-        updatedSources.push(targetPath)
-        var editor = {
-            channel: channel.channelNumber,
-            name: String(channel.name || ""),
-            description: String(channel.description || ""),
-            sources: updatedSources,
-            mode: String(channel.mode || "sequential"),
-            preserveEpisodeOrder: Boolean(channel.preserveEpisodeOrder),
-            avoidRepeatDays: channel.avoidRepeatDays || 0,
-            numberWidth: channel.numberWidth || 3
-        }
-        var result = channelOS.updateChannel(channel.channelNumber, editor)
+        var result = channelOS.addLibraryItemToChannel(
+                    channel.channelNumber, String(item.assetId), targetPath)
         if (!result || !result.ok) {
             addToChannelError = true
             addToChannelMessage = result && result.message

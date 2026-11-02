@@ -369,3 +369,35 @@ def test_info_intent_toggles_context_drawer_and_back_closes_it() -> None:
 
     window.close()
     app.processEvents()
+
+
+@pytest.mark.parametrize('intent', [ControlIntent.HOME, ControlIntent.GUIDE,
+    ControlIntent.TUNE, ControlIntent.CHANNEL_UP, ControlIntent.CHANNEL_DOWN])
+def test_pending_channel_entry_cancelled_by_navigation_and_tuning(monkeypatch, intent):
+    from PySide6.QtCore import QTimer
+    callbacks = []
+    monkeypatch.setattr(QTimer, 'singleShot', lambda ms, callback: callbacks.append((ms, callback)))
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    tunes = []
+    controller.tuneChannel = lambda number: tunes.append(number) or {'ok': True}
+    controller.changeChannel = lambda delta: tunes.append(37 + delta) or {'ok': True}
+    window = QWindow()
+    window.setProperty('screen', 'live')
+    window.setProperty('infoVisible', False)
+    router = CouchKeyFilter(controller, window)
+    router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 1))
+    expired = next(callback for ms, callback in callbacks if ms == 1300)
+    router.dispatch_command(ControlCommand(intent, 37))
+    expected = list(tunes)
+    assert window.property('channelEntry') == ''
+    assert not router._channel_digits
+    window.setProperty('screen', 'live')
+    router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 2))
+    expired()
+    assert window.property('channelEntry') == '2'
+    assert tunes == expected
+    next(callback for ms, callback in reversed(callbacks) if ms == 1300)()
+    assert tunes == expected + [2]
+    assert window.property('channelEntry') == ''
+    window.close()

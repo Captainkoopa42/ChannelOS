@@ -420,6 +420,9 @@ class BreakPlanStore:
         self.connection.portable = self.portable
         self.connection.execute("PRAGMA busy_timeout = 5000")
         self.connection.execute("PRAGMA foreign_keys = ON")
+        self._initialize()
+
+    def _initialize(self) -> None:
         self.connection.executescript("""
             CREATE TABLE IF NOT EXISTS ad_break_plans (
                 plan_id TEXT PRIMARY KEY,
@@ -489,11 +492,24 @@ class BreakPlanStore:
             );
             CREATE INDEX IF NOT EXISTS idx_ad_program_clock_channel
                 ON ad_program_clock(channel_number, broadcast_start);
+            CREATE TABLE IF NOT EXISTS ad_calendar_state (
+                channel_number INTEGER PRIMARY KEY,
+                payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS ad_superseded_plans (
+                archive_id INTEGER PRIMARY KEY,
+                channel_number INTEGER NOT NULL,
+                superseded_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS ad_retired_plans (
                 plan_id TEXT PRIMARY KEY REFERENCES ad_break_plans(plan_id),
                 retired_at TEXT NOT NULL
             );
         """)
+        columns = {row[1] for row in self.connection.execute("PRAGMA table_info(ad_program_clock)")}
+        if 'schedule_signature' not in columns:
+            self.connection.execute("ALTER TABLE ad_program_clock ADD COLUMN schedule_signature TEXT NOT NULL DEFAULT ''")
         self.connection.commit()
 
     def close(self) -> None:
@@ -505,6 +521,51 @@ class BreakPlanStore:
             self.portable.check_available()
         self.close()
         self.__init__(self.path)
+
+    def reconcile_calendar(self, channel_number: int, contracts: list[dict], *, at: datetime, valid_occurrences=None) -> None:
+        """Retire the unstarted affected suffix independently of ad policy edits."""
+        row = self.connection.execute("SELECT payload FROM ad_calendar_state WHERE channel_number=?", (channel_number,)).fetchone()
+        prior = json.loads(row[0]) if row else []
+        old = {item['occurrence_id']: item for item in prior}
+        new = {item['occurrence_id']: item for item in contracts}
+        valid = set(new) if valid_occurrences is None else set(valid_occurrences)
+        changed = {key for key in old.keys() | new.keys() if old.get(key) != new.get(key)} if prior else set()
+        instant = _utc(at)
+        for key in changed & old.keys():
+            item = old[key]
+            if (datetime.fromisoformat(item['start']) <= instant < datetime.fromisoformat(item['end'])
+                    and (key not in new or item.get('parent') != new[key].get('parent'))):
+                raise ValueError("This edit changes a show that is already airing. Keep that show and edit its following range.")
+        earliest = min((datetime.fromisoformat((old.get(key) or new[key])['start']) for key in changed), default=None)
+        rows = self.connection.execute("SELECT plan_id, occurrence_id, scheduled_at FROM ad_break_plans WHERE channel_number=? AND plan_id NOT IN (SELECT plan_id FROM ad_retired_plans)", (channel_number,)).fetchall()
+        remove = [plan_id for plan_id, occurrence, begins in rows
+                  if datetime.fromisoformat(begins) >= instant and
+                  (occurrence not in valid or earliest is not None and datetime.fromisoformat(begins) >= earliest
+                   and (occurrence not in old or datetime.fromisoformat(old[occurrence]['start']) >= instant))]
+        self._discard_unstarted(remove, at=instant)
+        with self.connection:
+            self.connection.execute("INSERT INTO ad_calendar_state VALUES(?,?) ON CONFLICT(channel_number) DO UPDATE SET payload=excluded.payload",
+                                    (channel_number, json.dumps(contracts, sort_keys=True)))
+
+    def _discard_unstarted(self, plan_ids, *, at: datetime) -> None:
+        """Archive obsolete reservations while protecting actual consumption."""
+        with self.connection:
+            for identity in plan_ids:
+                if any(self.connection.execute(f"SELECT 1 FROM {table} WHERE plan_id=? LIMIT 1", (identity,)).fetchone()
+                       for table in ('ad_break_history', 'ad_view_history', 'ad_view_progress')):
+                    raise ValueError("This edit changes a previously aired or viewed ad reservation. Keep its show and edit a later range.")
+            for identity in plan_ids:
+                cursor = self.connection.execute("SELECT * FROM ad_break_plans WHERE plan_id=?", (identity,))
+                row = cursor.fetchone()
+                if row is None:
+                    continue
+                metadata = self.connection.execute("SELECT payload FROM ad_plan_metadata WHERE plan_id=?", (identity,)).fetchone()
+                payload = {'plan': dict(zip((column[0] for column in cursor.description), row)),
+                           'metadata': json.loads(metadata[0]) if metadata else None}
+                self.connection.execute("INSERT INTO ad_superseded_plans(channel_number,superseded_at,payload) VALUES(?,?,?)",
+                    (payload['plan']['channel_number'], _utc(at).isoformat(), json.dumps(payload, sort_keys=True)))
+                self.connection.execute("DELETE FROM ad_retired_plans WHERE plan_id=?", (identity,))
+                self.connection.execute("DELETE FROM ad_break_plans WHERE plan_id=?", (identity,))
 
     def reset_program_clock(self, channel_number: int, *, at: datetime) -> None:
         """Archive old-schedule decisions while retaining their existing ledgers."""
@@ -886,14 +947,14 @@ class BreakPlanStore:
 
     def save_program_clock(self, occurrence_id: str, channel_number: int, *,
                            content_start: datetime, content_end: datetime,
-                           broadcast_start: datetime, broadcast_end: datetime) -> None:
+                           broadcast_start: datetime, broadcast_end: datetime, schedule_signature: str = "") -> None:
         self.connection.execute("""
-            INSERT INTO ad_program_clock VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO ad_program_clock(occurrence_id,channel_number,content_start,content_end,broadcast_start,broadcast_end,schedule_signature) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(occurrence_id) DO UPDATE SET
                 broadcast_end = excluded.broadcast_end
         """, (occurrence_id, int(channel_number), _utc(content_start).isoformat(),
               _utc(content_end).isoformat(), _utc(broadcast_start).isoformat(),
-              _utc(broadcast_end).isoformat()))
+              _utc(broadcast_end).isoformat(), schedule_signature))
         self.connection.commit()
 
     def program_clock(self, occurrence_id: str) -> tuple[datetime, datetime] | None:
@@ -903,20 +964,20 @@ class BreakPlanStore:
         ).fetchone()
         return None if row is None else tuple(_utc(datetime.fromisoformat(x)) for x in row)
 
-    def preceding_program_end(self, channel_number: int, content_start: datetime) -> datetime | None:
+    def preceding_program_end(self, channel_number: int, content_start: datetime, *, scope: str | None = None) -> datetime | None:
         row = self.connection.execute(
             "SELECT broadcast_end FROM ad_program_clock WHERE channel_number = ? "
-            "AND content_end <= ? ORDER BY content_end DESC LIMIT 1",
-            (int(channel_number), _utc(content_start).isoformat()),
+            "AND content_end <= ? AND (? IS NULL OR schedule_signature=?) ORDER BY content_end DESC LIMIT 1",
+            (int(channel_number), _utc(content_start).isoformat(), scope, scope),
         ).fetchone()
         return None if row is None else _utc(datetime.fromisoformat(row[0]))
 
-    def clock_at(self, channel_number: int, at: datetime):
+    def clock_at(self, channel_number: int, at: datetime, *, scope: str | None = None):
         row = self.connection.execute(
             "SELECT occurrence_id, content_start, content_end, broadcast_start, broadcast_end "
             "FROM ad_program_clock WHERE channel_number = ? AND broadcast_start <= ? "
-            "AND broadcast_end > ? ORDER BY broadcast_start DESC LIMIT 1",
-            (int(channel_number), _utc(at).isoformat(), _utc(at).isoformat()),
+            "AND broadcast_end > ? AND (? IS NULL OR schedule_signature=?) ORDER BY broadcast_start DESC LIMIT 1",
+            (int(channel_number), _utc(at).isoformat(), _utc(at).isoformat(), scope, scope),
         ).fetchone()
         return None if row is None else (str(row[0]), *(_utc(datetime.fromisoformat(x)) for x in row[1:]))
 
@@ -1009,7 +1070,7 @@ class BreakPlanStore:
         """Load all immutable plans belonging to one program occurrence."""
         rows = self.connection.execute("""
             SELECT plan_id FROM ad_break_plans
-            WHERE occurrence_id = ?
+            WHERE occurrence_id = ? AND plan_id NOT IN (SELECT plan_id FROM ad_retired_plans)
             ORDER BY scheduled_at, plan_id
         """, (str(occurrence_id),)).fetchall()
         return tuple(

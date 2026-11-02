@@ -608,7 +608,7 @@ Item {
                                     width: parent.width
                                     text: modelData.mode.toUpperCase()
                                           + "   |   NOW: "
-                                          + (modelData.nowTitle || "Ready")
+                                          + (modelData.availabilityMessage || modelData.nowTitle || "Ready")
                                     color: broadcasterRoot.textSecondary
                                     font.pixelSize: 12
                                     elide: Text.ElideRight
@@ -813,7 +813,8 @@ Item {
 
                                     Text {
                                         width: parent.width
-                                        text: broadcasterRoot.selectedChannel().nowTitle
+                                        text: broadcasterRoot.selectedChannel().availabilityMessage
+                                              || broadcasterRoot.selectedChannel().nowTitle
                                               || "Runtime calculates the current program"
                                         color: broadcasterRoot.textPrimary
                                         font.pixelSize: 19

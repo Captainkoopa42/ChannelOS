@@ -401,3 +401,70 @@ def test_pending_channel_entry_cancelled_by_navigation_and_tuning(monkeypatch, i
     assert tunes == expected + [2]
     assert window.property('channelEntry') == ''
     window.close()
+
+
+def test_production_filter_clears_numeric_input_for_qml_and_all_tuning_routes(monkeypatch):
+    from PySide6.QtCore import QTimer
+    from channelos import broadcaster_qt as module
+    from channelos.display_mode import install_display_mode_support
+    from channelos.vlc_probe import install_packaged_media_scan_support
+    from channelos.media_resilience import install_media_resilience_support
+    from channelos.portable_qt import install_portable_support
+    from channelos.interaction import install_interaction_support
+    callbacks = []
+    monkeypatch.setattr(QTimer, 'singleShot', lambda ms, callback: callbacks.append((ms, callback)))
+    app = QGuiApplication.instance() or QGuiApplication([])
+    for install in (install_display_mode_support, install_packaged_media_scan_support,
+                    install_media_resilience_support, install_portable_support, install_interaction_support):
+        install(module)
+
+    class Controller(FakeChannelOS):
+        def __init__(self):
+            super().__init__()
+            self.tunes = []
+        @Slot(int, result='QVariantMap')
+        def tuneChannel(self, number):
+            self.tunes.append(number)
+            return {'ok': number in (1, 2, 37, 38), 'message': ''}
+        @Slot(int, result='QVariantMap')
+        def changeChannel(self, delta):
+            return self.tuneChannel(37 + delta)
+        @Slot(result='QVariantMap')
+        def previousChannel(self):
+            return self.tuneChannel(37)
+
+    controller = Controller()
+    engine = QQmlApplicationEngine()
+    video = QWindow()
+    engine.rootContext().setContextProperty('channelOS', controller)
+    engine.rootContext().setContextProperty('channelOSVideoWindow', video)
+    engine.load(QUrl.fromLocalFile(str(Path(channelos.__file__).parent / 'qml/Main.qml')))
+    window = engine.rootObjects()[0]
+    router = module.BroadcasterKeyFilter(controller, window)
+    try:
+        for intent in (ControlIntent.HOME, ControlIntent.GUIDE, ControlIntent.CHANNEL_UP,
+                       ControlIntent.CHANNEL_DOWN, ControlIntent.PREVIOUS_CHANNEL, ControlIntent.TUNE):
+            window.setProperty('screen', 'live')
+            router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 1))
+            expired = next(callback for ms, callback in reversed(callbacks) if ms == 1300)
+            router.dispatch_command(ControlCommand(intent, 37))
+            expected = list(controller.tunes)
+            expired()
+            assert not window.property('channelEntry')
+            assert controller.tunes == expected
+        window.setProperty('screen', 'live')
+        router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 1))
+        window.setProperty('screen', 'settings')  # Direct QML navigation.
+        assert not window.property('channelEntry')
+        window.setProperty('screen', 'live')
+        router.dispatch_command(ControlCommand(ControlIntent.DIGIT, 2))
+        router.dispatch_command(ControlCommand(ControlIntent.SELECT))
+        assert controller.tunes[-1] == 2
+        assert not window.property('channelEntry')
+        for digit in (1, 0, 3, 7):
+            router.dispatch_command(ControlCommand(ControlIntent.DIGIT, digit))
+        assert controller.tunes[-1] == 1037  # Invalid four-digit entry clears too.
+        assert not window.property('channelEntry')
+    finally:
+        window.close()
+        app.processEvents()

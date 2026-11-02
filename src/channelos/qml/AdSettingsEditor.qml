@@ -498,7 +498,8 @@ Item {
             var saved = (catalogData.assignments || []).filter(function(item) {
                 return Number(item.channelNumber) === adsRoot.channelNumber
             })
-            placementRules = saved.length ? saved[0].placements || [] : []
+            placementRules = adsRoot.catalogAssignment ? adsRoot.catalogAssignment.placements || []
+                             : saved.length ? saved[0].placements || [] : []
             catalogFeedback = response && response.ok
                     ? "Catalog is ready. Save reusable items before assigning them."
                     : String(response && response.message || "Unable to open catalog")
@@ -805,29 +806,59 @@ Item {
                     placeholderText: "Per-channel overrides (JSON)"
                 }
                 StudioButton {
+                    text: "Use Profile Defaults"
+                    onClicked: {
+                        var current = adsRoot.editorObject()
+                        var assignment = {
+                            collectionId: catalogAssignCollection.text.trim(),
+                            profileId: catalogAssignProfile.text.trim(),
+                            overrides: {}, placements: adCatalogDialog.placementRules
+                        }
+                        current.adCatalogAssignment = assignment
+                        current.adEditedKeys = []
+                        var result = channelOS.previewAdSettings(adsRoot.channelNumber, current)
+                        if (!result || !result.ok) {
+                            adCatalogDialog.catalogFeedback = String(result && result.message || "Unable to load profile defaults")
+                            return
+                        }
+                        var values = Object.assign(result.editor, {
+                            adCatalogAssignment: assignment, adEditedKeys: []
+                        })
+                        adsRoot.load(values)
+                        adsRoot.advancedDirty = true
+                        catalogAssignOverrides.text = "{}"
+                        adCatalogDialog.catalogFeedback = "Profile defaults loaded into this draft. Save the channel to apply them."
+                    }
+                }
+                StudioButton {
                     id: saveAdAssignmentButton
                     text: "Use Assignment in This Draft"
                     highlighted: true
                     onClicked: {
                         try {
                             var overrides = JSON.parse(catalogAssignOverrides.text)
-                            adsRoot.catalogAssignment = {
+                            var assignment = {
                                 channelNumber: adsRoot.channelNumber,
                                 collectionId: catalogAssignCollection.text.trim(),
                                 profileId: catalogAssignProfile.text.trim(),
                                 overrides: overrides,
                                 placements: adCatalogDialog.placementRules
                             }
-                            var result = {ok: true, message: "Assignment staged. Save the channel to apply it."}
-                            adCatalogDialog.showResult(result)
-                            if (result && result.ok) {
-                                adCollectionField.text = catalogAssignCollection.text.trim()
-                                adProfileField.text = catalogAssignProfile.text.trim()
-                                adsRoot.adEnabled = true
-                                adsRoot.setupMode = "advanced"
-                                adsRoot.adPlacementSnapshots = adCatalogDialog.placementRules
-                                adsRoot.advancedDirty = true
+                            var current = adsRoot.editorObject()
+                            current.adCatalogAssignment = assignment
+                            current.adSetupMode = "advanced"
+                            current.adBreaksEnabled = true
+                            var result = channelOS.previewAdSettings(adsRoot.channelNumber, current)
+                            if (!result || !result.ok) {
+                                adCatalogDialog.catalogFeedback = String(result && result.message || "Unable to use this assignment")
+                                return
                             }
+                            adsRoot.load(Object.assign(result.editor, {
+                                adCatalogAssignment: assignment,
+                                adEditedKeys: current.adEditedKeys
+                            }))
+                            adsRoot.advancedDirty = true
+                            adCatalogDialog.catalogFeedback = "Assignment staged. Save the channel to apply it."
                         } catch (error) {
                             adCatalogDialog.catalogFeedback = "Invalid overrides JSON: " + error
                         }

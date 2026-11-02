@@ -259,6 +259,7 @@ class CalendarTimeline:
         self._ad_plan_cache: dict[tuple[datetime, datetime], tuple] = {}
         self._ad_plan_ids: dict[tuple[datetime, datetime], str] = {}
         self._mid_plan_cache: dict[int, tuple[BreakPlan, ...]] = {}
+        self._mid_planned_through = -1
         by_asset = {item.asset.asset_id: item for item in media}
 
         programs: list[ScheduledProgram] = []
@@ -340,6 +341,14 @@ class CalendarTimeline:
         return self._ends[index] + timedelta(seconds=sum(p.duration_seconds for p in plans) - cuts)
 
     def _calendar_mid_plans(self, index: int) -> tuple[BreakPlan, ...]:
+        # A direct jump to a future show must consume the same queue as a
+        # chronological Guide traversal. Avoid recursion on large calendars.
+        for current in range(self._mid_planned_through + 1, index + 1):
+            self._calendar_mid_plans_one(current)
+            self._mid_planned_through = current
+        return self._mid_plan_cache[index]
+
+    def _calendar_mid_plans_one(self, index: int) -> tuple[BreakPlan, ...]:
         if index in self._mid_plan_cache:
             return self._mid_plan_cache[index]
         start, natural_end = self._starts[index], self._ends[index]
@@ -351,10 +360,22 @@ class CalendarTimeline:
         next_start = self._starts[index + 1] if index + 1 < len(self._starts) else None
         if self.advertising.enabled and self.advertising.setup_mode != "advanced":
             from .simple_ads import SimpleRotation, plan_program, snapshot_plans
+            from .calendar_reconcile import snapshot_matches
+            if existing:
+                from .simple_ads import snapshot
+                observed = snapshot(existing, start, natural_end + timedelta(seconds=sum(plan.duration_seconds for plan in existing)), existing[0].policy_revision or self.ad_revision)
+                if not snapshot_matches(observed, self.programs[index].media, start, observed["revision"],
+                                        self.channel_number, self.ad_media, allow_legacy_ads=True):
+                    instant = getattr(self, 'opened_at', utc_now())
+                    if start < instant:
+                        raise ChannelRuntimeError("An existing airing reservation no longer matches its parent show. Keep its original media duration or rebuild an unstarted range.")
+                    self.break_store._discard_unstarted([plan.plan_id for plan in self.break_store.plans_for_channel(
+                        self.channel_number, start=start, end=datetime.max.replace(tzinfo=timezone.utc))], at=instant)
+                    existing = []
             if not existing:
                 saved = self._simple_snapshots[index]
-                if (saved and saved["revision"] == self.ad_revision
-                        and datetime.fromisoformat(saved["start_utc"]) == start):
+                if snapshot_matches(saved, self.programs[index].media, start, self.ad_revision,
+                                    self.channel_number, self.ad_media):
                     existing = list(snapshot_plans(saved))
                     allowed_ads = {item.asset.asset_id: item for item in self.ad_media}
                     for plan in existing:
@@ -1222,7 +1243,7 @@ class RuntimeStore:
             payload = {}
             order = ("channel_runtime", "viewer_runtime", "ad_break_plans", "ad_plan_metadata",
                      "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans",
-                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state")
+                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans")
             for table in order:
                 if table not in tables:
                     continue
@@ -1251,7 +1272,7 @@ class RuntimeStore:
             payload = json.loads(archive["payload"])
             order = ("channel_runtime", "viewer_runtime", "ad_break_plans", "ad_plan_metadata",
                      "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans",
-                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "runtime_meta")
+                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans", "runtime_meta")
             for table in order:
                 for row in payload.get(table, ()):
                     columns = ','.join(row)
@@ -1482,10 +1503,10 @@ class ChannelRuntime:
         previous_clock = store.load_channel(channel.definition.channel)
         persisted = (
             store.load_channel(channel.definition.channel)
-            if transient
+            if transient or programming.mode == "calendar"
             else None
         )
-        if persisted is None:
+        if persisted is None and programming.mode != "calendar":
             persisted = store.ensure_channel(
                 channel.definition.channel,
                 signature,
@@ -1496,6 +1517,9 @@ class ChannelRuntime:
                 preserve_clock_on_change=(programming.mode == "calendar"),
             )
         break_store = BreakPlanStore(store.database_path)
+        with break_store.connection:
+            break_store.connection.execute("UPDATE ad_program_clock SET schedule_signature=? WHERE channel_number=? AND schedule_signature=''",
+                (previous_clock.schedule_signature if previous_clock else signature, channel.definition.channel))
         if not channel.definition.advertising.enabled and not break_store.connection.execute(
             "SELECT 1 FROM ad_break_plans WHERE channel_number = ? LIMIT 1", (channel.definition.channel,)
         ).fetchone():
@@ -1506,6 +1530,41 @@ class ChannelRuntime:
         if programming.mode == "calendar":
             timeline.break_store = break_store
             timeline.ad_revision = advertising_signature(channel)
+            timeline.opened_at = require_aware_utc(now or utc_now())
+            if break_store is not None and not transient:
+                from .calendar_reconcile import portable_intent
+                from .models import advertising_to_mapping
+                contracts = []
+                valid_occurrences = set()
+                for index, block in enumerate(programming.calendar):
+                    saved = block.ad_plan
+                    end = saved["end_utc"] if saved else timeline._ends[index].isoformat()
+                    fingerprint = hashlib.sha256(json.dumps([
+                        block.asset_id, timeline.programs[index].duration_seconds,
+                        portable_intent(advertising_to_mapping(channel.definition.advertising)),
+                        [(item.asset.asset_id, item.asset.duration_seconds) for item in channel.ad_media],
+                        portable_intent(saved), repr(block.filler),
+                    ], sort_keys=True).encode()).hexdigest()
+                    parent_id = timeline._calendar_occurrence_id(index)
+                    valid_occurrences.add(parent_id)
+                    if index + 1 < len(programming.calendar):
+                        mid = break_store.plans_for_occurrence(parent_id)
+                        anchor = timeline._ends[index] + timedelta(seconds=sum(plan.duration_seconds for plan in mid) - sum(break_store.content_cuts(parent_id)))
+                        seed = f"channel:{channel.definition.channel}:{anchor.isoformat(timespec='microseconds')}:{timeline._starts[index+1].isoformat(timespec='microseconds')}"
+                        valid_occurrences.add(hashlib.sha256(seed.encode()).hexdigest())
+                    contracts.append({"occurrence_id": parent_id,
+                                      "start": timeline._starts[index].isoformat(), "end": end,
+                                      "fingerprint": fingerprint,
+                                      "parent": [block.asset_id, timeline.programs[index].duration_seconds]})
+                try:
+                    break_store.reconcile_calendar(channel.definition.channel, contracts,
+                        at=require_aware_utc(now or utc_now()), valid_occurrences=valid_occurrences)
+                except ValueError as exc:
+                    break_store.close()
+                    raise ChannelRuntimeError(str(exc)) from exc
+        if programming.mode == "calendar" and (persisted is None or not transient):
+            persisted = store.ensure_channel(channel.definition.channel, signature, now=now,
+                                             preserve_clock_on_change=True)
         policy_revision_changed_at = None
         if break_store is not None and not transient:
             revision_time = require_aware_utc(now or utc_now())
@@ -1607,7 +1666,7 @@ class ChannelRuntime:
                          if self.channel.definition.advertising.setup_mode == "advanced" else ())
         clock = self.break_store.program_clock(occurrence_id)
         previous_end = self.break_store.preceding_program_end(
-            self.channel_number, selection.program_started_at
+            self.channel_number, selection.program_started_at, scope=self.signature
         )
         actual_start = clock[0] if clock else (previous_end or selection.program_started_at)
         prior_occurrence_duration = (actual_start - selection.program_started_at).total_seconds()
@@ -1635,7 +1694,7 @@ class ChannelRuntime:
                     raise ChannelRuntimeError(str(exc)) from exc
                 occurrence_plans = [self.break_store.commit(plan) for plan in plans]
             self.break_store.save_program_clock(
-                occurrence_id, self.channel_number,
+                occurrence_id, self.channel_number, schedule_signature=self.signature,
                 content_start=selection.program_started_at, content_end=selection.program_ends_at,
                 broadcast_start=actual_start,
                 broadcast_end=actual_start + timedelta(seconds=selection.program.duration_seconds
@@ -1751,7 +1810,7 @@ class ChannelRuntime:
                 occurrence_plans.append(plan)
             committed.append(plan)
         self.break_store.save_program_clock(
-            occurrence_id, self.channel_number,
+            occurrence_id, self.channel_number, schedule_signature=self.signature,
             content_start=selection.program_started_at, content_end=selection.program_ends_at,
             broadcast_start=actual_start,
             broadcast_end=actual_start + timedelta(seconds=(
@@ -1786,7 +1845,7 @@ class ChannelRuntime:
             if base.program_started_at > instant:
                 return
             occurrence_id = self._program_occurrence_id(base)
-            previous_end = self.break_store.preceding_program_end(self.channel_number, base.program_started_at)
+            previous_end = self.break_store.preceding_program_end(self.channel_number, base.program_started_at, scope=self.signature)
             actual_start = previous_end or base.program_started_at
             if actual_start > instant:
                 return
@@ -1815,11 +1874,11 @@ class ChannelRuntime:
             selection = self.timeline.selection_at(self.epoch_utc, instant)
         else:
             self._catch_up_sequential(instant)
-            clock_row = self.break_store.clock_at(self.channel_number, instant)
+            clock_row = self.break_store.clock_at(self.channel_number, instant, scope=self.signature)
             if clock_row is None:
                 base = self.timeline.selection_at(self.epoch_utc, instant)
                 self._ensure_occurrence_plans(base, instant)
-                clock_row = self.break_store.clock_at(self.channel_number, instant)
+                clock_row = self.break_store.clock_at(self.channel_number, instant, scope=self.signature)
             if clock_row is None:
                 fallback = self.timeline.selection_at(self.epoch_utc, instant)
                 if self.channel.definition.advertising.setup_mode == "aligned":

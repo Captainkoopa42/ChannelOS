@@ -222,7 +222,8 @@ def _desired_asset_sets(controller: Any):
     desired = {}
     for record in controller._broadcaster.records:
         resolved = resolve_channel(record.definition, controller._library, allow_offline_ads=True)
-        available = _transient_available_media(resolved, controller._library)
+        available = tuple(item for item in _transient_available_media(resolved, controller._library)
+                          if _path_is_usable(item.location.path))
         if available:
             desired[int(record.definition.channel)] = (
                 {media.asset.asset_id for media in available},
@@ -353,7 +354,7 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
                     runtime = _resolved_runtime(
                         record.definition,
                         self._library,
-                        self._runtime_store,
+                        self._runtime_store, persistent_when_complete=True, verify_files=True,
                     )
                 except ChannelRuntimeError as exc:
                     logger.warning(

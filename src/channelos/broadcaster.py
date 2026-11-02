@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import hashlib
 import json
+import sqlite3
+from contextlib import closing
 import shutil
 import tempfile
 import uuid
@@ -526,6 +528,14 @@ class BroadcasterService:
                 explicit.add(block.asset_id)
                 if block.filler:
                     explicit.update(block.filler.asset_ids)
+            assignment = self.ad_catalog.get_assignment(definition.channel)
+            if assignment is not None:
+                collection_ids = {assignment.collection_id, *(p.collection_id for p in assignment.placements)} - {None}
+                for collection_id in collection_ids:
+                    collection = self.ad_catalog.get_collection(collection_id)
+                    if collection:
+                        explicit.update(set(collection.asset_ids) - set(collection.excluded_asset_ids))
+                        selectors += tuple(Path(path) for path in collection.source_paths)
             reasons = set()
             for item in affected:
                 asset_id = item.asset.asset_id
@@ -898,12 +908,42 @@ class BroadcasterService:
         if definition.advertising.setup_mode != "advanced":
             return definition
         return export_portable_channel(definition, self.ad_catalog, self.library,
-            enabled_override=(definition.advertising.enabled if definition.schema_version in {"0.4", "0.5", "0.6"} else None))
+            enabled_override=definition.advertising.enabled)
 
     def _configured_definition(self, raw: dict[str, Any]) -> ChannelDefinition:
+        definition = self._unreconciled_definition(raw)
+        if (definition.programming.mode != "calendar" or not definition.advertising.enabled
+                or definition.advertising.setup_mode == "advanced"):
+            return definition
+        from .calendar_reconcile import detached_store, replay_blocks, snapshot_matches
+        resolved = resolve_channel(definition, self.library)
+        by_id = {item.asset.asset_id: item for item in resolved.media}
+        revision = advertising_signature(resolved)
+        original = self._records.get(definition.channel)
+        old_blocks = {block.start_utc: block for block in original.definition.programming.calendar} if original else {}
+        blocks = definition.programming.calendar
+        changes = [block.start_utc for block in blocks if old_blocks.get(block.start_utc) != block]
+        changes.extend(start for start in old_blocks if start not in {b.start_utc for b in blocks})
+        for block in blocks:
+            media = by_id.get(block.asset_id)
+            if media is None:
+                raise BroadcasterError("A scheduled show is outside this channel's indexed sources")
+            if not snapshot_matches(block.ad_plan, media, block.start_utc, revision, definition.channel, resolved.ad_media):
+                changes.append(block.start_utc)
+        if not changes:
+            return definition
+        with detached_store(self.runtime_database_path) as store:
+            replay_from = max(min(changes), datetime.now(timezone.utc)) if original else min(changes)
+            reconciled = replay_blocks(resolved, blocks, store=store, replay_from=replay_from)
+        return replace(definition, schema_version="0.6",
+                       programming=replace(definition.programming, calendar=reconciled))
+
+    def _unreconciled_definition(self, raw: dict[str, Any]) -> ChannelDefinition:
         """Resolve authoring references before validating an enabled snapshot."""
         editor = dict(raw)
         assignment = self._catalog_assignment_for_editor(editor)
+        if editor.get("adCatalogAssignment") is not None:
+            editor["adPlacements"] = []
         if (assignment is not None and editor.get("adSetupMode", "advanced") == "advanced"
                 and editor.get("adBreaksEnabled") and not (
             editor.get("adSources") or editor.get("adAssetIds") or editor.get("adPlacements")
@@ -919,6 +959,32 @@ class BroadcasterService:
                 assignment_override=assignment)
         return definition
 
+    def preview_ad_settings(self, channel_number: int, raw: dict[str, Any]) -> dict[str, Any]:
+        """Resolve profile inheritance without changing catalog or channel files."""
+        record = self._records.get(int(channel_number))
+        editor = dict(raw)
+        editor.update(channel=int(channel_number), name=record.definition.name if record else "Draft",
+                      sources=[str(source.path) for source in record.definition.sources] if record else ["."],
+                      mode="sequential", calendarBlocks=[])
+        ad = self._unreconciled_definition(editor).advertising
+        fields = {"adBreaksEnabled": "enabled", "adSetupMode": "setup_mode", "adPlayOrder": "play_order",
+                  "adClockIntervalSeconds": "clock_interval_seconds", "adClockOffsetSeconds": "clock_offset_seconds",
+                  "adSelectionStrategy": "selection_strategy", "adBreakDurationSeconds": "break_duration_seconds",
+                  "adBreakpointsSeconds": "breakpoints_seconds", "adIntervalSeconds": "interval_seconds",
+                  "adPriority": "priority", "adTimingPolicy": "timing_policy",
+                  "adSmooshMinimumSeconds": "smoosh_minimum_seconds", "adSmooshMaxTrimSeconds": "smoosh_max_trim_seconds",
+                  "adExpandMaxSeconds": "expand_max_seconds", "adTriggers": "triggers",
+                  "adTransitionBehavior": "transition_behavior", "adTransitionSeconds": "transition_seconds",
+                  "adSlotSeconds": "slot_seconds", "adSchedulePriority": "schedule_priority",
+                  "adExpandSource": "expand_source", "adAssetIds": "asset_ids", "adCollectionId": "collection_id",
+                  "adProfileId": "profile_id", "adCollectionMembership": "collection_membership",
+                  "adExcludedAssetIds": "excluded_asset_ids"}
+        values = {key: list(value) if isinstance(value := getattr(ad, attribute), tuple) else value
+                  for key, attribute in fields.items()}
+        values.update(adSources=[str(source.path) for source in ad.sources],
+                      adPlacements=advertising_to_mapping(ad)["placements"], adConfigVersion="0.6")
+        return values
+
     def _catalog_assignment_for_editor(self, raw: dict[str, Any]) -> ChannelAdAssignment | None:
         number = int(raw.get("channel", 0))
         assignment = self.ad_catalog.get_assignment(number)
@@ -931,6 +997,8 @@ class BroadcasterService:
             return assignment
         safe = dict(raw)
         safe["adBreaksEnabled"] = False
+        if staged is not None:
+            safe["adPlacements"] = []
         safe["adProfileId"] = assignment.profile_id or "draft-policy"
         policy = definition_from_editor(safe).advertising
         baseline = self._records[number].definition.advertising if number in self._records else None
@@ -1014,6 +1082,8 @@ class BroadcasterService:
             raise ChannelNotFoundError(
                 f"channel {number} is no longer in the active lineup"
             ) from exc
+
+        definition = self._apply_ad_catalog(definition)
 
         media_by_id = {
             item["assetId"]: item
@@ -1394,11 +1464,9 @@ class BroadcasterService:
         with tempfile.TemporaryDirectory(
             prefix="channelos-broadcaster-validate-"
         ) as temporary:
-            validation_store = RuntimeStore(
-                Path(temporary) / "runtime.db"
-            )
+            validation_store = self._detached_runtime_store(Path(temporary) / "runtime.db")
             validation_at = (definition.programming.calendar[0].start_utc
-                             if definition.programming.mode == "calendar" else None)
+                             if definition.programming.mode == "calendar" and validation_store.load_channel(definition.channel) is None else None)
             validated_runtime = ChannelRuntime.open(resolved, validation_store, now=validation_at)
             try:
                 validated_runtime.validate_schedule()
@@ -1409,6 +1477,13 @@ class BroadcasterService:
                     validated_runtime.break_store.close()
 
         return resolved
+
+    def _detached_runtime_store(self, path: Path) -> RuntimeStore:
+        if Path(self.runtime_database_path).is_file():
+            with closing(sqlite3.connect(Path(self.runtime_database_path).resolve().as_uri() + "?mode=ro", uri=True)) as source:
+                with closing(sqlite3.connect(path)) as target:
+                    source.backup(target)
+        return RuntimeStore(path)
 
     def preview(self, raw: dict[str, Any], limit: int = 8) -> dict[str, Any]:
         definition = self._configured_definition(raw)
@@ -1463,10 +1538,18 @@ class BroadcasterService:
                     if definition.programming.mode == "calendar"
                     else now
                 )
-                runtime = ChannelRuntime.open(
-                    resolved, RuntimeStore(Path(temporary) / "runtime.sqlite"),
-                    now=first_at,
-                )
+                preview_store = self._detached_runtime_store(Path(temporary) / "runtime.sqlite")
+                calendar_preview = definition.programming.mode == "calendar"
+                if calendar_preview:
+                    # A detached calendar preview shows the authored range,
+                    # including historical dates. Live activation and immutable
+                    # occurrence checks were verified by _resolve_and_validate.
+                    with preview_store.connect() as connection:
+                        if connection.execute("SELECT 1 FROM sqlite_master WHERE name='ad_break_policy_state'").fetchone():
+                            connection.execute("DELETE FROM ad_break_policy_state WHERE channel_number=?", (definition.channel,))
+                runtime = ChannelRuntime.open(resolved, preview_store,
+                    now=first_at if calendar_preview or preview_store.load_channel(definition.channel) is None else now,
+                    transient=calendar_preview)
                 try:
                     horizon = first_at + timedelta(seconds=min(7200.0, max(300.0,
                         sum(float(item.asset.duration_seconds or 0) for item in resolved.media[:max(1, int(limit))])

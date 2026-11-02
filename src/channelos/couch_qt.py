@@ -10,7 +10,7 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt
+from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt, SIGNAL
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
@@ -1369,6 +1369,29 @@ class CouchController(QObject):
             )
         self._on_demand.stop()
         self._actions.stop()
+        for runtime in self._actions.runtime.channels.values():
+            if runtime.break_store is not None:
+                runtime.break_store.close()
+
+
+def connect_screen_changed(window, callback) -> None:
+    """Connect the QML page notification rather than QWindow's monitor signal.
+
+    Main.qml's string `screen` has a no-argument notify signal, while PySide's
+    attribute resolves to the inherited screenChanged(QScreen*) overload.
+    """
+    if isinstance(window, QObject):
+        meta = window.metaObject()
+        index = meta.indexOfProperty("screen")
+        if index >= 0:
+            prop = meta.property(index)
+            if prop.hasNotifySignal():
+                signature = bytes(prop.notifySignal().methodSignature()).decode()
+                QObject.connect(window, SIGNAL(signature), callback)
+                return
+    changed = getattr(window, "screenChanged", None)
+    if changed is not None:
+        changed.connect(callback)
 
 
 class CouchKeyFilter(QObject):
@@ -1383,9 +1406,7 @@ class CouchKeyFilter(QObject):
         self._channel_generation = 0
         self._channel_digits = ""
         self._home_scan_dialog: QProgressDialog | None = None
-        screen_changed = getattr(window, "screenChanged", None)
-        if screen_changed is not None:
-            screen_changed.connect(self._channel_entry_screen_changed)
+        connect_screen_changed(window, self._channel_entry_screen_changed)
         scan_changed = getattr(controller, "libraryScanChanged", None)
         if scan_changed is not None:
             scan_changed.connect(self._update_home_scan_dialog)

@@ -416,6 +416,13 @@ def test_ad_management_controls_edit_transition_placements_and_restore_cancelled
             return {'ok': True, 'collections': [{'collectionId': 'ads', 'name': 'Commercials'}],
                     'profiles': [{'profileId': 'standard', 'name': 'Standard'}], 'assignments': []}
 
+        @Slot(int, 'QVariantMap', result='QVariantMap')
+        def previewAdSettings(self, number, value):
+            editor = dict(value)
+            editor['adPlacements'] = [{'id': item['placement_id'], 'trigger': item['trigger'], 'policy': {}}
+                                      for item in value.get('adCatalogAssignment', {}).get('placements', [])]
+            return {'ok': True, 'editor': editor}
+
         @Slot('QVariantMap', result='QVariantMap')
         def assignAdBreakProfile(self, value):
             self.saved = value
@@ -463,9 +470,11 @@ def test_ad_management_controls_edit_transition_placements_and_restore_cancelled
     assert restored['adTransitionSeconds'] == .75
     evaluate('advancedDialog.open(); advancedTabs.currentIndex = 3; placementTrigger.currentIndex = 2; '
              'addAdPlacementButton.clicked(); saveAdAssignmentButton.clicked()')
-    assert len(controller.saved['placements']) == 1
-    assert controller.saved['placements'][0]['trigger'] == 'between_programs'
-    assert controller.saved['placements'][0]['collection_id'] == 'ads'
+    assert controller.saved is None
+    staged = evaluate('editorObject().adCatalogAssignment')
+    assert len(staged['placements']) == 1
+    assert staged['placements'][0]['trigger'] == 'between_programs'
+    assert staged['placements'][0]['collection_id'] == 'ads'
     evaluate('placementCollection.popup.open()')
     assert evaluate('placementCollection.popup.contentItem.itemAtIndex(0).contentItem.text') == 'Commercials'
     evaluate('placementCollection.popup.close(); placementProfile.popup.open()')

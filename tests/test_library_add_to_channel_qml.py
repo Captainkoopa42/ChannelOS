@@ -219,14 +219,14 @@ class FakeChannelOS(QObject):
     def requestLibraryArtwork(self, asset_id):
         return ""
 
-    @Slot(int, "QVariantMap", result="QVariantMap")
-    def updateChannel(self, original, editor):
+    @Slot(int, str, str, result="QVariantMap")
+    def addLibraryItemToChannel(self, original, asset_id, path):
         self.last_update_original = int(original)
-        self.last_update_editor = dict(editor or {})
+        self.last_update_editor = {"assetId": asset_id, "path": path}
         for channel in self._broadcaster["channels"]:
             if int(channel["channelNumber"]) != int(original):
                 continue
-            channel["sources"] = list(self.last_update_editor.get("sources", []))
+            channel["sources"] = [*channel["sources"], path]
             channel["sourceCount"] = len(channel["sources"])
             break
         self.broadcasterChanged.emit()
@@ -299,14 +299,9 @@ def test_controller_x_opens_add_to_channel_and_select_updates_existing_channel()
 
     assert controller.last_update_original == 12
     assert controller.last_update_editor is not None
-    assert controller.last_update_editor["channel"] == 12
-    assert controller.last_update_editor["name"] == "Movies"
-    assert controller.last_update_editor["mode"] == "shuffle"
-    assert controller.last_update_editor["avoidRepeatDays"] == 4
-    assert controller.last_update_editor["sources"] == [
-        "C:/Second Media",
-        "C:/Owned Media/owned.mp4",
-    ]
+    assert controller.last_update_editor == {"assetId": "sha256:test", "path": "C:/Owned Media/owned.mp4"}
+    assert controller._broadcaster["channels"][1]["sources"] == [
+        "C:/Second Media", "C:/Owned Media/owned.mp4"]
     assert "Added Owned Clip to Channel 012 - Movies." in str(
         item.property("addToChannelMessage")
     )

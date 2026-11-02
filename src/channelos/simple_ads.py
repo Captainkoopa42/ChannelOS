@@ -237,6 +237,7 @@ def auto_fill(resolved, ordered, raw, start, end, runtime_path, *, publish, chec
         queue_store.close()
 
     blocks = []
+    updates = []
     cursor = start
     index = 0
     windows = 0
@@ -277,35 +278,40 @@ def auto_fill(resolved, ordered, raw, start, end, runtime_path, *, publish, chec
     for block_index, block in enumerate(existing):
         check_cancelled()
         begins = datetime.fromisoformat(block["startUtc"])
-        if begins >= end:
-            break
         media = by_id.get(block["assetId"])
         if media is None:
             raise ValueError("An existing show is outside the selected program sources.")
-        if begins > cursor:
+        if begins > cursor and cursor < end:
             fill_to(min(begins, end))
+        from .calendar_reconcile import snapshot_matches
         saved = block.get("adPlan")
-        if saved and saved["revision"] == revision and datetime.fromisoformat(saved["start_utc"]) == begins:
+        valid = snapshot_matches(saved, media, begins, revision, channel, resolved.ad_media)
+        if valid and begins < start:
             plans = snapshot_plans(saved)
             finish = datetime.fromisoformat(saved["end_utc"])
             if plans and plans[-1].rotation_revision == rotation.revision:
                 rotation.cycle = plans[-1].rotation_cycle
                 rotation.remaining = list(plans[-1].rotation_remaining)
-                ads = [part.asset_id for part in plans[-1].segments if part.event_type == "advertisement"]
+                ads = [part.asset_id for plan in plans for part in plan.segments if part.event_type == "advertisement"]
                 rotation.previous = ads[-1] if ads else rotation.previous
         else:
             next_start = datetime.fromisoformat(existing[block_index+1]["startUtc"]) if block_index+1 < len(existing) else None
             plans, finish = build(media, begins, next_start)
+            updated = dict(block)
+            updated["adPlan"] = snapshot(plans, begins, finish, revision)
+            updated["endUtc"] = (begins + timedelta(seconds=float(media.asset.duration_seconds))).isoformat()
+            updated.setdefault("durationSeconds", float(media.asset.duration_seconds))
+            updates.append(updated)
         cursor = max(cursor, finish)
     if cursor < end:
         fill_to(end)
     warnings = []
-    if not blocks and existing:
+    if not blocks and existing and not updates:
         warnings.append("This range is already filled. Clear Range, then Auto Fill to rebuild it with the new ad settings.")
-    message = f"Scheduled {len(blocks)} shows and {windows} ad windows, preserving existing shows."
+    message = f"Scheduled {len(blocks)} shows and {windows} new ad windows; reconciled {len(updates)} existing reservations without moving fixed starts."
     if warnings:
         message = " ".join(warnings) + " " + message
     publish(int((end-start).total_seconds()), int((end-start).total_seconds()), "Schedule ready")
     return {"ok": True, "message": message, "startUtc": start.isoformat(), "endUtc": end.isoformat(),
             "completeThroughUtc": min(cursor, end).isoformat(), "hitBlockLimit": len(blocks) >= 10000,
-            "adSlotCount": windows, "adReservedSeconds": reserved, "adWarnings": warnings, "blocks": blocks}
+            "adSlotCount": windows, "adReservedSeconds": reserved, "adWarnings": warnings, "blocks": blocks, "updatedBlocks": updates}

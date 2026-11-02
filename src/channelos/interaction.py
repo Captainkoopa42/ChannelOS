@@ -9,6 +9,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtQuick import QQuickItem
 
 from .control import ControlCommand, ControlIntent
+from .couch_qt import connect_screen_changed
 
 logger = logging.getLogger(__name__)
 
@@ -129,12 +130,7 @@ def install_interaction_support(broadcaster_qt_module: Any) -> None:
             super().__init__(controller, window)
             self._focus_highlight_item: object | None = None
             self._focus_highlight_original = False
-            screen_changed = getattr(window, "screenChanged", None)
-            if screen_changed is not None:
-                try:
-                    screen_changed.connect(self._sync_management_visibility)
-                except (AttributeError, RuntimeError):
-                    pass
+            connect_screen_changed(window, self._sync_management_visibility)
 
         def bind_management_overlays(self, **kwargs: Any) -> None:
             super().bind_management_overlays(**kwargs)

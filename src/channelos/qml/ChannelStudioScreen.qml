@@ -355,27 +355,31 @@ Item {
     }
 
     function appendBlock(block) {
-        var media = mediaForAsset(block.assetId)
-        var duration = Number(block.durationSeconds
-                              || media.durationSeconds
-                              || 0)
-        var start = new Date(String(block.startUtc))
-        var end = block.endUtc
-                ? new Date(String(block.endUtc))
-                : new Date(start.getTime() + duration * 1000)
-        calendarBlocks.append({
-            assetId: String(block.assetId),
-            title: String(block.title || media.title || "Untitled"),
-            path: String(block.path || media.path || ""),
-            sourceRoot: String(block.sourceRoot || media.sourceRoot || ""),
-            durationSeconds: duration,
-            startUtc: start.toISOString(),
-            endUtc: end.toISOString(),
-            adPlanJson: String(block.adPlanJson || JSON.stringify(block.adPlan || null)),
-            fillerMode: String(block.fillerMode || ""),
-            fillerAssetIdsJson: JSON.stringify(block.fillerAssetIds || []),
-            fillerGroupName: String(block.fillerGroupName || "")
-        })
+        calendarBlocks.append(blockObject(block))
+    }
+
+    function effectiveBlockEnd(block) {
+        var natural = new Date(String(block.startUtc)).getTime()
+                + Number(block.durationSeconds || mediaForAsset(block.assetId).durationSeconds || 0) * 1000
+        var saved = block.adPlan || null
+        try {
+            if (block.adPlanJson)
+                saved = JSON.parse(String(block.adPlanJson))
+        } catch (error) { saved = null }
+        if (saved && new Date(saved.start_utc).getTime() === new Date(block.startUtc).getTime())
+            return Math.max(natural, new Date(saved.end_utc).getTime())
+        return natural
+    }
+
+    function invalidateReservationsFrom(startMs) {
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            if (new Date(block.startUtc).getTime() >= startMs) {
+                calendarBlocks.setProperty(index, "adPlanJson", "null")
+                calendarBlocks.setProperty(index, "endUtc", new Date(
+                    new Date(block.startUtc).getTime() + Number(block.durationSeconds || 0) * 1000).toISOString())
+            }
+        }
     }
 
     function blockObject(block) {
@@ -384,9 +388,7 @@ Item {
                               || media.durationSeconds
                               || 0)
         var start = new Date(String(block.startUtc))
-        var end = block.endUtc
-                ? new Date(String(block.endUtc))
-                : new Date(start.getTime() + duration * 1000)
+        var end = new Date(effectiveBlockEnd(block))
         return {
             assetId: String(block.assetId),
             title: String(block.title || media.title || "Untitled"),
@@ -846,6 +848,7 @@ Item {
             feedbackIsError = true
             return false
         }
+        invalidateReservationsFrom(start.getTime())
         appendSource(asset.sourceRoot)
         appendBlock({
             assetId: asset.assetId,
@@ -883,6 +886,7 @@ Item {
             return false
         }
         var assetId = String(block.assetId)
+        invalidateReservationsFrom(Math.min(new Date(block.startUtc).getTime(), start.getTime()))
         calendarBlocks.setProperty(blockIndex, "startUtc", start.toISOString())
         calendarBlocks.setProperty(blockIndex, "endUtc", end.toISOString())
         sortBlocks()
@@ -916,6 +920,16 @@ Item {
             }
         }
         return result
+    }
+
+    function weekProgramCount(value) {
+        var start = startOfWeek(value)
+        var count = 0
+        for (var offset = 0; offset < 7; ++offset) {
+            var rows = blocksByDay[dayKey(addDays(start, offset))] || []
+            count += rows.length
+        }
+        return count
     }
 
     function weekBlocks(value) {
@@ -1030,7 +1044,7 @@ Item {
                        + count + " target weeks",
             startUtc: targetStart.toISOString(),
             endUtc: targetEnd.toISOString(),
-            blocks: copies
+            blocks: copies, rebuildFromUtc: targetStart.toISOString()
         })
         anchorDate = targetStart
         selectedDayKey = dayKey(targetStart)
@@ -1073,6 +1087,7 @@ Item {
         }
         appendSource(asset.sourceRoot)
         var start = nextStartForDay(day)
+        invalidateReservationsFrom(start.getTime())
         appendBlock({
             assetId: asset.assetId,
             title: asset.title,
@@ -1094,6 +1109,7 @@ Item {
             return
         var start = nextStartForDay(day)
         var duration = Number(calendarBlocks.get(blockIndex).durationSeconds || 0)
+        invalidateReservationsFrom(Math.min(new Date(calendarBlocks.get(blockIndex).startUtc).getTime(), start.getTime()))
         calendarBlocks.setProperty(blockIndex, "startUtc", start.toISOString())
         calendarBlocks.setProperty(blockIndex, "endUtc",
                                    new Date(start.getTime() + duration * 1000).toISOString())
@@ -1112,6 +1128,7 @@ Item {
             return
         var first = calendarBlocks.get(firstIndex)
         var second = calendarBlocks.get(secondIndex)
+        invalidateReservationsFrom(Math.min(new Date(first.startUtc).getTime(), new Date(second.startUtc).getTime()))
         var fields = ["assetId", "title", "path", "sourceRoot", "durationSeconds",
                       "fillerMode", "fillerAssetIdsJson", "fillerGroupName"]
         for (var fieldIndex = 0; fieldIndex < fields.length; ++fieldIndex) {
@@ -1135,20 +1152,22 @@ Item {
 
     function resolveOverlaps() {
         sortBlocks()
-        var previousEnd = null
+        var previousEnd = 0
+        var overlaps = false
         for (var index = 0; index < calendarBlocks.count; ++index) {
             var block = calendarBlocks.get(index)
-            var start = new Date(block.startUtc)
-            if (previousEnd && start.getTime() < previousEnd.getTime()) {
-                start = new Date(previousEnd)
-                calendarBlocks.setProperty(index, "startUtc", start.toISOString())
-            }
-            previousEnd = new Date(
-                        start.getTime()
-                        + Number(block.durationSeconds || 0) * 1000)
-            calendarBlocks.setProperty(index, "endUtc", previousEnd.toISOString())
+            var startMs = new Date(block.startUtc).getTime()
+            if (startMs < previousEnd)
+                overlaps = true
+            previousEnd = effectiveBlockEnd(block)
+            calendarBlocks.setProperty(index, "endUtc", new Date(previousEnd).toISOString())
         }
         rebuildBlockIndex()
+        if (overlaps) {
+            feedbackMessage = "Programs overlap. Move a show to an open time before saving."
+            feedbackIsError = true
+        }
+        return !overlaps
     }
 
     function selectedBlockTimeText() {
@@ -1174,6 +1193,7 @@ Item {
         var block = calendarBlocks.get(selectedBlockIndex)
         var start = new Date(block.startUtc)
         start.setHours(Number(match[1]), Number(match[2]), 0, 0)
+        invalidateReservationsFrom(Math.min(new Date(block.startUtc).getTime(), start.getTime()))
         calendarBlocks.setProperty(selectedBlockIndex,
                                    "startUtc", start.toISOString())
         calendarBlocks.setProperty(
@@ -1196,6 +1216,7 @@ Item {
         var block = calendarBlocks.get(selectedBlockIndex)
         var start = new Date(block.startUtc)
         start = new Date(start.getTime() + Number(seconds) * 1000)
+        invalidateReservationsFrom(Math.min(new Date(block.startUtc).getTime(), start.getTime()))
         calendarBlocks.setProperty(selectedBlockIndex, "startUtc", start.toISOString())
         calendarBlocks.setProperty(
                     selectedBlockIndex,
@@ -1212,6 +1233,7 @@ Item {
     function removeBlock(blockIndex) {
         if (blockIndex < 0 || blockIndex >= calendarBlocks.count)
             return
+        invalidateReservationsFrom(new Date(calendarBlocks.get(blockIndex).startUtc).getTime())
         calendarBlocks.remove(blockIndex)
         rebuildBlockIndex()
         selectedBlockIndex = Math.min(blockIndex, calendarBlocks.count - 1)
@@ -1256,8 +1278,21 @@ Item {
         // Auto Fill now returns only empty-gap blocks. Keep every existing
         // fixed program, including those inside the selected range.
         var replacement = []
-        for (var index = 0; index < calendarBlocks.count; ++index)
-            replacement.push(blockObject(calendarBlocks.get(index)))
+        var updates = result.updatedBlocks || []
+        var updatedByStart = ({})
+        for (var updateIndex = 0; updateIndex < updates.length; ++updateIndex) {
+            var update = updates[updateIndex]
+            updatedByStart[new Date(update.startUtc).getTime() + "|" + update.assetId] = update
+        }
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var current = blockObject(calendarBlocks.get(index))
+            var revised = updatedByStart[new Date(current.startUtc).getTime() + "|" + current.assetId]
+            if (revised) {
+                current = Object.assign(current, revised)
+                current.adPlanJson = JSON.stringify(revised.adPlan || null)
+            }
+            replacement.push(blockObject(current))
+        }
         var blocks = result.blocks || []
         if (typeof blocks.length !== "number"
                 || replacement.length + blocks.length > maximumCalendarBlocks) {
@@ -1268,6 +1303,17 @@ Item {
         }
         for (var blockIndex = 0; blockIndex < blocks.length; ++blockIndex)
             replacement.push(blockObject(blocks[blockIndex]))
+        if (result.rebuildFromUtc) {
+            var rebuildFrom = new Date(result.rebuildFromUtc).getTime()
+            for (var replayIndex = 0; replayIndex < replacement.length; ++replayIndex) {
+                var replayBlock = replacement[replayIndex]
+                if (new Date(replayBlock.startUtc).getTime() >= rebuildFrom) {
+                    replayBlock.adPlanJson = "null"
+                    replayBlock.endUtc = new Date(new Date(replayBlock.startUtc).getTime()
+                        + Number(replayBlock.durationSeconds || 0) * 1000).toISOString()
+                }
+            }
+        }
         replacement.sort(function(left, right) {
             return new Date(left.startUtc).getTime()
                     - new Date(right.startUtc).getTime()
@@ -1349,6 +1395,7 @@ Item {
                 ++removed
             }
         }
+        if (removed > 0) invalidateReservationsFrom(startMs)
         rebuildBlockIndex()
         dirty = dirty || removed > 0
         selectedBlockIndex = -1
@@ -1460,7 +1507,7 @@ Item {
     }
 
     Connections {
-        target: studioRoot.hostWindow
+        target: studioRoot.hostWindow || null
         function onScreenChanged() {
             if (studioRoot.hostWindow.screen === "studio")
                 studioRoot.loadDraft()
@@ -1490,7 +1537,7 @@ Item {
     FocusScope {
         id: studioSurface
         anchors.fill: parent
-        visible: studioRoot.hostWindow && studioRoot.hostWindow.screen === "studio"
+        visible: Boolean(studioRoot.hostWindow && studioRoot.hostWindow.screen === "studio")
         focus: visible
 
         Shortcut {
@@ -2862,7 +2909,7 @@ Item {
             Text {
                 Layout.fillWidth: true
                 text: "Source: " + studioRoot.rangeLabel() + "  •  "
-                      + studioRoot.weekBlocks(studioRoot.anchorDate).length
+                      + studioRoot.weekProgramCount(studioRoot.anchorDate)
                       + " fixed blocks"
                 color: studioRoot.textPrimary
                 font.weight: Font.DemiBold
@@ -2935,7 +2982,7 @@ Item {
                       ? "Copy Week" : "Create Weekly Pattern"
                 highlighted: true
                 enabled: !studioRoot.autoFillBusy
-                         && studioRoot.weekBlocks(studioRoot.anchorDate).length > 0
+                         && studioRoot.weekProgramCount(studioRoot.anchorDate) > 0
                 onClicked: studioRoot.requestWeekCopy()
             }
         }
@@ -3158,7 +3205,10 @@ Item {
         mediaLibrary: studioRoot.mediaLibrary
         sourceOptions: studioRoot.sourceChoices()
         inlineBin: true
-        onSettingsApplied: studioRoot.dirty = true
+        onSettingsApplied: {
+            studioRoot.invalidateReservationsFrom(new Date().getTime())
+            studioRoot.dirty = true
+        }
         onBinRequested: { studioRoot.activeBin = "ads"; studioRoot.dayMediaBinVisible = true }
         previewProvider: function(settings) { return channelOS.previewChannel(Object.assign(studioRoot.editorObject(), settings)) }
     }

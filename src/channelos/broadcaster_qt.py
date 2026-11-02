@@ -975,6 +975,13 @@ class BroadcasterCouchController(CouchController):
         ) as exc:
             return self._error(exc)
 
+    @Slot(int, "QVariantMap", result="QVariantMap")
+    def previewAdSettings(self, channel_number: int, editor: dict[str, object]) -> dict[str, object]:
+        try:
+            return {"ok": True, "editor": self._broadcaster.preview_ad_settings(channel_number, editor)}
+        except (BroadcasterError, ChannelValidationError, OSError, ValueError) as exc:
+            return self._error(exc)
+
     @Slot(int, str, str, result="QVariantMap")
     def addLibraryItemToChannel(self, channel_number: int, asset_id: str, path: str) -> dict[str, object]:
         try:

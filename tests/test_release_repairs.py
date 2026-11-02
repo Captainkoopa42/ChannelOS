@@ -499,3 +499,61 @@ def test_dependency_report_batches_locations_and_rejects_missing_mirror(tmp_path
     assert [item['channelNumber'] for item in service.source_dependencies(first)] == [7]
     with pytest.raises(BroadcasterError, match='still used'):
         service.remove_library_source(first)
+
+
+@pytest.mark.parametrize('last_channel', [False, True])
+def test_deleting_during_ad_archives_final_viewing_or_restores_decoder(tmp_path, monkeypatch, last_channel):
+    import json
+    from datetime import datetime, timedelta, timezone
+    from PySide6.QtGui import QGuiApplication
+    from channelos import broadcaster_qt
+    from channelos.couch_actions import CouchActions
+    from channelos.guide import GuideService
+    from channelos.runtime import ChannelRuntime, RuntimeStore, TelevisionRuntime
+    from channelos.resolve import resolve_channel
+    from test_broadcaster import editor
+    from test_television import FakeBackend
+    app = QGuiApplication.instance() or QGuiApplication([])
+    library, service, raw = setup(tmp_path)
+    service.create(raw)
+    if not last_channel:
+        service.create(editor(8, tmp_path / 'programs'))
+    now = datetime.now(timezone.utc)
+    store = RuntimeStore(service.runtime_database_path)
+    runtimes = tuple(ChannelRuntime.open(resolve_channel(record.definition, library), store,
+        now=now - timedelta(seconds=61)) for record in service.records)
+    guide = GuideService(runtimes)
+    tv = TelevisionRuntime(runtimes, store)
+    class Backend(FakeBackend):
+        def set_audio_output_device(self, device): return device
+    def actions(service, runtime):
+        return CouchActions(service, runtime, backend_factory=Backend)
+    monkeypatch.setattr(broadcaster_qt, 'CouchActions', actions)
+    controller = broadcaster_qt.BroadcasterCouchController(guide, tv, library, service, store)
+    controller._actions = actions(guide, tv)
+    controller._surface_ready = True
+    decision = controller._actions.tune(7)
+    if decision.viewer_selection.origin != 'advertisement':
+        ad = next(event for event in runtimes[0].events_between(now, now + timedelta(seconds=240))
+                  if event.event_type == 'advertisement')
+        decision = controller._actions.skip((ad.start_utc + timedelta(seconds=1) - decision.viewer_time_utc).total_seconds(), at=now)
+    assert decision.viewer_selection.origin == 'advertisement'
+    controller._publish(decision)
+    backend = controller._actions._backend
+    backend.position += 2
+    result = controller.deleteChannel(7)
+    try:
+        if last_channel:
+            assert not result['ok']
+            assert service.channel_numbers == (7,)
+            assert controller.playback['active']
+            assert backend.events.index('stop') < max(index for index, event in enumerate(backend.events) if event == 'play')
+        else:
+            assert result['ok'], result
+            assert service.channel_numbers == (8,)
+            assert controller.playback['channelNumber'] == 8
+            with store.connect() as db:
+                payload = json.loads(db.execute('SELECT payload FROM deleted_channel_archives WHERE channel_number=7').fetchone()[0])
+            assert sum(row['consumed_seconds'] for row in payload['ad_view_progress']) == pytest.approx(2)
+    finally:
+        controller.stop()

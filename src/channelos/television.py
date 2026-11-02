@@ -385,6 +385,15 @@ class TelevisionSession:
 
         return decision
 
+    def checkpoint_viewing(self) -> None:
+        """Persist consumed ad coverage without interrupting the decoder."""
+        self._sample_ad_viewing()
+        progress = self._ad_viewing
+        try:
+            self._finish_ad_viewing(utc_now())
+        finally:
+            self._ad_viewing = progress
+
     def suspend_decoder(self, *, persist_history: bool = True) -> None:
         """Release active decoder output without changing television clock state."""
 

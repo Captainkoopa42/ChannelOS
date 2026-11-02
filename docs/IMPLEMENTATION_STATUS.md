@@ -15,7 +15,8 @@ The repair and release branches retain that lineage; no feature branch is droppe
 - Source removal checks program files/subfolders, calendar/filler IDs, ad sources,
   placements and assigned collections. Original media remains untouched.
 - Deleted stations have archived clocks/plans/history and fresh active state on number reuse.
-  A recovery journal completes or rolls back interrupted deletion.
+  A recovery journal completes or rolls back interrupted deletion. Active ad viewing
+  is checkpointed before mutations, and a refused deletion restores the decoder.
 - Profile defaults, channel overrides and placement overrides resolve in that order.
   Assignments stay in the draft; Use Profile Defaults restores inheritance.
 - Calendar swaps, moves, deletion and insertion reconcile reservations in chronological
@@ -43,5 +44,5 @@ move remain device acceptance checks. Automated results do not replace them. Use
 the downloaded ZIP's checksum. This is a prerelease candidate, not a claim of
 completed physical acceptance.
 
-See [release notes](releases/v0.0.6-rc.1.md), [architecture](ARCHITECTURE.md), and the
+See [release notes](releases/v0.0.6-rc.2.md), [architecture](ARCHITECTURE.md), and the
 [historical August status](history/IMPLEMENTATION_STATUS_2026-08-24.md).

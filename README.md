@@ -70,7 +70,7 @@ collections and IDs in its **Profiles** tab. See
 Version 0.0.6 repairs Library additions, numeric tuning, unavailable-source startup,
 source dependency checks, channel deletion/recreation, profile overrides and calendar
 reservation reconciliation. It retains all 0.0.3–0.0.5 features. See the
-[release notes](docs/releases/v0.0.6-rc.1.md) and
+[release notes](docs/releases/v0.0.6-rc.2.md) and
 [Windows acceptance route](docs/releases/WINDOWS_0.0.6_ACCEPTANCE.md).
 
 Public test builds appear under [GitHub Releases](https://github.com/Captainkoopa42/ChannelOS/releases).

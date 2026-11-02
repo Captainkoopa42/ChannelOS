@@ -13,6 +13,7 @@ Use a copy of an existing setup for upgrade tests and retain the pre-upgrade cop
 | Alternative tuning | Type 1 then channel-up/down/previous/Guide tune; only the selected channel tunes | Pending |
 | Unavailable sources | One missing source leaves healthy channels playable; all missing leaves management usable; reconnect/rescan recovers | Pending |
 | Source removal | Blocks removal of a used file/subfolder/calendar/filler/ad source; unused source removal leaves original files | Pending |
+| Delete during an ad | Final watched coverage is archived before deletion; refusing the last-channel deletion resumes playback | Pending |
 | Delete/recreate | Reused number starts fresh with ads off when selected; predecessor history remains archived | Pending |
 | Advanced ads | Override duration/fitting/trim; Preview, Apply and reopen agree; Cancel and Use Profile Defaults work | Pending |
 | Studio arranging | Unequal swaps and moves have correct ad timing; fixed starts never shift silently | Pending |

@@ -276,7 +276,7 @@ def copy_release_documents(package_root: Path) -> None:
         output = licenses / Path(relative).name
         shutil.copy2(source, output)
 
-    for relative in ("docs/releases/v0.0.6-rc.1.md", "docs/releases/WINDOWS_0.0.6_ACCEPTANCE.md"):
+    for relative in ("docs/releases/v0.0.6-rc.2.md", "docs/releases/WINDOWS_0.0.6_ACCEPTANCE.md"):
         target = package_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(PROJECT_ROOT / relative, target)

@@ -249,6 +249,10 @@ class CouchActions:
                 self._audio_output_device_id
             )
 
+    def checkpoint_viewing(self) -> None:
+        if self._session is not None:
+            self._session.checkpoint_viewing()
+
     def suspend_decoder(self, *, persist_history: bool = True) -> None:
         """Release live-TV decoder output while preserving runtime clock state."""
 

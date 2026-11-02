@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -951,9 +952,37 @@ class BroadcasterCouchController(CouchController):
         )
         return {"ok": True, "message": "Cancelling Studio Auto Fill"}
 
+    def _checkpoint_playback_history(self) -> None:
+        checkpoint = getattr(self._actions, "checkpoint_viewing", None)
+        if callable(checkpoint):
+            checkpoint()
+
+    @contextmanager
+    def _deletion_playback_guard(self, channel_number: int):
+        self._checkpoint_playback_history()
+        prior_channel = self._actions.runtime.current_channel
+        prior_paused = bool(self._playback.get("paused"))
+        was_active = bool(self._playback.get("active")) and not self._on_demand.active
+        suspend = getattr(self._actions, "suspend_decoder", None)
+        suspended = False
+        try:
+            if prior_channel == int(channel_number) and callable(suspend):
+                suspended = True
+                suspend()
+            yield
+        except Exception:
+            if suspended and was_active and prior_channel in self._actions.runtime.channels:
+                try:
+                    decision = self._actions.restore_after_lineup_change(prior_channel, paused=prior_paused)
+                    self._publish(decision)
+                except (ChannelRuntimeError, PlaybackError, ValueError) as recovery_error:
+                    self._publish_playback_failure(recovery_error)
+            raise
+
     @Slot("QVariantMap", result="QVariantMap")
     def createChannel(self, editor: dict[str, object]) -> dict[str, object]:
         try:
+            self._checkpoint_playback_history()
             result = self._broadcaster.create(self._editor_mapping(editor))
             self._reload_lineup()
             self.refreshBroadcaster()
@@ -986,6 +1015,7 @@ class BroadcasterCouchController(CouchController):
     @Slot(int, str, str, result="QVariantMap")
     def addLibraryItemToChannel(self, channel_number: int, asset_id: str, path: str) -> dict[str, object]:
         try:
+            self._checkpoint_playback_history()
             result = self._broadcaster.add_library_item(channel_number, asset_id, path)
             self._reload_lineup()
             self.refreshBroadcaster()
@@ -1000,6 +1030,7 @@ class BroadcasterCouchController(CouchController):
         editor: dict[str, object],
     ) -> dict[str, object]:
         try:
+            self._checkpoint_playback_history()
             result = self._broadcaster.update(
                 int(original_channel_number),
                 self._editor_mapping(editor),
@@ -1034,33 +1065,34 @@ class BroadcasterCouchController(CouchController):
     @Slot(int, result="QVariantMap")
     def deleteChannel(self, channel_number: int) -> dict[str, object]:
         try:
-            result = self._broadcaster.delete(int(channel_number))
-            try:
-                self._reload_lineup(
-                    replacement_channel_number=(
-                        result.replacement_channel_number
+            with self._deletion_playback_guard(int(channel_number)):
+                result = self._broadcaster.delete(int(channel_number))
+                try:
+                    self._reload_lineup(
+                        replacement_channel_number=(
+                            result.replacement_channel_number
+                        )
                     )
-                )
-                self.refreshBroadcaster()
-            except Exception:
-                # A deletion is not committed unless the replacement lineup
-                # can take over. Put the definition back and restore the prior
-                # Guide before returning the original error to the UI.
-                self._broadcaster.restore_deleted(result)
-                self._reload_lineup()
-                self.refreshBroadcaster()
-                raise
-            definition = result.record.definition
-            return {
-                "ok": True,
-                "message": (
-                    f"Deleted Channel {definition.display_number} - "
-                    f"{definition.name}. Its media files were not changed. "
-                    f"Recovery backup: {result.backup_path.name}"
-                ),
-                "channelNumber": definition.channel,
-                "backupPath": str(result.backup_path),
-            }
+                    self.refreshBroadcaster()
+                except Exception:
+                    # A deletion is not committed unless the replacement lineup
+                    # can take over. Put the definition back and restore the prior
+                    # Guide before returning the original error to the UI.
+                    self._broadcaster.restore_deleted(result)
+                    self._reload_lineup()
+                    self.refreshBroadcaster()
+                    raise
+                definition = result.record.definition
+                return {
+                    "ok": True,
+                    "message": (
+                        f"Deleted Channel {definition.display_number} - "
+                        f"{definition.name}. Its media files were not changed. "
+                        f"Recovery backup: {result.backup_path.name}"
+                    ),
+                    "channelNumber": definition.channel,
+                    "backupPath": str(result.backup_path),
+                }
         except (
             BroadcasterError,
             ChannelRuntimeError,

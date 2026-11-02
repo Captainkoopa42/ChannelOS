@@ -471,3 +471,31 @@ def test_source_removal_protects_unassigned_saved_ad_collection(tmp_path):
     assert report[0]['name'] == 'Saved commercials'
     with pytest.raises(BroadcasterError, match='ad collection'):
         service.remove_library_source(tmp_path / 'commercials')
+
+
+def test_dependency_report_batches_locations_and_rejects_missing_mirror(tmp_path, monkeypatch):
+    from test_broadcaster import make_library, editor, FixedProbe
+    from channelos.broadcaster import BroadcasterService
+    from channelos.scanner import MediaScanner
+    library, first = make_library(tmp_path)
+    second = tmp_path / 'second'
+    second.mkdir()
+    for path in first.glob('*.mp4'):
+        (second / path.name).write_bytes(path.read_bytes())
+    MediaScanner(library, FixedProbe()).scan(second)
+    service = BroadcasterService((), tmp_path / 'channels', library)
+    raw = editor(7, first)
+    raw['sources'].append(str(second))
+    service.create(raw)
+    calls = []
+    original = library.connect
+    def counted_connect():
+        calls.append(None)
+        return original()
+    monkeypatch.setattr(library, 'connect', counted_connect)
+    assert service.source_dependencies(first) == []
+    assert len(calls) <= 2, 'Dependency checks must not open a database connection per asset'
+    next(second.glob('*.mp4')).unlink()  # The index still claims this duplicate is online.
+    assert [item['channelNumber'] for item in service.source_dependencies(first)] == [7]
+    with pytest.raises(BroadcasterError, match='still used'):
+        service.remove_library_source(first)

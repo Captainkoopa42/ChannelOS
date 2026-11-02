@@ -258,16 +258,17 @@ class BroadcasterCouchController(CouchController):
         self._library_snapshot = self._build_library_snapshot()
         self._home_television = self._build_home_television_view()
 
-    def _channels_using_source(self, source_path: str | Path) -> list[dict[str, object]]:
+    def _channels_using_source(self, source_path: str | Path, indexed_media=None) -> list[dict[str, object]]:
         broadcaster = getattr(self, "_broadcaster", None)
         if broadcaster is None:
             return []
 
-        return broadcaster.source_dependencies(source_path)
+        return broadcaster.source_dependencies(source_path, indexed_media=indexed_media)
 
     def _build_library_snapshot(self) -> dict[str, object]:
         snapshot = super()._build_library_snapshot()
         sources: list[dict[str, object]] = []
+        indexed_media = self._library.list_cached_media() if getattr(self, "_broadcaster", None) is not None else []
         for source in self._library.list_sources():
             root = source.source_root
             sources.append(
@@ -283,7 +284,7 @@ class BroadcasterCouchController(CouchController):
                     "lastScanStartedAt": source.last_scan_started_at or "",
                     "lastScanFinishedAt": source.last_scan_finished_at or "",
                     "lastError": source.last_error or "",
-                    "usedByChannels": self._channels_using_source(root),
+                    "usedByChannels": self._channels_using_source(root, indexed_media),
                 }
             )
 

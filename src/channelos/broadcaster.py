@@ -524,11 +524,35 @@ class BroadcasterService:
         }
         return tuple(sorted(roots, key=os.path.normcase))
 
-    def source_dependencies(self, source_root: str | Path) -> list[dict[str, object]]:
+    def source_dependencies(self, source_root: str | Path, *, indexed_media=None) -> list[dict[str, object]]:
         """Report references that would lose an indexed location on removal."""
         _, root_key = self.library.storage_path(source_root)
-        affected = [item for item in self.library.list_cached_media()
-                    if self.library.storage_path(item.location.source_root)[1] == root_key]
+        indexed = self.library.list_cached_media() if indexed_media is None else indexed_media
+        affected = []
+        locations = {}
+        source_keys = {}
+        for item in indexed:
+            location = item.location
+            locations.setdefault(item.asset.asset_id, []).append(location)
+            if location.source_root not in source_keys:
+                source_keys[location.source_root] = self.library.storage_path(location.source_root)[1]
+            if source_keys[location.source_root] == root_key:
+                affected.append(item)
+        survivor_cache = {}
+        def alternatives(asset_id):
+            if asset_id not in survivor_cache:
+                survivors = []
+                for location in locations.get(asset_id, ()):
+                    if source_keys[location.source_root] == root_key or not location.online:
+                        continue
+                    try:
+                        if location.path.is_file():
+                            survivors.append(location)
+                    except OSError:
+                        continue
+                survivor_cache[asset_id] = survivors
+            return survivor_cache[asset_id]
+        affected_keys = {item.location.path: normalize_path(item.location.path)[1] for item in affected}
         matches = []
         assigned_collections = set()
         for record in self.records:
@@ -552,14 +576,15 @@ class BroadcasterService:
                         group = tuple(Path(path) for path in collection.source_paths)
                         selector_groups.append(group)
                         selectors += group
+            key_groups = [tuple(normalize_path(path)[1] for path in group) for group in selector_groups]
             reasons = set()
             for item in affected:
                 asset_id = item.asset.asset_id
-                path_key = normalize_path(item.location.path)[1]
-                required_groups = [tuple(normalize_path(path)[1] for path in group) for group in selector_groups
-                                   if any(path_key_is_within(path_key, normalize_path(path)[1]) for path in group)]
-                survivors = [loc for loc in self.library.locations_for_asset(asset_id)
-                             if self.library.storage_path(loc.source_root)[1] != root_key and loc.online]
+                path_key = affected_keys[item.location.path]
+                required_groups = [group for group in key_groups if any(path_key_is_within(path_key, key) for key in group)]
+                if asset_id not in explicit and not required_groups:
+                    continue
+                survivors = alternatives(asset_id)
                 if asset_id in explicit and not survivors:
                     reasons.add("scheduled or advertising asset")
                 for group in required_groups:
@@ -579,11 +604,10 @@ class BroadcasterService:
             needed = False
             for item in affected:
                 asset_id = item.asset.asset_id
-                selected_by_source = any(path_key_is_within(normalize_path(item.location.path)[1], key) for key in selectors)
+                selected_by_source = any(path_key_is_within(affected_keys[item.location.path], key) for key in selectors)
                 if asset_id not in ids and not selected_by_source:
                     continue
-                survivors = [loc for loc in self.library.locations_for_asset(asset_id)
-                             if self.library.storage_path(loc.source_root)[1] != root_key and loc.online]
+                survivors = alternatives(asset_id)
                 if (asset_id in ids and not survivors or selected_by_source and not any(
                         path_key_is_within(normalize_path(loc.path)[1], key) for loc in survivors for key in selectors)):
                     needed = True

@@ -1967,24 +1967,38 @@ Item {
                 anchors.margins: 14
                 spacing: 10
 
-                RowLayout {
+                Flow {
+                    id: calendarToolbar
+                    objectName: "studioCalendarToolbar"
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    Layout.preferredHeight: implicitHeight
                     spacing: 8
 
-                    StudioButton { text: "‹"; Layout.preferredWidth: 38; Layout.minimumWidth: 38; onClicked: studioRoot.navigateRange(-1) }
+                    StudioButton { text: "‹"; width: 38; onClicked: studioRoot.navigateRange(-1) }
                     StudioButton { text: "Today"; onClicked: studioRoot.goToday() }
-                    Label { text: "SNAP"; color: studioRoot.textSecondary; font.pixelSize: 10 }
-                    ChannelComboBox {
-                        id: snapIntervalBox
-                        Layout.preferredWidth: 92
-                        model: ["5 min", "10 min", "15 min", "30 min"]
-                        currentIndex: 2
-                        onActivated: studioRoot.snapMinutes = [5, 10, 15, 30][currentIndex]
+                    Row {
+                        spacing: 8
+                        height: 38
+                        Label {
+                            text: "SNAP"; height: 38
+                            verticalAlignment: Text.AlignVCenter
+                            color: studioRoot.textSecondary; font.pixelSize: 10
+                        }
+                        ChannelComboBox {
+                            id: snapIntervalBox
+                            width: 92; height: 38
+                            model: ["5 min", "10 min", "15 min", "30 min"]
+                            currentIndex: 2
+                            onActivated: studioRoot.snapMinutes = [5, 10, 15, 30][currentIndex]
+                        }
                     }
-                    StudioButton { text: "›"; Layout.preferredWidth: 38; Layout.minimumWidth: 38; onClicked: studioRoot.navigateRange(1) }
+                    StudioButton { text: "›"; width: 38; onClicked: studioRoot.navigateRange(1) }
 
                     Text {
-                        Layout.fillWidth: true
+                        width: Math.min(230, calendarPanel.width - 28)
+                        height: 38
+                        verticalAlignment: Text.AlignVCenter
                         text: studioRoot.rangeLabel()
                         elide: Text.ElideRight
                         color: studioRoot.textPrimary
@@ -2032,12 +2046,14 @@ Item {
                         onClicked: studioRoot.autoFillVisibleRange()
                     }
                     StudioButton {
+                        objectName: "studioAdBreaksButton"
                         text: "Ad Breaks"
                         highlighted: true
                         enabled: !studioRoot.autoFillBusy
                         onClicked: adSettings.openBasic()
                     }
                     StudioButton {
+                        objectName: "studioAdvancedAdsButton"
                         text: "Advanced Ad Settings…"
                         enabled: !studioRoot.autoFillBusy
                         onClicked: adSettings.openAdvanced()
@@ -2059,6 +2075,7 @@ Item {
 
                             Rectangle {
                                 id: weekDay
+                                objectName: "studioWeekDay" + index
                                 required property int index
                                 property date columnDate: studioRoot.addDays(
                                                               studioRoot.startOfWeek(studioRoot.anchorDate),
@@ -2583,6 +2600,8 @@ Item {
                     }
                     Text {
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        elide: Text.ElideRight
                         text: "Drag cards to swap their slots • drag into calendar to move days • × removes a fixed block"
                         color: studioRoot.textSecondary
                         font.pixelSize: 11

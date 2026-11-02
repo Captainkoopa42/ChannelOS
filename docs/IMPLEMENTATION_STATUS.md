@@ -23,6 +23,8 @@ The repair and release branches retain that lineage; no feature branch is droppe
   and abandoned future plans never enter the airing ledger.
 - Temporary partial lineups use clocks belonging to their own resolved schedule,
   preserving the original persisted channel epoch and saved viewer state.
+- Studio wraps its toolbar at supported smaller window sizes, keeping all seven
+  week days and ad actions visible. Ad dialogs have stable viewport sizing.
 
 Channel schemas 0.1–0.6 remain supported. Runtime schema 3 adds archive and calendar
 ownership state and scopes program clocks; an existing schema-2 database is backed

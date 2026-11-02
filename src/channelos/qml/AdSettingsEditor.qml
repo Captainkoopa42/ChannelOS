@@ -8,6 +8,8 @@ Item {
     id: adsRoot
     width: 0; height: 0
     property Item hostItem: parent
+    readonly property real viewportWidth: hostItem && hostItem.width > 0 ? hostItem.width : 1100
+    readonly property real viewportHeight: hostItem && hostItem.height > 0 ? hostItem.height : 650
     property int channelNumber: 1
     property string channelName: "Channel"
     property var mediaLibrary: []
@@ -303,9 +305,9 @@ Item {
         objectName: "simpleAdBreaksDialog"
         title: "Ad Breaks"
         parent: Overlay.overlay
-        width: Math.min(640, adsRoot.hostItem.width - 40)
-        height: Math.min(adsRoot.hostItem.height - 40, basicColumn.implicitHeight + 120)
-        x: (adsRoot.hostItem.width - width) / 2; y: (adsRoot.hostItem.height - height) / 2
+        width: Math.min(640, adsRoot.viewportWidth - 40)
+        height: Math.min(adsRoot.viewportHeight - 40, basicColumn.implicitHeight + 120)
+        x: (adsRoot.viewportWidth - width) / 2; y: (adsRoot.viewportHeight - height) / 2
         property var saved: ({})
         onOpened: { saved = adsRoot.editorObject(); previewStatus.text = "" }
         onRejected: adsRoot.load(saved)
@@ -381,8 +383,8 @@ Item {
     StudioDialog {
         id: advancedDialog; objectName: "advancedAdSettingsDialog"; title: "Advanced Ad Settings"
         parent: Overlay.overlay
-        width: Math.min(770, adsRoot.hostItem.width - 40); height: Math.min(760, adsRoot.hostItem.height - 40)
-        x: (adsRoot.hostItem.width - width) / 2; y: (adsRoot.hostItem.height - height) / 2
+        width: Math.min(770, adsRoot.viewportWidth - 40); height: Math.min(760, adsRoot.viewportHeight - 40)
+        x: (adsRoot.viewportWidth - width) / 2; y: (adsRoot.viewportHeight - height) / 2
         property var saved: ({})
         onOpened: { saved = adsRoot.editorObject(); adsRoot.advancedDirty = false; adCatalogDialog.reload() }
         onRejected: adsRoot.load(saved)
@@ -909,8 +911,9 @@ Item {
     }
     StudioDialog {
         id: binDialog; title: "Ad Bin"; parent: Overlay.overlay
-        width: Math.min(650, adsRoot.hostItem.width - 40); height: Math.min(700, adsRoot.hostItem.height - 40)
-        x: (adsRoot.hostItem.width - width) / 2; y: (adsRoot.hostItem.height - height) / 2
+        implicitWidth: 650; implicitHeight: 700
+        width: Math.min(650, adsRoot.viewportWidth - 40); height: Math.min(700, adsRoot.viewportHeight - 40)
+        x: (adsRoot.viewportWidth - width) / 2; y: (adsRoot.viewportHeight - height) / 2
         contentItem: AdMediaBin {
             mediaLibrary: adsRoot.mediaLibrary; sourceOptions: adsRoot.sourceOptions
             sources: adsRoot.binScope.sources; assetIds: adsRoot.binScope.ids; excludedIds: adsRoot.binScope.excluded

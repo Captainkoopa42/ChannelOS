@@ -580,3 +580,47 @@ def test_media_bin_browses_only_selected_sources_and_searches_their_programs():
     item.deleteLater()
     engine.deleteLater()
     app.processEvents()
+
+
+@pytest.mark.parametrize('size', [(1100, 650), (1280, 720), (1600, 900)])
+def test_studio_keeps_week_days_and_ad_actions_inside_supported_window(size):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtQuick import QQuickWindow
+    from PySide6.QtTest import QTest
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller, host = FakeStudioController(), FakeStudioHost()
+    engine = QQmlApplicationEngine()
+    warnings = []
+    engine.warnings.connect(lambda errors: warnings.extend(error.toString() for error in errors))
+    engine.rootContext().setContextProperty('channelOS', controller)
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(Path(channelos.__file__).parent / 'qml/ChannelStudioScreen.qml')))
+    item = component.create()
+    assert item is not None, [error.toString() for error in component.errors()]
+    window = QQuickWindow()
+    window.resize(*size)
+    item.setParentItem(window.contentItem())
+    item.setProperty('hostWindow', host)
+    window.show()
+    QTest.qWait(80)
+    try:
+        names = ['studioWeekDay' + str(index) for index in range(7)]
+        names += ['studioAdBreaksButton', 'studioAdvancedAdsButton']
+        pending = [item]
+        controls = {}
+        while pending:
+            control = pending.pop()
+            controls[control.objectName()] = control
+            pending.extend(control.childItems())
+        for name in names:
+            control = controls.get(name)
+            assert control is not None, name
+            position = control.mapToScene(QPointF(0, 0))
+            assert position.x() >= -1 and position.y() >= -1, name
+            assert position.x() + control.width() <= size[0] + 1, name
+            assert position.y() + control.height() <= size[1] + 1, name
+        assert not any('Binding loop' in warning for warning in warnings), warnings
+    finally:
+        window.close()
+        item.setParentItem(None)
+        item.deleteLater()
+        app.processEvents()

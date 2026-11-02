@@ -245,13 +245,15 @@ def _selection_after_boundary(runtime: ChannelRuntime, boundary: datetime) -> Br
 class GuideService:
     """Read-only Guide projection over authoritative ChannelRuntime timelines."""
 
-    def __init__(self, runtimes: tuple[ChannelRuntime, ...]) -> None:
+    def __init__(self, runtimes: tuple[ChannelRuntime, ...], *, definitions=()) -> None:
         by_number: dict[int, ChannelRuntime] = {}
         for runtime in runtimes:
             if runtime.channel_number in by_number:
                 raise GuideError(f"duplicate channel number: {runtime.channel_number}")
             by_number[runtime.channel_number] = runtime
         self._runtimes = tuple(by_number[number] for number in sorted(by_number))
+        self.unavailable_channels = tuple(definition for definition in definitions
+                                          if definition.channel not in by_number)
 
     @property
     def channel_numbers(self) -> tuple[int, ...]:

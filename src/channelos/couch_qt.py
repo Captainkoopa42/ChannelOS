@@ -886,6 +886,8 @@ class CouchController(QObject):
         channel_number: int,
         approximate_start_ms: float,
     ) -> dict[str, object]:
+        if any(definition.channel == channel_number for definition in self._service.unavailable_channels):
+            return {"ok": False, "message": "This channel's media is unavailable. Reconnect or scan its source in Library."}
         if not self._surface_ready:
             return {"ok": False, "message": self._surface_error}
         try:
@@ -1040,6 +1042,8 @@ class CouchController(QObject):
 
     @Slot(int, result="QVariantMap")
     def tuneChannel(self, channel_number: int) -> dict[str, object]:
+        if any(definition.channel == channel_number for definition in self._service.unavailable_channels):
+            return {"ok": False, "message": "This channel's media is unavailable. Reconnect or scan its source in Library."}
         if not self._surface_ready:
             return {"ok": False, "message": self._surface_error}
         try:

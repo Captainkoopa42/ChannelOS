@@ -81,7 +81,7 @@ def run_couch(
 
     runtimes = _open_runtimes(broadcaster.paths, library, store)
     logger.info("Couch runtime ready channels=%d", len(runtimes))
-    service = GuideService(runtimes)
+    service = GuideService(runtimes, definitions=tuple(record.definition for record in broadcaster.records))
     television = TelevisionRuntime(runtimes, store)
 
     try:

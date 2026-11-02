@@ -212,12 +212,22 @@ def build_couch_snapshot(
             }
         )
 
+    for definition in service.unavailable_channels:
+        row = _unassigned_default_row(start, end)
+        row.update(channelNumber=definition.channel, displayNumber=definition.display_number,
+                   channelName=definition.name, isUnassigned=False, isUnavailable=True)
+        for item in (*row["programs"], *row["displaySegments"]):
+            item.update(channelNumber=definition.channel, title="MEDIA UNAVAILABLE",
+                        isUnassigned=False, isUnavailable=True)
+        row["programs"][0]["scheduleId"] = f"channelos:unavailable:{definition.channel}"
+        rows.append(row)
+
     if not any(
         int(row.get("channelNumber", 0)) == RESERVED_DEFAULT_CHANNEL
         for row in rows
     ):
         rows.append(_unassigned_default_row(start, end))
-        rows.sort(key=lambda row: int(row["channelNumber"]))
+    rows.sort(key=lambda row: int(row["channelNumber"]))
 
     return {
         "generatedAtMs": _epoch_milliseconds(reference),

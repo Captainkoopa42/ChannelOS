@@ -368,7 +368,7 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
                     continue
                 runtimes.append(runtime)
 
-            service = GuideService(tuple(runtimes))
+            service = GuideService(tuple(runtimes), definitions=tuple(record.definition for record in self._broadcaster.records))
             television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
 
             # A legacy or partially-written runtime may still name a current

@@ -60,7 +60,12 @@ def test_startup_keeps_healthy_channel_and_supports_empty_recovery(tmp_path):
     paths[1].unlink()
     assert _open_runtimes(service.paths, library, store) == ()
     tv = TelevisionRuntime((), store)
-    controller = CouchController(GuideService(()), tv, library)
+    controller = CouchController(GuideService((), definitions=tuple(record.definition for record in service.records)), tv, library)
+    unavailable = [row for row in controller.snapshot['rows'] if row.get('isUnavailable')]
+    assert {row['channelNumber'] for row in unavailable} == {7, 8}
+    assert all(row['programs'][0]['title'] == 'MEDIA UNAVAILABLE' for row in unavailable)
+    assert not controller.tuneChannel(7)['ok']
+    assert 'Reconnect' in controller.tuneChannel(7)['message']
     assert not controller.playback.get('active')
     for action in (tv.channel_up, tv.channel_down):
         with pytest.raises(ChannelRuntimeError, match='No channels'):
@@ -454,3 +459,15 @@ def test_source_removal_allows_duplicates_inside_permitted_source_union(tmp_path
     service.remove_library_source(first)
     assert all(path.is_file() for path in first.glob('*.mp4'))
     assert library.list_online_media_for_source(second)
+
+
+def test_source_removal_protects_unassigned_saved_ad_collection(tmp_path):
+    from channelos.ad_catalog import AdCollection
+    library, service, raw = setup(tmp_path)
+    ids = tuple(item.asset.asset_id for item in library.list_online_media_for_source(tmp_path / 'commercials'))
+    service.ad_catalog.save_collection(AdCollection('unassigned', 'Saved commercials', ids))
+    report = service.source_dependencies(tmp_path / 'commercials')
+    assert report[0]['kind'] == 'collection'
+    assert report[0]['name'] == 'Saved commercials'
+    with pytest.raises(BroadcasterError, match='ad collection'):
+        service.remove_library_source(tmp_path / 'commercials')

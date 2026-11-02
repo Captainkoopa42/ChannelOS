@@ -554,8 +554,8 @@ class BroadcasterCouchController(CouchController):
             return {
                 "ok": False,
                 "message": (
-                    "This source is still used by channel definition(s): "
-                    f"{labels}. Edit those channels before removing the source "
+                    "This source is still used by saved channel or ad collection references: "
+                    f"{labels}. Edit those references before removing the source "
                     "from the Library."
                 ),
             }
@@ -595,7 +595,7 @@ class BroadcasterCouchController(CouchController):
         from .couch import _open_runtimes
         runtimes = _open_runtimes(self._broadcaster.paths, self._library, self._runtime_store)
 
-        service = GuideService(tuple(runtimes))
+        service = GuideService(tuple(runtimes), definitions=tuple(record.definition for record in self._broadcaster.records))
         television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
 
         if television.current_channel is not None:

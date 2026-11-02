@@ -530,6 +530,7 @@ class BroadcasterService:
         affected = [item for item in self.library.list_cached_media()
                     if self.library.storage_path(item.location.source_root)[1] == root_key]
         matches = []
+        assigned_collections = set()
         for record in self.records:
             definition = record.definition
             policies = (definition.advertising,) + tuple(p.policy for p in definition.advertising.placements)
@@ -543,6 +544,7 @@ class BroadcasterService:
             assignment = self.ad_catalog.get_assignment(definition.channel)
             if assignment is not None:
                 collection_ids = {assignment.collection_id, *(p.collection_id for p in assignment.placements)} - {None}
+                assigned_collections.update(collection_ids)
                 for collection_id in collection_ids:
                     collection = self.ad_catalog.get_collection(collection_id)
                     if collection:
@@ -569,13 +571,35 @@ class BroadcasterService:
             if reasons:
                 matches.append({"channelNumber": definition.channel, "displayNumber": definition.display_number,
                                 "name": definition.name, "reasons": sorted(reasons)})
+        for collection in self.ad_catalog.list_collections():
+            if collection.collection_id in assigned_collections:
+                continue
+            selectors = tuple(normalize_path(path)[1] for path in collection.source_paths)
+            ids = set(collection.asset_ids) - set(collection.excluded_asset_ids)
+            needed = False
+            for item in affected:
+                asset_id = item.asset.asset_id
+                selected_by_source = any(path_key_is_within(normalize_path(item.location.path)[1], key) for key in selectors)
+                if asset_id not in ids and not selected_by_source:
+                    continue
+                survivors = [loc for loc in self.library.locations_for_asset(asset_id)
+                             if self.library.storage_path(loc.source_root)[1] != root_key and loc.online]
+                if (asset_id in ids and not survivors or selected_by_source and not any(
+                        path_key_is_within(normalize_path(loc.path)[1], key) for loc in survivors for key in selectors)):
+                    needed = True
+                    break
+            if not affected and any(path_key_is_within(key, normalize_path(source_root)[1]) for key in selectors):
+                needed = True
+            if needed:
+                matches.append({"channelNumber": 0, "displayNumber": "Ad collection", "name": collection.name,
+                                "kind": "collection", "reasons": ["saved ad collection"]})
         return matches
 
     def remove_library_source(self, source_root: str | Path):
         dependencies = self.source_dependencies(source_root)
         if dependencies:
             labels = ", ".join(str(item["displayNumber"]) for item in dependencies)
-            raise BroadcasterError(f"This source is still used by channels {labels}. Edit them before removing it.")
+            raise BroadcasterError(f"This source is still used by saved channel or ad collection references: {labels}. Edit them before removing it.")
         return self.library.remove_source_from_index(source_root)
 
     def suggested_channel_number(self) -> int:

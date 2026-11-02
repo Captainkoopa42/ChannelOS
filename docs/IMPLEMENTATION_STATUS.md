@@ -11,7 +11,7 @@ The repair and release branches retain that lineage; no feature branch is droppe
 
 - Library additions preserve the complete saved channel and calendar.
 - Numeric input cancels on navigation and alternative tuning, including direct QML navigation.
-- A missing source excludes unavailable playback while Home, Library and Broadcaster remain accessible.
+- A missing source excludes unavailable playback while Home, Guide, Library and Broadcaster remain accessible.
 - Source removal checks program files/subfolders, calendar/filler IDs, ad sources,
   placements and assigned collections. Original media remains untouched.
 - Deleted stations have archived clocks/plans/history and fresh active state on number reuse.

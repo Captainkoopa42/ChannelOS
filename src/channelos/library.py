@@ -138,6 +138,17 @@ class MediaLibrary:
     def storage_path(self, path: str | Path) -> tuple[str, str]:
         return self.portable.storage_path(path) if self.portable else normalize_path(path)
 
+    def revision(self) -> tuple:
+        """Cheap invalidation token, including uncheckpointed SQLite WAL writes."""
+        result = [str(self.database_path)]
+        for path in (self.database_path, Path(str(self.database_path) + '-wal')):
+            try:
+                stat = path.stat()
+                result.append((stat.st_mtime_ns, stat.st_size, stat.st_ino))
+            except FileNotFoundError:
+                result.append(None)
+        return tuple(result)
+
     def physical_path(self, path: str) -> Path:
         return self.portable.decode(path) if self.portable else Path(path)
 

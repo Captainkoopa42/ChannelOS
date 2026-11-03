@@ -10,7 +10,7 @@ def occurrence_id(channel: int, asset_id: str, start: datetime) -> str:
     return hashlib.sha256(f'calendar:{channel}:{asset_id}:{start.isoformat()}'.encode()).hexdigest()
 
 
-def snapshot_matches(saved, media, start, revision, channel, ad_media, *, allow_legacy_ads=False, program_media=()) -> bool:
+def snapshot_matches(saved, media, start, revision, channel, ad_media, *, allow_legacy_ads=False, program_media=(), media_maps=None) -> bool:
     """Bind a reservation to its parent, current durations and source bounds."""
     from .simple_ads import snapshot_plans, validate_snapshot
     if not saved:
@@ -22,8 +22,9 @@ def snapshot_matches(saved, media, start, revision, channel, ad_media, *, allow_
         plans = snapshot_plans(saved)
         identity = occurrence_id(channel, media.asset.asset_id, start)
         duration = float(media.asset.duration_seconds)
-        by_id = {item.asset.asset_id: item for item in ad_media}
-        programs = {item.asset.asset_id: item for item in (*program_media, media)}
+        by_id, programs = media_maps if media_maps is not None else (
+            {item.asset.asset_id: item for item in ad_media},
+            {item.asset.asset_id: item for item in (*program_media, media)})
         elapsed = 0.0
         for plan in plans:
             position = (plan.scheduled_at - start).total_seconds() - elapsed
@@ -68,15 +69,15 @@ def replay_blocks(resolved, blocks, *, store=None, replay_from=None):
     channel = resolved.definition.channel
     ordered = sorted(blocks, key=lambda block: block.start_utc)
     by_id = {item.asset.asset_id: item for item in resolved.media}
+    media_maps = ({item.asset.asset_id: item for item in resolved.ad_media}, by_id)
     rotation = SimpleRotation(resolved.ad_media, settings, channel, store=store, before=ordered[0].start_utc)
     result = []
     for index, block in enumerate(ordered):
         media = by_id[block.asset_id]
-        valid = snapshot_matches(block.ad_plan, media, block.start_utc, revision, channel, resolved.ad_media, program_media=resolved.media)
         preserve = replay_from is not None and block.start_utc < replay_from and block.ad_plan
         if preserve:
             preserve = snapshot_matches(block.ad_plan, media, block.start_utc, block.ad_plan['revision'],
-                                        channel, resolved.ad_media, allow_legacy_ads=True, program_media=resolved.media)
+                                        channel, resolved.ad_media, allow_legacy_ads=True, program_media=resolved.media, media_maps=media_maps)
         if preserve:
             saved = block.ad_plan
             plans = snapshot_plans(saved)
@@ -95,7 +96,7 @@ def replay_blocks(resolved, blocks, *, store=None, replay_from=None):
     return tuple(result)
 
 
-def detached_store(runtime_path):
+def detached_store(runtime_path, channel_number=None):
     """Copy rotation state for authoring without opening a live writable handle."""
     from contextlib import contextmanager, closing
     from pathlib import Path
@@ -104,6 +105,19 @@ def detached_store(runtime_path):
 
     @contextmanager
     def copied():
+        if channel_number is not None:
+            from tempfile import TemporaryDirectory
+            from .runtime_snapshot import channel_snapshot
+            with TemporaryDirectory(prefix='channelos-calendar-') as temporary:
+                runtime = channel_snapshot(runtime_path, Path(temporary) / 'runtime.db', channel_number)
+                store = BreakPlanStore(runtime.database_path, initialize=False)
+                store.portable = getattr(runtime, '_snapshot_portable', None)
+                store.connection.portable = store.portable
+                try:
+                    yield store
+                finally:
+                    store.close()
+            return
         store = BreakPlanStore(':memory:')
         try:
             path = Path(runtime_path)

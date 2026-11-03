@@ -223,6 +223,9 @@ class AdCatalogStore:
             row = db.execute("SELECT * FROM ad_collections WHERE collection_id=?", (collection_id,)).fetchone()
         if row is None:
             return None
+        return self._collection_from_row(row)
+
+    def _collection_from_row(self, row) -> AdCollection:
         payload = self._load(row["asset_ids_json"])
         # Old catalog rows were plain JSON lists; load them without migration.
         if isinstance(payload, list):
@@ -248,39 +251,31 @@ class AdCatalogStore:
 
     def list_collections(self) -> tuple[AdCollection, ...]:
         with self._connect() as db:
-            ids = [
-                row[0] for row in db.execute(
-                    "SELECT collection_id FROM ad_collections ORDER BY name, collection_id"
-                )
-            ]
-        return tuple(
-            item for collection_id in ids
-            if (item := self.get_collection(collection_id)) is not None
-        )
+            rows = db.execute("SELECT * FROM ad_collections ORDER BY name, collection_id").fetchall()
+        return tuple(self._collection_from_row(row) for row in rows)
 
     def list_profiles(self) -> tuple[BreakProfile, ...]:
         with self._connect() as db:
-            ids = [
-                row[0] for row in db.execute(
-                    "SELECT profile_id FROM ad_break_profiles ORDER BY name, profile_id"
-                )
-            ]
-        return tuple(
-            item for profile_id in ids
-            if (item := self.get_profile(profile_id)) is not None
-        )
+            rows = db.execute("SELECT * FROM ad_break_profiles ORDER BY name, profile_id").fetchall()
+        return tuple(BreakProfile(row["profile_id"], row["name"], self._load(row["defaults_json"])) for row in rows)
 
     def list_assignments(self) -> tuple[ChannelAdAssignment, ...]:
         with self._connect() as db:
-            numbers = [
-                row[0] for row in db.execute(
-                    "SELECT channel_number FROM channel_ad_assignments ORDER BY channel_number"
-                )
-            ]
-        return tuple(
-            item for number in numbers
-            if (item := self.get_assignment(number)) is not None
-        )
+            rows = db.execute("SELECT * FROM channel_ad_assignments ORDER BY channel_number").fetchall()
+        return tuple(self._assignment_from_row(row) for row in rows)
+
+    def read_snapshot(self) -> dict[str, dict]:
+        """Read one consistent catalog using three queries and one connection."""
+        with self._connect() as db:
+            db.execute("BEGIN")
+            collections = db.execute("SELECT * FROM ad_collections ORDER BY name, collection_id").fetchall()
+            profiles = db.execute("SELECT * FROM ad_break_profiles ORDER BY name, profile_id").fetchall()
+            assignments = db.execute("SELECT * FROM channel_ad_assignments ORDER BY channel_number").fetchall()
+        return {
+            "collections": {row["collection_id"]: self._collection_from_row(row) for row in collections},
+            "profiles": {row["profile_id"]: BreakProfile(row["profile_id"], row["name"], self._load(row["defaults_json"])) for row in profiles},
+            "assignments": {row["channel_number"]: self._assignment_from_row(row) for row in assignments},
+        }
 
     def assign_channel(self, item: ChannelAdAssignment) -> None:
         from dataclasses import asdict
@@ -308,7 +303,10 @@ class AdCatalogStore:
     def get_assignment(self, channel_number: int) -> ChannelAdAssignment | None:
         with self._connect() as db:
             row = db.execute("SELECT * FROM channel_ad_assignments WHERE channel_number=?", (channel_number,)).fetchone()
-        return None if row is None else ChannelAdAssignment(
+        return None if row is None else self._assignment_from_row(row)
+
+    def _assignment_from_row(self, row) -> ChannelAdAssignment:
+        return ChannelAdAssignment(
             row["channel_number"], row["collection_id"], row["profile_id"], self._load(row["overrides_json"]),
             tuple(AdPlacementAssignment(**item) for item in self._load(row["placements_json"])))
 

@@ -346,8 +346,10 @@ Item {
             }
         }
 
-        var result = channelOS.addLibraryItemToChannel(
-                    channel.channelNumber, String(item.assetId), targetPath)
+        var result = typeof channelOS.startChannelMutation === "function"
+                ? channelOS.startChannelMutation("add_library_item", Number(channel.channelNumber),
+                                                {assetId: String(item.assetId), path: targetPath})
+                : channelOS.addLibraryItemToChannel(channel.channelNumber, String(item.assetId), targetPath)
         if (!result || !result.ok) {
             addToChannelError = true
             addToChannelMessage = result && result.message
@@ -356,7 +358,12 @@ Item {
             return
         }
 
-        channelOS.refreshBroadcaster()
+        if (result.pending) {
+            addToChannelError = false
+            addToChannelMessage = String(result.message)
+            return
+        }
+
         var refreshed = channelOS.broadcasterSnapshot || ({})
         addToChannelChannels = (refreshed.channels || addToChannelChannels).slice(0)
         addToChannelSelection = Math.max(

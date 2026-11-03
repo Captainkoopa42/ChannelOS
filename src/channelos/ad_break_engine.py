@@ -411,7 +411,7 @@ class AdSelectionEngine:
 class BreakPlanStore:
     """SQLite persistence for immutable plans and idempotent airing history."""
 
-    def __init__(self, database_path: str | Path) -> None:
+    def __init__(self, database_path: str | Path, *, initialize: bool = True) -> None:
         self.path = str(database_path)
         self.portable = find_setup(database_path)
         if self.portable:
@@ -420,7 +420,8 @@ class BreakPlanStore:
         self.connection.portable = self.portable
         self.connection.execute("PRAGMA busy_timeout = 5000")
         self.connection.execute("PRAGMA foreign_keys = ON")
-        self._initialize()
+        if initialize:
+            self._initialize()
 
     def _initialize(self) -> None:
         self.connection.executescript("""
@@ -492,6 +493,8 @@ class BreakPlanStore:
             );
             CREATE INDEX IF NOT EXISTS idx_ad_program_clock_channel
                 ON ad_program_clock(channel_number, broadcast_start);
+            CREATE INDEX IF NOT EXISTS idx_ad_break_plans_channel
+                ON ad_break_plans(channel_number, scheduled_at);
             CREATE TABLE IF NOT EXISTS ad_history_review (
                 plan_id TEXT PRIMARY KEY REFERENCES ad_break_plans(plan_id) ON DELETE CASCADE,
                 reason TEXT NOT NULL,

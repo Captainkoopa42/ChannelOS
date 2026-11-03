@@ -187,6 +187,11 @@ class _StudioAutoFillWorker(QObject):
                 on_progress=self.progress.emit,
                 should_cancel=self._cancel_event.is_set,
             )
+            if result.get('ok'):
+                from .studio_publication import prepare_publication
+                media = self._broadcaster.studio_media()
+                result = prepare_publication(result, self._editor, media,
+                    self._broadcaster.studio_groups(available_asset_ids={item['assetId'] for item in media}))
             if self._cancel_event.is_set():
                 raise StudioAutoFillCancelled("Studio Auto Fill was cancelled")
         except StudioAutoFillCancelled:
@@ -223,9 +228,11 @@ class BroadcasterCouchController(CouchController):
         broadcaster: BroadcasterService,
         runtime_store: RuntimeStore,
     ) -> None:
-        super().__init__(service, television, library)
         self._broadcaster = broadcaster
+        super().__init__(service, television, library)
         self._runtime_store = runtime_store
+        self._lineup_definitions = {record.channel_number: record.definition for record in broadcaster.records}
+        self._lineup_library_revision = library.revision()
         self._broadcaster_snapshot = self._build_broadcaster_snapshot()
         self._video_surface: NativeVideoSurface | None = None
 
@@ -254,10 +261,6 @@ class BroadcasterCouchController(CouchController):
             "message": "",
         }
 
-        # CouchController builds an initial library view before the broadcaster
-        # service is attached. Rebuild once so source rows can expose channel use.
-        self._library_snapshot = self._build_library_snapshot()
-        self._home_television = self._build_home_television_view()
 
     def _channels_using_source(self, source_path: str | Path, indexed_media=None) -> list[dict[str, object]]:
         broadcaster = getattr(self, "_broadcaster", None)
@@ -270,7 +273,12 @@ class BroadcasterCouchController(CouchController):
         snapshot = super()._build_library_snapshot()
         sources: list[dict[str, object]] = []
         indexed_media = self._library.list_cached_media() if getattr(self, "_broadcaster", None) is not None else []
-        for source in self._library.list_sources():
+        source_records = self._library.list_sources()
+        broadcaster = getattr(self, "_broadcaster", None)
+        dependencies = broadcaster.source_dependency_reports(
+            (source.source_root for source in source_records), indexed_media=indexed_media
+        ) if broadcaster is not None else {}
+        for source in source_records:
             root = source.source_root
             sources.append(
                 {
@@ -285,7 +293,7 @@ class BroadcasterCouchController(CouchController):
                     "lastScanStartedAt": source.last_scan_started_at or "",
                     "lastScanFinishedAt": source.last_scan_finished_at or "",
                     "lastError": source.last_error or "",
-                    "usedByChannels": self._channels_using_source(root, indexed_media),
+                    "usedByChannels": dependencies.get(str(root), []),
                 }
             )
 
@@ -356,10 +364,11 @@ class BroadcasterCouchController(CouchController):
 
     @Slot()
     def refreshBroadcaster(self) -> None:
-        self._broadcaster.refresh()
-        self._broadcaster_snapshot = self._build_broadcaster_snapshot()
-        self.broadcasterChanged.emit()
-        self.refreshLibrary()
+        from .performance import operation
+        with operation('channels.open', channels=len(self._broadcaster.records)):
+            self._broadcaster.refresh()
+            self._broadcaster_snapshot = self._build_broadcaster_snapshot()
+            self.broadcasterChanged.emit()
 
     @Slot(str, result="QVariantMap")
     def playLibraryAsset(self, asset_id: str) -> dict[str, object]:
@@ -578,7 +587,69 @@ class BroadcasterCouchController(CouchController):
         except (BroadcasterError, OSError, ValueError) as exc:
             return self._error(exc)
 
-    def _reload_lineup(
+    def _reload_lineup(self, *, replacement_channel_number=None, prepared=None) -> None:
+        if not hasattr(self._actions, 'replace_lineup'):
+            return self._reload_lineup_full(replacement_channel_number=replacement_channel_number)
+        from .media_resilience import _resolved_runtime
+        previous = dict(self._actions.runtime.channels)
+        definitions = {record.channel_number: record.definition for record in self._broadcaster.records}
+        changed = {number for number, definition in definitions.items()
+                   if self._lineup_definitions.get(number) != definition}
+        removed = set(previous) - set(definitions)
+        if self._library.revision() != self._lineup_library_revision:
+            changed.update(definitions)
+        if prepared is not None:
+            changed = set(prepared)
+        current = self._actions.runtime.current_channel
+        active_changed = current in changed or current in removed
+        was_active = bool(self._playback.get('active')) and not self._on_demand.active
+        paused = bool(self._playback.get('paused'))
+        if active_changed and was_active:
+            self._actions.suspend_decoder()
+        replacements = {}
+        try:
+            for number in changed:
+                if prepared is not None:
+                    replacements[number] = prepared[number]
+                else:
+                    replacements[number] = _resolved_runtime(definitions[number], self._library, self._runtime_store,
+                        persistent_when_complete=True, verify_files=True)
+            combined = {number: runtime for number, runtime in previous.items() if number not in changed and number not in removed}
+            combined.update({number: runtime for number, runtime in replacements.items() if runtime is not None})
+            service = GuideService(tuple(combined.values()), definitions=tuple(definitions.values()))
+            self._actions.replace_lineup(service, tuple(combined.values()))
+            self._service = service
+            self._lineup_definitions = definitions
+            self._lineup_library_revision = self._library.revision()
+        except Exception:
+            for runtime in replacements.values():
+                if runtime is not None and runtime.break_store is not None:
+                    runtime.break_store.close()
+            if active_changed and was_active and current in previous:
+                self._publish(self._actions.restore_after_lineup_change(current, paused=paused))
+            raise
+        for number in changed | removed:
+            old = previous.get(number)
+            if old is not None and old is not combined.get(number) and old.break_store is not None:
+                old.break_store.close()
+        self._snapshot = build_couch_snapshot(service)
+        self._home_television = self._build_home_television_view()
+        self.snapshotChanged.emit()
+        self.homeTelevisionChanged.emit()
+        if active_changed and was_active:
+            target = current if current in combined else replacement_channel_number
+            if target not in combined:
+                target = next(iter(sorted(combined)), None)
+            if target is None:
+                self._playback = {'active': False}
+                self.playbackChanged.emit()
+            else:
+                try:
+                    self._publish(self._actions.restore_after_lineup_change(target, paused=paused if target == current else False))
+                except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+                    self._publish_playback_failure(exc)
+
+    def _reload_lineup_full(
         self,
         *,
         replacement_channel_number: int | None = None,
@@ -595,7 +666,8 @@ class BroadcasterCouchController(CouchController):
         prior_paused = bool(self._playback.get("paused", False))
 
         from .couch import _open_runtimes
-        runtimes = _open_runtimes(self._broadcaster.paths, self._library, self._runtime_store)
+        runtimes = _open_runtimes(self._broadcaster.paths, self._library, self._runtime_store,
+            definitions={record.path: record.definition for record in self._broadcaster.records})
 
         service = GuideService(tuple(runtimes), definitions=tuple(record.definition for record in self._broadcaster.records))
         television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
@@ -1337,6 +1409,8 @@ def run_qt(
         z=95,
     )
     portable_notice = _attach_overlay(engine, window, "PortableDriveNotice.qml", z=300)
+    operation_notice = _attach_overlay(engine, window, "ChannelOperationOverlay.qml", z=400)
+    window._channelos_operation_notice = operation_notice
     window._channelos_portable_notice = portable_notice
 
     key_filter = BroadcasterKeyFilter(controller, window)

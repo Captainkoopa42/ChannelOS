@@ -28,6 +28,8 @@ Item {
     property var sourceOptions: snapshot.sourceOptions || []
     property int selectedChannelIndex: 0
     property string editorMode: "list"
+    property string pendingMutationKind: ""
+    property int pendingMutationIndex: 0
     property int editingChannelNumber: 0
     property int pendingDeleteChannelNumber: 0
     property string pendingDeleteDisplayNumber: "---"
@@ -220,6 +222,13 @@ Item {
 
     function saveDraft() {
         var result
+        if (channelOS && typeof channelOS.startChannelMutation === "function") {
+            var kind = editorMode === "edit" ? "update" : "create"
+            result = channelOS.startChannelMutation(kind, editingChannelNumber, draftObject())
+            if (result && result.ok) pendingMutationKind = kind
+            setResult(result)
+            return
+        }
 
         if (editorMode === "edit") {
             result = channelOS.updateChannel(
@@ -232,7 +241,6 @@ Item {
         setResult(result)
 
         if (result && result.ok) {
-            channelOS.refreshBroadcaster()
             snapshot = channelOS.broadcasterSnapshot
             editorMode = "list"
             editingChannelNumber = 0
@@ -278,6 +286,15 @@ Item {
 
     function deleteSelectedChannel() {
         var removedIndex = selectedChannelIndex
+        if (channelOS && typeof channelOS.startChannelMutation === "function") {
+            var queued = channelOS.startChannelMutation("delete", pendingDeleteChannelNumber, ({}))
+            if (queued && queued.ok) {
+                pendingMutationKind = "delete"
+                pendingMutationIndex = removedIndex
+            }
+            setResult(queued)
+            return
+        }
         var result = channelOS.deleteChannel(pendingDeleteChannelNumber)
         setResult(result)
 
@@ -1555,6 +1572,31 @@ Item {
         target: channelOS
         function onBroadcasterChanged() {
             broadcasterRoot.snapshot = channelOS.broadcasterSnapshot
+        }
+    }
+
+    Connections {
+        target: channelOS
+        ignoreUnknownSignals: true
+        function onChannelMutationCompleted(result) {
+            if (!broadcasterRoot.pendingMutationKind.length) return
+            var kind = broadcasterRoot.pendingMutationKind
+            broadcasterRoot.pendingMutationKind = ""
+            broadcasterRoot.setResult(result)
+            if (!result || !result.ok) return
+            broadcasterRoot.snapshot = channelOS.broadcasterSnapshot
+            broadcasterRoot.editorMode = "list"
+            broadcasterRoot.editingChannelNumber = 0
+            broadcasterRoot.previewData = ({ok: false, items: []})
+            if (kind === "delete") {
+                broadcasterRoot.selectedChannelIndex = Math.max(0, Math.min(broadcasterRoot.pendingMutationIndex, broadcasterRoot.channels.length - 1))
+            } else {
+                for (var index = 0; index < broadcasterRoot.channels.length; ++index) {
+                    if (Number(broadcasterRoot.channels[index].channelNumber) === Number(result.channelNumber))
+                        broadcasterRoot.selectedChannelIndex = index
+                }
+            }
+            broadcasterFocus.forceActiveFocus()
         }
     }
 

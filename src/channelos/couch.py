@@ -33,17 +33,22 @@ def _open_runtimes(
     paths: list[Path] | tuple[Path, ...],
     library: MediaLibrary,
     store: RuntimeStore,
+    *,
+    definitions=None,
 ) -> tuple[ChannelRuntime, ...]:
+    from .resolve import MediaResolutionIndex
+    index = MediaResolutionIndex(library) if len(paths) > 1 else None
+    availability = {}
     opened: list[ChannelRuntime] = []
     for path in paths:
         try:
-            definition = load_channel(path)
+            definition = definitions[path] if definitions is not None else load_channel(path)
         except ChannelValidationError as exc:
             raise CouchUIError(str(exc)) from exc
         try:
             from .media_resilience import _resolved_runtime
             runtime = _resolved_runtime(definition, library, store,
-                persistent_when_complete=True, verify_files=True)
+                persistent_when_complete=True, verify_files=True, index=index, availability=availability)
             if runtime is not None:
                 opened.append(runtime)
             else:
@@ -79,7 +84,8 @@ def run_couch(
     except (BroadcasterError, ChannelValidationError) as exc:
         raise CouchUIError(str(exc)) from exc
 
-    runtimes = _open_runtimes(broadcaster.paths, library, store)
+    runtimes = _open_runtimes(broadcaster.paths, library, store,
+                            definitions={record.path: record.definition for record in broadcaster.records})
     logger.info("Couch runtime ready channels=%d", len(runtimes))
     service = GuideService(runtimes, definitions=tuple(record.definition for record in broadcaster.records))
     television = TelevisionRuntime(runtimes, store)
@@ -92,6 +98,7 @@ def run_couch(
         from .media_resilience import install_media_resilience_support
         from .vlc_probe import install_packaged_media_scan_support
         from .portable_qt import install_portable_support
+        from .channel_jobs import install_channel_operations_support
     except (ImportError, OSError) as exc:
         raise CouchUIError(
             "ChannelOS couch UI requires the optional Qt package. "
@@ -102,6 +109,7 @@ def run_couch(
     install_packaged_media_scan_support(broadcaster_qt)
     install_media_resilience_support(broadcaster_qt)
     install_portable_support(broadcaster_qt)
+    install_channel_operations_support(broadcaster_qt)
     install_interaction_support(broadcaster_qt)
     return run_qt(
         service,

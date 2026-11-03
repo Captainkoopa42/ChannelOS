@@ -170,13 +170,20 @@ def _resolved_runtime(
     *,
     persistent_when_complete: bool = False,
     verify_files: bool = False,
+    index=None,
+    availability=None,
 ) -> ChannelRuntime | None:
     """Resolve one channel against media that is usable for this launch."""
 
-    resolved = resolve_channel(definition, library, allow_offline_ads=True)
+    resolved = resolve_channel(definition, library, allow_offline_ads=True, index=index)
     available = _transient_available_media(resolved, library)
     if verify_files:
-        available = tuple(item for item in available if _path_is_usable(item.location.path))
+        usable = availability if availability is not None else {}
+        def check(path):
+            if path not in usable:
+                usable[path] = _path_is_usable(path)
+            return usable[path]
+        available = tuple(item for item in available if check(item.location.path))
     if not available:
         return None
 

@@ -116,6 +116,8 @@ Item {
     property var draftData: ({ media: [], sources: [], calendarBlocks: [] })
     property var mediaLibrary: draftData.media || []
     property var mediaByAssetId: ({})
+    property var mediaBySourcePrefix: ({})
+    readonly property var visibleScheduleRows: visibleBlocks()
     property var expandedMediaSources: ({})
     readonly property var mediaBinGroups: selectedSourceMedia()
     readonly property int mediaBinAssetCount: selectedMediaCount()
@@ -129,12 +131,14 @@ Item {
     property int editingChannelNumber: 0
     property int selectedBlockIndex: -1
     property bool dirty: false
+    property bool pendingChannelSave: false
     property bool loading: false
     property string pendingExitDestination: ""
     property string feedbackMessage: ""
     property bool feedbackIsError: false
     property bool autoFillApplying: false
     property var pendingAutoFillBlocks: []
+    property var pendingAutoFillDayIndex: null
     property int pendingAutoFillIndex: 0
     property string pendingAutoFillMessage: ""
     property string pendingScheduleOperation: ""
@@ -296,11 +300,25 @@ Item {
 
     function rebuildMediaIndex() {
         var byAssetId = ({})
+        var byPrefix = ({})
         for (var index = 0; index < mediaLibrary.length; ++index) {
             var item = mediaLibrary[index]
             byAssetId[String(item.assetId || "")] = item
+            var locations = mediaLocations(item)
+            for (var copyIndex = 0; copyIndex < locations.length; ++copyIndex) {
+                var location = locations[copyIndex]
+                var parts = sourcePathKey(location.path).split("/")
+                var entry = {media: item, path: location.path, sourceRoot: location.sourceRoot}
+                for (var depth = 1; depth <= parts.length; ++depth) {
+                    var key = parts.slice(0, depth).join("/")
+                    if (!key.length) continue
+                    if (!byPrefix[key]) byPrefix[key] = []
+                    byPrefix[key].push(entry)
+                }
+            }
         }
         mediaByAssetId = byAssetId
+        mediaBySourcePrefix = byPrefix
     }
 
     function appendSource(sourceRoot, expand) {
@@ -446,6 +464,8 @@ Item {
                 modelIndex: index,
                 assetId: block.assetId,
                 title: block.title,
+                path: block.path,
+                sourceRoot: block.sourceRoot,
                 startUtc: block.startUtc,
                 endUtc: block.endUtc,
                 durationSeconds: block.durationSeconds
@@ -466,8 +486,8 @@ Item {
                 ? Number(hostWindow.studioChannelNumber || 0)
                 : 0
         var result = channelOS.loadChannelStudio(target)
-        loading = false
         if (!result || !result.ok) {
+            loading = false
             feedbackMessage = result && result.message
                     ? String(result.message)
                     : "Channel Studio could not load this channel."
@@ -492,8 +512,16 @@ Item {
         expandedMediaSources = ({})
         mediaSearch.text = ""
         var sources = draftData.sources || []
-        for (var sourceIndex = 0; sourceIndex < sources.length; ++sourceIndex)
-            appendSource(sources[sourceIndex])
+        var sourceRows = []
+        var seenSources = ({})
+        for (var sourceIndex = 0; sourceIndex < sources.length; ++sourceIndex) {
+            var key = sourcePathKey(sources[sourceIndex])
+            if (key.length && !seenSources[key]) {
+                seenSources[key] = true
+                sourceRows.push({path: String(sources[sourceIndex])})
+            }
+        }
+        if (sourceRows.length) draftSources.append(sourceRows)
 
         calendarBlocks.clear()
         var blocks = draftData.calendarBlocks || []
@@ -514,6 +542,7 @@ Item {
                 : new Date()
         selectedDayKey = dayKey(anchorDate)
         dirty = false
+        loading = false
         feedbackMessage = editingChannelNumber > 0
                 ? (calendarBlocks.count > 0
                    ? "Calendar draft loaded. Live television is unchanged until Apply."
@@ -544,14 +573,7 @@ Item {
     }
 
     function selectedSourceMedia() {
-        var groups = []
-        for (var sourceIndex = 0; sourceIndex < draftSources.count; ++sourceIndex) {
-            var path = String(draftSources.get(sourceIndex).path)
-            var parts = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/")
-            groups.push({path: path, name: parts[parts.length - 1] || path, media: []})
-        }
-        // Match the runtime's separate advertising scope, including disabled
-        // policies and alternate copies of a canonical asset.
+        if (loading) return []
         var adRoots = adSettings.selectedSources.slice()
         var adIds = ({})
         adSettings.selectedIds.forEach(function(value) {
@@ -559,33 +581,29 @@ Item {
         })
         for (var placementIndex = 0; adSettings.setupMode === "advanced" && placementIndex < adSettings.adPlacementSnapshots.length; ++placementIndex) {
             var policy = adSettings.adPlacementSnapshots[placementIndex].policy || ({})
-            var policyAssets = policy.asset_ids || []
-            var policySources = policy.sources || []
-            policyAssets.forEach(function(assetId) { adIds[assetId] = true })
-            policySources.forEach(function(source) { adRoots.push(String(source.path || "")) })
+            ;(policy.asset_ids || []).forEach(function(assetId) { adIds[assetId] = true })
+            ;(policy.sources || []).forEach(function(source) { adRoots.push(String(source.path || "")) })
         }
-        for (var mediaIndex = 0; mediaIndex < mediaLibrary.length; ++mediaIndex) {
-            var item = mediaLibrary[mediaIndex]
-            var locations = mediaLocations(item)
-            var advertising = Boolean(adIds[String(item.assetId || "")])
-            for (var locationIndex = 0; !advertising && locationIndex < locations.length; ++locationIndex) {
-                for (var adIndex = 0; adIndex < adRoots.length; ++adIndex) {
-                    if (sourceContainsMedia(locations[locationIndex].path, adRoots[adIndex])) {
-                        advertising = true
-                        break
-                    }
-                }
+        for (var adIndex = 0; adIndex < adRoots.length; ++adIndex) {
+            var ads = mediaBySourcePrefix[sourcePathKey(adRoots[adIndex])] || []
+            for (var clip = 0; clip < ads.length; ++clip)
+                adIds[String(ads[clip].media.assetId)] = true
+        }
+        var groups = []
+        for (var sourceIndex = 0; sourceIndex < draftSources.count; ++sourceIndex) {
+            var path = String(draftSources.get(sourceIndex).path)
+            var parts = path.replace(/\\/g, "/").replace(/\/+$/, "").split("/")
+            var group = {path: path, name: parts[parts.length - 1] || path, media: []}
+            var candidates = mediaBySourcePrefix[sourcePathKey(path)] || []
+            var seen = ({})
+            for (var mediaIndex = 0; mediaIndex < candidates.length; ++mediaIndex) {
+                var entry = candidates[mediaIndex]
+                var id = String(entry.media.assetId)
+                if (adIds[id] || seen[id]) continue
+                seen[id] = true
+                group.media.push(Object.assign({}, entry.media, {path: entry.path, sourceRoot: entry.sourceRoot}))
             }
-            if (advertising)
-                continue
-            for (var groupIndex = 0; groupIndex < groups.length; ++groupIndex) {
-                for (var copyIndex = 0; copyIndex < locations.length; ++copyIndex) {
-                    if (sourceContainsMedia(locations[copyIndex].path, groups[groupIndex].path)) {
-                        groups[groupIndex].media.push(Object.assign({}, item, locations[copyIndex]))
-                        break
-                    }
-                }
-            }
+            groups.push(group)
         }
         return groups
     }
@@ -900,26 +918,27 @@ Item {
     }
 
     function visibleBlocks() {
-        var startMs = visibleStart().getTime()
+        if (loading || autoFillApplying) return []
+        var start = visibleStart()
         var endMs = visibleEnd().getTime()
         var result = []
-        for (var index = 0; index < calendarBlocks.count; ++index) {
-            var block = calendarBlocks.get(index)
-            var blockMs = new Date(block.startUtc).getTime()
-            if (blockMs >= startMs && blockMs < endMs) {
-                result.push({
-                    modelIndex: index,
-                    assetId: block.assetId,
-                    title: block.title,
-                    path: block.path,
-                    sourceRoot: block.sourceRoot,
-                    durationSeconds: block.durationSeconds,
-                    startUtc: block.startUtc,
-                    endUtc: block.endUtc
-                })
-            }
+        for (var day = new Date(start); day.getTime() < endMs; day = addDays(day, 1)) {
+            var rows = blocksByDay[dayKey(day)] || []
+            for (var index = 0; index < rows.length; ++index)
+                result.push(rows[index])
         }
         return result
+    }
+
+    function visibleDayBlocks() {
+        if (viewMode !== "day" || autoFillApplying || loading) return []
+        var width = Math.max(1, dayTimeline.contentWidth)
+        var firstMinute = (dayTimeline.contentX - 200) / width * 1440
+        var lastMinute = (dayTimeline.contentX + dayTimeline.width + 200) / width * 1440
+        return dayBlocks().filter(function(block) {
+            return minuteOfDay(block.startUtc) <= lastMinute
+                    && minuteOfDay(block.startUtc) + Number(block.durationSeconds || 0) / 60 >= firstMinute
+        })
     }
 
     function weekProgramCount(value) {
@@ -1267,6 +1286,22 @@ Item {
     function acceptAutoFillResult(result) {
         if (!result || !result.ok)
             return
+        if (result.preparedRows && result.preparedDays) {
+            if (result.preparedRows.length > maximumCalendarBlocks) {
+                feedbackMessage = "This result would exceed the 10,000-block calendar limit."
+                feedbackIsError = true
+                return
+            }
+            pendingAutoFillBlocks = result.preparedRows
+            pendingAutoFillDayIndex = result.preparedDays
+            pendingAutoFillIndex = 0
+            pendingAutoFillMessage = String(result.message || "Auto Fill ready")
+            autoFillApplying = true
+            pendingScheduleOperation = "Adding prepared blocks to the detached draft…"
+            calendarBlocks.clear()
+            Qt.callLater(studioRoot.applyAutoFillBatch)
+            return
+        }
         var startMs = new Date(result.startUtc).getTime()
         var endMs = new Date(result.endUtc).getTime()
         if (!isFinite(startMs) || !isFinite(endMs) || endMs <= startMs) {
@@ -1367,8 +1402,13 @@ Item {
 
         pendingAutoFillBlocks = []
         pendingAutoFillIndex = 0
+        if (pendingAutoFillDayIndex !== null) {
+            blocksByDay = pendingAutoFillDayIndex
+            pendingAutoFillDayIndex = null
+        } else {
+            rebuildBlockIndex()
+        }
         autoFillApplying = false
-        rebuildBlockIndex()
         selectedBlockIndex = calendarBlocks.count ? 0 : -1
         dirty = true
         feedbackMessage = pendingAutoFillMessage
@@ -1381,23 +1421,31 @@ Item {
     }
 
     function clearVisibleRange() {
-        if (autoFillBusy)
-            return
+        if (autoFillBusy) return
         var startMs = visibleStart().getTime()
         var endMs = visibleEnd().getTime()
+        var survivors = []
         var removed = 0
-        for (var index = calendarBlocks.count - 1; index >= 0; --index) {
-            var existing = calendarBlocks.get(index)
-            var blockMs = new Date(existing.startUtc).getTime()
-            var blockEndMs = new Date(existing.endUtc).getTime()
-            if (blockMs < endMs && blockEndMs > startMs) {
-                calendarBlocks.remove(index)
+        for (var index = 0; index < calendarBlocks.count; ++index) {
+            var block = calendarBlocks.get(index)
+            var blockMs = new Date(block.startUtc).getTime()
+            if (blockMs < endMs && new Date(block.endUtc).getTime() > startMs) {
                 ++removed
+                continue
             }
+            var survivor = blockObject(block)
+            if (blockMs >= startMs) {
+                survivor.adPlanJson = "null"
+                survivor.endUtc = new Date(blockMs + Number(survivor.durationSeconds || 0) * 1000).toISOString()
+            }
+            survivors.push(survivor)
         }
-        if (removed > 0) invalidateReservationsFrom(startMs)
-        rebuildBlockIndex()
-        dirty = dirty || removed > 0
+        if (removed > 0) {
+            calendarBlocks.clear()
+            if (survivors.length) calendarBlocks.append(survivors)
+            rebuildBlockIndex()
+            dirty = true
+        }
         selectedBlockIndex = -1
         feedbackMessage = removed > 0
                 ? "Cleared " + removed + " fixed program blocks. The channel filler will cover those gaps."
@@ -1414,6 +1462,14 @@ Item {
         if (calendarBlocks.count === 0) {
             feedbackMessage = "Add or Auto Fill at least one program before applying a calendar channel."
             feedbackIsError = true
+            return
+        }
+        if (channelOS && typeof channelOS.startChannelMutation === "function") {
+            var queued = channelOS.startChannelMutation(editingChannelNumber > 0 ? "update" : "create",
+                                                       editingChannelNumber, editorObject())
+            pendingChannelSave = Boolean(queued && queued.ok)
+            feedbackMessage = String(queued && queued.message || "Channel preparation could not start.")
+            feedbackIsError = !pendingChannelSave
             return
         }
         var result = editingChannelNumber > 0
@@ -2136,7 +2192,8 @@ Item {
                                         Layout.fillHeight: true
                                         clip: true
                                         spacing: 5
-                                        model: studioRoot.blocksForDay(weekDay.columnDate)
+                                        model: studioRoot.viewMode === "week" && !studioRoot.autoFillApplying
+                                               ? studioRoot.blocksForDay(weekDay.columnDate) : []
 
                                         delegate: Rectangle {
                                             id: dayProgram
@@ -2196,7 +2253,7 @@ Item {
                         visible: studioRoot.viewMode === "month"
 
                         Repeater {
-                            model: 42
+                            model: studioRoot.viewMode === "month" ? 42 : 0
 
                             Rectangle {
                                 id: monthDay
@@ -2444,7 +2501,7 @@ Item {
                                     }
 
                                     Repeater {
-                                        model: studioRoot.dayBlocks()
+                                        model: studioRoot.visibleDayBlocks()
 
                                         delegate: Rectangle {
                                             id: dayBlock
@@ -2607,7 +2664,7 @@ Item {
                         font.pixelSize: 11
                     }
                     Text {
-                        text: studioRoot.visibleBlocks().length + " fixed blocks in range"
+                        text: studioRoot.visibleScheduleRows.length + " fixed blocks in range"
                         color: studioRoot.accentBright
                         font.pixelSize: 11
                     }
@@ -2647,7 +2704,7 @@ Item {
                     orientation: ListView.Horizontal
                     spacing: 8
                     clip: true
-                    model: studioRoot.visibleBlocks()
+                    model: studioRoot.visibleScheduleRows
 
                     delegate: Rectangle {
                         id: timelineCard
@@ -3230,6 +3287,22 @@ Item {
         }
         onBinRequested: { studioRoot.activeBin = "ads"; studioRoot.dayMediaBinVisible = true }
         previewProvider: function(settings) { return channelOS.previewChannel(Object.assign(studioRoot.editorObject(), settings)) }
+    }
+
+    Connections {
+        target: channelOS
+        ignoreUnknownSignals: true
+        function onChannelMutationCompleted(result) {
+            if (!studioRoot.pendingChannelSave) return
+            studioRoot.pendingChannelSave = false
+            studioRoot.feedbackMessage = String(result && result.message || "Channel operation failed.")
+            studioRoot.feedbackIsError = !(result && result.ok)
+            if (result && result.ok) {
+                studioRoot.editingChannelNumber = Number(result.channelNumber)
+                if (studioRoot.hostWindow) studioRoot.hostWindow.studioChannelNumber = studioRoot.editingChannelNumber
+                studioRoot.dirty = false
+            }
+        }
     }
 
     ListModel { id: draftSources }

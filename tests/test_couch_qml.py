@@ -496,3 +496,40 @@ def test_incremental_guide_publication_retains_selected_occurrence():
     assert window.property('selectedProgram') == 2
     assert window.property('guideSelectionScheduleId') == '2'
     window.close()
+
+
+def test_incremental_guide_loads_scrolled_viewport_without_jumping_to_selection():
+    class Controller(FakeChannelOS):
+        def __init__(self):
+            super().__init__()
+            self.requests = []
+        @Slot(int, int)
+        def requestGuideRows(self, first, last):
+            self.requests.append((first, last))
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = Controller()
+    start = controller._snapshot['horizonStartMs']
+    controller._snapshot['rows'] = [
+        {'channelNumber': i+1, 'displayNumber': str(i+1), 'channelName': f'Station {i+1}',
+         'programs': [{'scheduleId': str(i), 'title':'A show', 'startMs':start,
+                       'endMs':start+60000,'isCurrent':True}], 'displaySegments': []}
+        for i in range(50)]
+    engine = QQmlApplicationEngine()
+    video = QWindow()
+    engine.rootContext().setContextProperty('channelOS', controller)
+    engine.rootContext().setContextProperty('channelOSVideoWindow', video)
+    engine.load(QUrl.fromLocalFile(str(Path(channelos.__file__).parent / 'qml' / 'Main.qml')))
+    window = engine.rootObjects()[0]
+    window.setProperty('screen', 'guide')
+    window.show()
+    for _ in range(5): app.processEvents()
+    view = window.findChild(QObject, 'channelGuideList')
+    view.setProperty('contentY', 76 * 20)
+    for _ in range(5): app.processEvents()
+    assert any(first <= 20 <= last for first, last in controller.requests)
+    controller._snapshot = {**controller._snapshot, 'rows': [dict(row) for row in controller._snapshot['rows']]}
+    controller.snapshotChanged.emit()
+    for _ in range(5): app.processEvents()
+    assert view.property('contentY') == pytest.approx(76 * 20)
+    assert window.property('selectedRow') == 0
+    window.close()

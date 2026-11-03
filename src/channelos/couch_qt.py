@@ -137,7 +137,7 @@ class CouchController(QObject):
         self._library_media: list[IndexedMedia] = []
         self._library_snapshot = self._build_library_snapshot()
         self._on_demand_view: dict[str, object] = {"active": False}
-        self._snapshot = build_couch_snapshot(service)
+        self._snapshot = self._build_guide_snapshot()
         self._playback: dict[str, object] = {"active": False}
         self._home_television = self._build_home_television_view()
         self._surface_ready = False
@@ -169,88 +169,18 @@ class CouchController(QObject):
             )
         self._actions.set_audio_output_device(selected_audio_device or None)
         self._on_demand.set_audio_output_device(selected_audio_device or None)
-        cache_stats = self._artwork_cache.stats()
-        self._artwork_cache_bytes = cache_stats.size_bytes
-        self._artwork_cache_files = cache_stats.file_count
+        cache_stats = None if getattr(self, '_defer_initial_views', False) else self._artwork_cache.stats()
+        self._artwork_cache_bytes = 0 if cache_stats is None else cache_stats.size_bytes
+        self._artwork_cache_files = 0 if cache_stats is None else cache_stats.file_count
         self._volume = self._settings.volume_percent
         self._muted = self._settings.muted
 
     def _build_library_snapshot(self) -> dict[str, object]:
-        online = self._library.list_online_media()
-        unique: list[IndexedMedia] = []
-        seen_assets: set[str] = set()
-
-        for media in online:
-            if media.asset.asset_id in seen_assets:
-                continue
-            seen_assets.add(media.asset.asset_id)
-            unique.append(media)
-
-        self._library_media = unique
-
-        sources = {
-            str(media.location.source_root)
-            for media in online
-        }
-
-        watches = {
-            watch.asset_id: watch
-            for watch in self._runtime_store.list_on_demand_watch()
-        }
-
-        items: list[dict[str, object]] = []
-        for media in unique:
-            path = media.location.path
-            watch = watches.get(media.asset.asset_id)
-            container = (
-                media.asset.container_format
-                or path.suffix.lstrip(".")
-                or "media"
-            )
-
-            items.append(
-                {
-                    "assetId": media.asset.asset_id,
-                    "title": path.stem,
-                    "fileName": path.name,
-                    "path": str(path),
-                    "sourceRoot": str(media.location.source_root),
-                    "sourceName": (
-                        media.location.source_root.name
-                        or str(media.location.source_root)
-                    ),
-                    "durationSeconds": float(
-                        media.asset.duration_seconds or 0.0
-                    ),
-                    "sizeBytes": int(media.asset.size_bytes),
-                    "containerFormat": str(container).upper(),
-                    "artworkUrl": self._artwork_urls.get(
-                        media.asset.asset_id,
-                        "",
-                    ),
-                    "continueWatching": bool(
-                        watch is not None and watch.resumable
-                    ),
-                    "watchPositionSeconds": float(
-                        0.0 if watch is None else watch.position_seconds
-                    ),
-                    "watchProgress": float(
-                        0.0 if watch is None else watch.progress_fraction
-                    ),
-                    "lastWatchedAt": (
-                        ""
-                        if watch is None
-                        else watch.last_watched_at.isoformat()
-                    ),
-                }
-            )
-
-        return {
-            "count": len(items),
-            "locationCount": len(online),
-            "sourceCount": len(sources),
-            "items": items,
-        }
+        if getattr(self, '_defer_initial_views', False):
+            return {'count': 0, 'locationCount': 0, 'sourceCount': 0, 'items': [], 'sources': []}
+        from .library_view import build_library_view
+        snapshot, self._library_media = build_library_view(self._library, self._runtime_store, self._artwork_urls)
+        return snapshot
 
     @staticmethod
     def _on_demand_state_view(
@@ -394,10 +324,13 @@ class CouchController(QObject):
 
     @Slot()
     def refresh(self) -> None:
-        self._snapshot = build_couch_snapshot(self._service)
+        self._snapshot = self._build_guide_snapshot()
         self._home_television = self._build_home_television_view()
         self.snapshotChanged.emit()
         self.homeTelevisionChanged.emit()
+
+    def _build_guide_snapshot(self):
+        return build_couch_snapshot(self._service)
 
     @Slot()
     def refreshLibrary(self) -> None:
@@ -886,6 +819,8 @@ class CouchController(QObject):
         channel_number: int,
         approximate_start_ms: float,
     ) -> dict[str, object]:
+        if schedule_id.startswith('channelos:pending:'):
+            return {'ok': False, 'message': 'This Guide row is still loading. Try again in a moment.'}
         if any(definition.channel == channel_number for definition in self._service.unavailable_channels):
             return {"ok": False, "message": "This channel's media is unavailable. Reconnect or scan its source in Library."}
         if not self._surface_ready:

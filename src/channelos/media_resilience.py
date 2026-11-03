@@ -415,7 +415,7 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
 
             self._service = service
             self._actions = actions
-            self._snapshot = build_couch_snapshot(service)
+            self._snapshot = self._build_guide_snapshot()
             self._home_television = self._build_home_television_view()
             self._broadcaster_snapshot = self._build_broadcaster_snapshot()
             self.snapshotChanged.emit()

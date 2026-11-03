@@ -76,6 +76,11 @@ class ChannelMutationWorker(QObject):
         self.state_backup = channel_snapshot(self.service.runtime_database_path,
                                             self.temporary / 'before.db', self.number)
         self._checkpoint('committing')
+        previous = self.service._records.get(self.number)
+        if previous is not None and previous.path.read_text(encoding='utf-8') != self.old_text:
+            raise ChannelConflictError('The channel changed during preparation. Refresh it before saving.')
+        if self.kind == 'create' and self.service._managed_path_for(definition).exists():
+            raise ChannelConflictError('The channel file was created during preparation. Refresh before retrying.')
 
     def _rollback(self):
         if self.result is None or not hasattr(self, 'state_backup'):
@@ -180,6 +185,8 @@ def install_channel_operations_support(module):
 
         @Slot(str, int, 'QVariantMap', result='QVariantMap')
         def startChannelMutation(self, kind, number, editor):
+            if getattr(self, 'startupState', {}).get('active'):
+                return {'ok': False, 'message': 'Your setup is still loading. Try again in a moment.'}
             if self._mutation_thread is not None:
                 return {'ok': False, 'message': 'Wait for the current channel operation to finish.'}
             if kind not in {'create', 'update', 'delete', 'add_library_item'}:
@@ -246,6 +253,7 @@ def install_channel_operations_support(module):
 
         @Slot(object)
         def _mutation_ready(self, payload):
+            runtime = None
             try:
                 runtime = adopt_runtime(payload['prepared'], self._runtime_store.database_path)
                 self._broadcaster._records = payload['records']
@@ -260,6 +268,8 @@ def install_channel_operations_support(module):
                 self._mutation_state(active=False, phase='complete', cancellable=False, message=message)
                 self.channelMutationCompleted.emit(response)
             except Exception as exc:
+                if runtime is not None and self._actions.runtime.channels.get(runtime.channel_number) is not runtime and runtime.break_store is not None:
+                    runtime.break_store.close()
                 payload['error'] = str(exc)
                 self._mutation_state(phase='recovery', cancellable=False, message='Restoring the previous channel…')
             finally:

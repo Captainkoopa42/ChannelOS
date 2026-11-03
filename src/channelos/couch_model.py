@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from .guide import GuideProgram, GuideService
+from .guide import GuideHorizon, GuideProgram, GuideService
 from .runtime import require_aware_utc, utc_now
 
 
@@ -187,6 +187,8 @@ def build_couch_snapshot(
     *,
     at: datetime | None = None,
     guide_hours: float = DEFAULT_GUIDE_HOURS,
+    prepared_rows=None,
+    pending_numbers=(),
 ) -> dict[str, object]:
     """Project the authoritative Guide into a QML-friendly couch UI snapshot."""
     if guide_hours <= 0:
@@ -195,7 +197,8 @@ def build_couch_snapshot(
     reference = require_aware_utc(at or utc_now())
     start = _floor_to_half_hour(reference)
     end = start + timedelta(hours=float(guide_hours))
-    horizon = service.horizon(start, end, generated_at=reference)
+    horizon = (service.horizon(start, end, generated_at=reference) if prepared_rows is None
+               else GuideHorizon(start, end, reference, tuple(prepared_rows)))
 
     rows: list[dict[str, object]] = []
     for row in horizon.rows:
@@ -212,7 +215,25 @@ def build_couch_snapshot(
             }
         )
 
+    available = {row.channel_number for row in horizon.rows}
+    pending = set(pending_numbers)
+    if prepared_rows is not None:
+        pending.update(set(service.channel_numbers) - available)
+    for number in sorted(pending - available):
+        definition = next((item for item in service.definitions if item.channel == number), None)
+        if definition is None:
+            continue
+        row = _unassigned_default_row(start, end)
+        row.update(channelNumber=number, displayNumber=definition.display_number,
+                   channelName=definition.name, isUnassigned=False, isPending=True)
+        for item in (*row['programs'], *row['displaySegments']):
+            item.update(channelNumber=number, title='LOADING GUIDE…', isUnassigned=False, isPending=True)
+        row['programs'][0]['scheduleId'] = f'channelos:pending:{number}'
+        rows.append(row)
+
     for definition in service.unavailable_channels:
+        if definition.channel in pending:
+            continue
         row = _unassigned_default_row(start, end)
         row.update(channelNumber=definition.channel, displayNumber=definition.display_number,
                    channelName=definition.name, isUnassigned=False, isUnavailable=True)

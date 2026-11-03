@@ -41,6 +41,9 @@ jobs:
       - name: Verify native Qt and bundled VLC ad playback
         run: python tools/windows/smoke_ad_playback.py
 
+      - name: Verify staged startup, saved playback, and lazy screens
+        run: python tools/windows/smoke_startup.py
+
       - name: Verify packaged portable setup relocation and startup
         run: python tools/windows/smoke_portable_setup.py
 

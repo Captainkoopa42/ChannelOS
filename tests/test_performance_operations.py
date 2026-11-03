@@ -220,3 +220,105 @@ def test_cancelled_preparation_keeps_ui_running_and_writes_no_channel(tmp_path, 
     assert 9 not in controller._broadcaster.channel_numbers
     assert not (controller._broadcaster.managed_directory / 'channel-0009.yaml').exists()
     controller.stop()
+
+
+def incremental_controller_type():
+    from types import SimpleNamespace
+    from channelos.guide_projection import install_incremental_guide_support
+    module = SimpleNamespace(BroadcasterCouchController=managed_controller_type())
+    install_incremental_guide_support(module)
+    return module.BroadcasterCouchController
+
+
+def test_guide_is_lazy_and_discards_replaced_runtime_rows(tmp_path, monkeypatch):
+    import time
+    original = GuideService.iter_programs
+    projected = []
+    def counted(runtime, *args):
+        projected.append(runtime)
+        yield from original(runtime, *args)
+    monkeypatch.setattr(GuideService, 'iter_programs', staticmethod(counted))
+    app, controller, root = controller_fixture(tmp_path, incremental_controller_type())
+    assert not projected, 'Home must not project a full three-hour lineup'
+    rows = controller.snapshot['rows']
+    index = next(i for i, row in enumerate(rows) if row['channelNumber'] == 7)
+    controller.requestGuideRows(index, index)
+    deadline = time.monotonic() + 5
+    while controller.snapshot['rows'][index].get('isPending') and time.monotonic() < deadline:
+        app.processEvents()
+    assert not controller.snapshot['rows'][index].get('isPending')
+    assert {runtime.channel_number for runtime in projected} == {7}
+    old = projected[-1]
+    assert controller.updateChannel(7, editor(7, root, name='New seven'))['ok']
+    assert controller.snapshot['rows'][index]['isPending']
+    deadline = time.monotonic() + 5
+    while controller.snapshot['rows'][index].get('isPending') and time.monotonic() < deadline:
+        app.processEvents()
+    assert projected[-1] is not old
+    assert controller.snapshot['rows'][index]['channelName'] == 'New seven'
+    controller.requestGuideRows(-1, -1)
+    controller.stop()
+
+
+def test_startup_prepares_saved_station_before_library_and_hands_off_sql(tmp_path):
+    import threading
+    from channelos.startup_qt import DataWorker
+    from channelos.runtime_jobs import adopt_runtime
+    library, root = make_library(tmp_path)
+    service = BroadcasterService((), tmp_path / 'channels', library)
+    service.create(editor(7, root))
+    service.create(editor(8, root))
+    store = RuntimeStore(service.runtime_database_path)
+    runtimes = _open_runtimes(service.paths, library, store)
+    television = TelevisionRuntime(runtimes, store)
+    television.tune(7)
+    television.tune(8)
+    for runtime in runtimes:
+        if runtime.break_store:
+            runtime.break_store.close()
+    worker = DataWorker(library, service, store.database_path, tmp_path / 'artwork', threading.Event())
+    events, errors = [], []
+    worker.first.connect(lambda value: events.append(('first', value)))
+    worker.metadata.connect(lambda value: events.append(('metadata', value)))
+    worker.completed.connect(lambda value: events.append(('rest', value)))
+    worker.failed.connect(errors.append)
+    thread = threading.Thread(target=worker.run)
+    thread.start()
+    thread.join(20)
+    # Signals from the foreign thread are delivered by Qt's event loop.
+    from PySide6.QtGui import QGuiApplication
+    app = QGuiApplication.instance() or QGuiApplication([])
+    app.processEvents()
+    assert not thread.is_alive() and not errors
+    assert [event[0] for event in events] == ['first', 'metadata', 'rest']
+    assert events[0][1].runtime.channel_number == 8
+    assert [item.runtime.channel_number for item in events[2][1]] == [7]
+    for prepared in [events[0][1], *events[2][1]]:
+        runtime = adopt_runtime(prepared, store.database_path)
+        GuideService((runtime,)).now_next(runtime.channel_number)
+        if runtime.break_store:
+            runtime.break_store.close()
+
+
+def test_failed_async_publication_rolls_back_definition_and_target_state(tmp_path, monkeypatch):
+    app, controller, root = controller_fixture(tmp_path, managed_controller_type())
+    previous = controller._broadcaster._records[8]
+    text = previous.path.read_text()
+    original = controller._reload_lineup
+    failed = False
+    def reject_once(**kwargs):
+        nonlocal failed
+        if kwargs.get('prepared') is not None and not failed:
+            failed = True
+            raise RuntimeError('Publication interrupted for test')
+        return original(**kwargs)
+    monkeypatch.setattr(controller, '_reload_lineup', reject_once)
+    responses = []
+    controller.channelMutationCompleted.connect(responses.append)
+    assert controller.startChannelMutation('update', 8, editor(8, root, name='Should roll back'))['pending']
+    finish_job(app, controller)
+    assert responses and not responses[-1]['ok']
+    assert previous.path.read_text() == text
+    assert controller._broadcaster._records[8].definition.name == previous.definition.name
+    assert controller._actions.runtime.channels[8].channel.definition.name == previous.definition.name
+    controller.stop()

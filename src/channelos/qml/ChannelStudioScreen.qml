@@ -495,7 +495,9 @@ Item {
             return
         }
 
-        draftData = result.draft || ({})
+        // Materialize once. Repeated property access through QVariant wrappers
+        // is expensive for large media catalogs inside the indexing loops.
+        draftData = JSON.parse(JSON.stringify(result.draft || ({})))
         mediaLibrary = draftData.media || []
         rebuildMediaIndex()
         groupsLibrary = draftData.groups || []
@@ -1286,14 +1288,15 @@ Item {
     function acceptAutoFillResult(result) {
         if (!result || !result.ok)
             return
-        if (result.preparedRows && result.preparedDays) {
-            if (result.preparedRows.length > maximumCalendarBlocks) {
+        var prepared = result.publicationJson ? JSON.parse(result.publicationJson) : result
+        if (prepared.preparedRows && prepared.preparedDays) {
+            if (prepared.preparedRows.length > maximumCalendarBlocks) {
                 feedbackMessage = "This result would exceed the 10,000-block calendar limit."
                 feedbackIsError = true
                 return
             }
-            pendingAutoFillBlocks = result.preparedRows
-            pendingAutoFillDayIndex = result.preparedDays
+            pendingAutoFillBlocks = prepared.preparedRows
+            pendingAutoFillDayIndex = prepared.preparedDays
             pendingAutoFillIndex = 0
             pendingAutoFillMessage = String(result.message || "Auto Fill ready")
             autoFillApplying = true

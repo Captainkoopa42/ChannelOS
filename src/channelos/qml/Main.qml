@@ -101,6 +101,14 @@ ApplicationWindow {
     property real generatedAtMs: snapshot.generatedAtMs || 0
     property real horizonSpanMs: Math.max(1, horizonEndMs - horizonStartMs)
 
+    function requestVisibleGuideRows() {
+        if (channelOS && typeof channelOS.requestGuideRows === "function")
+            channelOS.requestGuideRows(screen === "guide" ? Math.max(0, selectedRow - 6) : -1,
+                                       screen === "guide" ? selectedRow + 6 : -1)
+    }
+    onScreenChanged: requestVisibleGuideRows()
+    onSelectedRowChanged: requestVisibleGuideRows()
+
     function programsForRow(rowIndex) {
         if (!rows || rowIndex < 0 || rowIndex >= rows.length)
             return []

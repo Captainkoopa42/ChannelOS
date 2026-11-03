@@ -127,6 +127,7 @@ class CouchActions:
             approximate_start - timedelta(seconds=1),
             approximate_start + timedelta(seconds=1),
             generated_at=reference,
+            channel_numbers=(int(channel_number),),
         )
         for row in horizon.rows:
             if row.channel_number != channel_number:

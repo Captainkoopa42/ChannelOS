@@ -60,4 +60,5 @@ def prepare_publication(result, editor, media, groups=()):
             **{name: row[name] for name in ('assetId', 'title', 'path', 'sourceRoot', 'durationSeconds', 'startUtc', 'endUtc')},
             'modelIndex': len(rows) - 1,
         })
-    return {**result, 'preparedRows': rows, 'preparedDays': days}
+    return {**result, 'preparedRows': rows, 'preparedDays': days,
+            'publicationJson': json.dumps({'preparedRows': rows, 'preparedDays': days}, separators=(',', ':'))}

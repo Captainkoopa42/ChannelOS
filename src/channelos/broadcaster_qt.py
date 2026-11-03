@@ -53,6 +53,9 @@ logger = logging.getLogger(__name__)
 
 def _apply_channelos_control_theme(app: QApplication) -> None:
     # Give Qt Quick Controls the same high-contrast dark palette as ChannelOS.
+    if getattr(app, '_channelos_theme_applied', False):
+        return
+    app._channelos_theme_applied = True
     QQuickStyle.setStyle("Fusion")
 
     palette = QPalette()
@@ -229,6 +232,7 @@ class BroadcasterCouchController(CouchController):
         runtime_store: RuntimeStore,
     ) -> None:
         self._broadcaster = broadcaster
+        self._defer_initial_views = bool(getattr(broadcaster, '_deferred_startup', False))
         super().__init__(service, television, library)
         self._runtime_store = runtime_store
         self._lineup_definitions = {record.channel_number: record.definition for record in broadcaster.records}
@@ -271,35 +275,10 @@ class BroadcasterCouchController(CouchController):
 
     def _build_library_snapshot(self) -> dict[str, object]:
         snapshot = super()._build_library_snapshot()
-        sources: list[dict[str, object]] = []
-        indexed_media = self._library.list_cached_media() if getattr(self, "_broadcaster", None) is not None else []
-        source_records = self._library.list_sources()
-        broadcaster = getattr(self, "_broadcaster", None)
-        dependencies = broadcaster.source_dependency_reports(
-            (source.source_root for source in source_records), indexed_media=indexed_media
-        ) if broadcaster is not None else {}
-        for source in source_records:
-            root = source.source_root
-            sources.append(
-                {
-                    "path": str(root),
-                    "name": root.name or str(root),
-                    "status": source.status,
-                    "available": root.exists(),
-                    "discoveredCount": source.discovered_count,
-                    "locationCount": source.location_count,
-                    "onlineLocationCount": source.online_location_count,
-                    "assetCount": source.asset_count,
-                    "lastScanStartedAt": source.last_scan_started_at or "",
-                    "lastScanFinishedAt": source.last_scan_finished_at or "",
-                    "lastError": source.last_error or "",
-                    "usedByChannels": dependencies.get(str(root), []),
-                }
-            )
-
-        snapshot["sources"] = sources
-        snapshot["sourceCount"] = len(sources)
-        return snapshot
+        if self._defer_initial_views:
+            return snapshot
+        from .library_view import add_source_information
+        return add_source_information(snapshot, self._library, self._broadcaster)
 
     def _build_broadcaster_snapshot(self) -> dict[str, object]:
         snapshot = self._broadcaster.snapshot()
@@ -632,7 +611,7 @@ class BroadcasterCouchController(CouchController):
             old = previous.get(number)
             if old is not None and old is not combined.get(number) and old.break_store is not None:
                 old.break_store.close()
-        self._snapshot = build_couch_snapshot(service)
+        self._snapshot = self._build_guide_snapshot()
         self._home_television = self._build_home_television_view()
         self.snapshotChanged.emit()
         self.homeTelevisionChanged.emit()
@@ -707,7 +686,7 @@ class BroadcasterCouchController(CouchController):
 
         self._service = service
         self._actions = actions
-        self._snapshot = build_couch_snapshot(service)
+        self._snapshot = self._build_guide_snapshot()
         self._home_television = self._build_home_television_view()
         self.snapshotChanged.emit()
         self.homeTelevisionChanged.emit()
@@ -975,7 +954,12 @@ class BroadcasterCouchController(CouchController):
             percent=100,
             message=str(result.get("message", "Studio Auto Fill is ready")),
         )
-        self.studioAutoFillCompleted.emit(dict(result))
+        # Transfer the large prepared model as one string; QML parses it into
+        # native arrays instead of walking thousands of QVariant maps.
+        publication = ({key: value for key, value in result.items()
+                        if key not in {'preparedRows', 'preparedDays'}}
+                       if result.get('publicationJson') else dict(result))
+        self.studioAutoFillCompleted.emit(publication)
 
     @Slot()
     def _on_studio_auto_fill_cancelled(self) -> None:
@@ -1384,52 +1368,48 @@ def run_qt(
     if not app.windowIcon().isNull():
         window.setIcon(app.windowIcon())
 
-    library_item = _attach_overlay(
-        engine,
-        window,
-        "LibraryScreen.qml",
-        z=85,
-    )
-    broadcaster_item = _attach_overlay(
-        engine,
-        window,
-        "BroadcasterScreen.qml",
-        z=90,
-    )
-    studio_item = _attach_overlay(
-        engine,
-        window,
-        "ChannelStudioScreen.qml",
-        z=92,
-    )
-    settings_item = _attach_overlay(
-        engine,
-        window,
-        "SettingsScreen.qml",
-        z=95,
-    )
     portable_notice = _attach_overlay(engine, window, "PortableDriveNotice.qml", z=300)
     operation_notice = _attach_overlay(engine, window, "ChannelOperationOverlay.qml", z=400)
     window._channelos_operation_notice = operation_notice
     window._channelos_portable_notice = portable_notice
-
     key_filter = BroadcasterKeyFilter(controller, window)
-    key_filter.bind_management_overlays(
-        library_item=library_item,
-        broadcaster_item=broadcaster_item,
-        studio_item=studio_item,
-    )
+    overlays = {}
+    factories = {
+        'library': ('LibraryScreen.qml', 85),
+        'broadcaster': ('BroadcasterScreen.qml', 90),
+        'studio': ('ChannelStudioScreen.qml', 92),
+        'settings': ('SettingsScreen.qml', 95),
+    }
+    def ensure_management_screen():
+        screen = str(window.property('screen'))
+        if screen in factories and screen not in overlays:
+            filename, z = factories[screen]
+            try:
+                overlays[screen] = _attach_overlay(engine, window, filename, z=z)
+            except Exception as exc:
+                logger.exception('Management screen could not open')
+                window.setProperty('statusMessage', str(exc))
+                window.setProperty('screen', 'home')
+                return
+        for name, item in overlays.items():
+            item.setVisible(screen == name)
+        key_filter.bind_management_overlays(library_item=overlays.get('library'),
+            broadcaster_item=overlays.get('broadcaster'), studio_item=overlays.get('studio'))
+        for name in factories:
+            setattr(window, '_channelos_' + name + '_item', overlays.get(name))
+    from .couch_qt import connect_screen_changed
+    connect_screen_changed(window, ensure_management_screen)
+    ensure_management_screen()
     app.installEventFilter(key_filter)
+    app.aboutToQuit.connect(lambda: app.removeEventFilter(key_filter))
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
-
     window._channelos_key_filter = key_filter
     window._channelos_video_window = video_window
-    window._channelos_library_item = library_item
-    window._channelos_broadcaster_item = broadcaster_item
-    window._channelos_studio_item = studio_item
-    window._channelos_settings_item = settings_item
     window._channelos_component_engine = engine
+    window._channelos_controller = controller
+    window._channelos_overlay_factory = ensure_management_screen
+    app._channelos_window = window
 
     controller_input = QtControllerInput(
         window,
@@ -1460,11 +1440,13 @@ def run_qt(
     # channelos.couch launches this Broadcaster-integrated Qt path. Keep Home
     # startup on the same native-surface gate as the narrower couch launcher so
     # a future integration cannot silently omit the playback request again.
-    window._channelos_home_startup_gate = _start_home_video_when_ready(
-        controller,
-        window,
-        video_window,
-    )
+    def start_home_gate():
+        window._channelos_home_startup_gate = _start_home_video_when_ready(controller, window, video_window)
+    if controller._defer_initial_views and hasattr(controller, 'startDataLoading'):
+        controller.initialDataReady.connect(start_home_gate)
+        QTimer.singleShot(0, controller.startDataLoading)
+    else:
+        start_home_gate()
 
     if not owns_application:
         return 0

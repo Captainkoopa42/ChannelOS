@@ -315,7 +315,8 @@ def test_active_couch_launcher_uses_home_video_startup_gate() -> None:
         root / "src" / "channelos" / "broadcaster_qt.py"
     ).read_text(encoding="utf-8")
 
-    assert "from .broadcaster_qt import run_qt" in couch_entrypoint
+    assert "from .startup_qt import install_startup_support, launch" in couch_entrypoint
+    assert "return launch(broadcaster_qt" in couch_entrypoint
     assert "_start_home_video_when_ready" in broadcaster_qt
     assert "window._channelos_home_startup_gate" in broadcaster_qt
     assert broadcaster_qt.index("window.showFullScreen()") < broadcaster_qt.index(

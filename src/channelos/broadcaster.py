@@ -698,14 +698,14 @@ class BroadcasterService:
             ),
         }
 
-    def studio_media(self) -> list[dict[str, Any]]:
+    def studio_media(self, *, indexed_media=None) -> list[dict[str, Any]]:
         """Return one online Library card per stable asset for Channel Studio."""
         revision = self.library.revision()
         cached = getattr(self, '_studio_media_cache', None)
         if cached is not None and cached[0] == revision:
             return cached[1]
         items: dict[str, dict[str, Any]] = {}
-        for media in self.library.list_online_media():
+        for media in (indexed_media if indexed_media is not None else self.library.list_online_media()):
             asset_id = media.asset.asset_id
             if asset_id not in items:
                 items[asset_id] = {

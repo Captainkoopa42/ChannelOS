@@ -252,7 +252,8 @@ class GuideService:
                 raise GuideError(f"duplicate channel number: {runtime.channel_number}")
             by_number[runtime.channel_number] = runtime
         self._runtimes = tuple(by_number[number] for number in sorted(by_number))
-        self.unavailable_channels = tuple(definition for definition in definitions
+        self.definitions = tuple(definitions) or tuple(runtime.channel.definition for runtime in self._runtimes)
+        self.unavailable_channels = tuple(definition for definition in self.definitions
                                           if definition.channel not in by_number)
 
     @property
@@ -282,6 +283,7 @@ class GuideService:
         end: datetime,
         *,
         generated_at: datetime | None = None,
+        channel_numbers: tuple[int, ...] | None = None,
     ) -> GuideHorizon:
         start_utc = require_aware_utc(start)
         end_utc = require_aware_utc(end)
@@ -292,6 +294,7 @@ class GuideService:
         rows = tuple(
             self._row(runtime, start_utc, end_utc, reference)
             for runtime in self._runtimes
+            if channel_numbers is None or runtime.channel_number in channel_numbers
         )
         return GuideHorizon(
             start_utc=start_utc,
@@ -329,7 +332,15 @@ class GuideService:
         end: datetime,
         reference: datetime,
     ) -> GuideChannelRow:
-        programs: list[GuideProgram] = []
+        return GuideChannelRow(
+            channel_number=runtime.channel_number,
+            channel_name=runtime.channel.definition.name,
+            programs=tuple(GuideService.iter_programs(runtime, start, end, reference)),
+        )
+
+    @staticmethod
+    def iter_programs(runtime, start, end, reference):
+        """Yield authoritative occurrences so Qt can budget Guide preparation."""
         selection = runtime.project_at(start)
 
         while True:
@@ -341,17 +352,10 @@ class GuideService:
                 continue
             if program.start_utc >= end:
                 break
-            programs.append(program)
+            yield program
             if program.end_utc >= end:
                 break
             selection = _selection_after_boundary(runtime, program.end_utc)
-
-        return GuideChannelRow(
-            channel_number=runtime.channel_number,
-            channel_name=runtime.channel.definition.name,
-            programs=tuple(programs),
-        )
-
 
 class GuideController:
     """Routes actions on Guide occurrences through the normal ChannelOS television path."""

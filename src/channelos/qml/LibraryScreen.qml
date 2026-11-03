@@ -42,6 +42,7 @@ Item {
     property var addToChannelChannels: []
     property string addToChannelMessage: ""
     property bool addToChannelError: false
+    property bool addToChannelPending: false
     readonly property int addToChannelChannelCount: addToChannelChannels.length
 
     function formatDuration(seconds) {
@@ -346,8 +347,10 @@ Item {
             }
         }
 
-        var result = channelOS.addLibraryItemToChannel(
-                    channel.channelNumber, String(item.assetId), targetPath)
+        var result = typeof channelOS.startChannelMutation === "function"
+                ? channelOS.startChannelMutation("add_library_item", Number(channel.channelNumber),
+                                                {assetId: String(item.assetId), path: targetPath})
+                : channelOS.addLibraryItemToChannel(channel.channelNumber, String(item.assetId), targetPath)
         if (!result || !result.ok) {
             addToChannelError = true
             addToChannelMessage = result && result.message
@@ -356,7 +359,13 @@ Item {
             return
         }
 
-        channelOS.refreshBroadcaster()
+        if (result.pending) {
+            addToChannelPending = true
+            addToChannelError = false
+            addToChannelMessage = String(result.message)
+            return
+        }
+
         var refreshed = channelOS.broadcasterSnapshot || ({})
         addToChannelChannels = (refreshed.channels || addToChannelChannels).slice(0)
         addToChannelSelection = Math.max(
@@ -571,6 +580,19 @@ Item {
 
     Connections {
         target: channelOS
+        ignoreUnknownSignals: true
+        function onChannelMutationCompleted(result) {
+            if (!libraryRoot.addToChannelPending || result.kind !== "add_library_item")
+                return
+            libraryRoot.addToChannelPending = false
+            libraryRoot.addToChannelError = !result.ok
+            libraryRoot.addToChannelMessage = String(result.message || "Channel update finished.")
+            if (result.ok) {
+                libraryRoot.addToChannelChannels = ((channelOS.broadcasterSnapshot || {}).channels || []).slice(0)
+                libraryRoot.addToChannelSelection = Math.max(0, Math.min(libraryRoot.addToChannelSelection,
+                                                                       libraryRoot.addToChannelChannels.length - 1))
+            }
+        }
         function onLibraryChanged() {
             libraryRoot.snapshot = channelOS.librarySnapshot || ({})
             libraryRoot.rebuildShelves()

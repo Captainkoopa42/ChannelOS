@@ -53,6 +53,9 @@ logger = logging.getLogger(__name__)
 
 def _apply_channelos_control_theme(app: QApplication) -> None:
     # Give Qt Quick Controls the same high-contrast dark palette as ChannelOS.
+    if getattr(app, '_channelos_theme_applied', False):
+        return
+    app._channelos_theme_applied = True
     QQuickStyle.setStyle("Fusion")
 
     palette = QPalette()
@@ -187,6 +190,11 @@ class _StudioAutoFillWorker(QObject):
                 on_progress=self.progress.emit,
                 should_cancel=self._cancel_event.is_set,
             )
+            if result.get('ok'):
+                from .studio_publication import prepare_publication
+                media = self._broadcaster.studio_media()
+                result = prepare_publication(result, self._editor, media,
+                    self._broadcaster.studio_groups(available_asset_ids={item['assetId'] for item in media}))
             if self._cancel_event.is_set():
                 raise StudioAutoFillCancelled("Studio Auto Fill was cancelled")
         except StudioAutoFillCancelled:
@@ -223,9 +231,12 @@ class BroadcasterCouchController(CouchController):
         broadcaster: BroadcasterService,
         runtime_store: RuntimeStore,
     ) -> None:
-        super().__init__(service, television, library)
         self._broadcaster = broadcaster
+        self._defer_initial_views = bool(getattr(broadcaster, '_deferred_startup', False))
+        super().__init__(service, television, library)
         self._runtime_store = runtime_store
+        self._lineup_definitions = {record.channel_number: record.definition for record in broadcaster.records}
+        self._lineup_library_revision = library.revision()
         self._broadcaster_snapshot = self._build_broadcaster_snapshot()
         self._video_surface: NativeVideoSurface | None = None
 
@@ -254,10 +265,6 @@ class BroadcasterCouchController(CouchController):
             "message": "",
         }
 
-        # CouchController builds an initial library view before the broadcaster
-        # service is attached. Rebuild once so source rows can expose channel use.
-        self._library_snapshot = self._build_library_snapshot()
-        self._home_television = self._build_home_television_view()
 
     def _channels_using_source(self, source_path: str | Path, indexed_media=None) -> list[dict[str, object]]:
         broadcaster = getattr(self, "_broadcaster", None)
@@ -268,30 +275,10 @@ class BroadcasterCouchController(CouchController):
 
     def _build_library_snapshot(self) -> dict[str, object]:
         snapshot = super()._build_library_snapshot()
-        sources: list[dict[str, object]] = []
-        indexed_media = self._library.list_cached_media() if getattr(self, "_broadcaster", None) is not None else []
-        for source in self._library.list_sources():
-            root = source.source_root
-            sources.append(
-                {
-                    "path": str(root),
-                    "name": root.name or str(root),
-                    "status": source.status,
-                    "available": root.exists(),
-                    "discoveredCount": source.discovered_count,
-                    "locationCount": source.location_count,
-                    "onlineLocationCount": source.online_location_count,
-                    "assetCount": source.asset_count,
-                    "lastScanStartedAt": source.last_scan_started_at or "",
-                    "lastScanFinishedAt": source.last_scan_finished_at or "",
-                    "lastError": source.last_error or "",
-                    "usedByChannels": self._channels_using_source(root, indexed_media),
-                }
-            )
-
-        snapshot["sources"] = sources
-        snapshot["sourceCount"] = len(sources)
-        return snapshot
+        if self._defer_initial_views:
+            return snapshot
+        from .library_view import add_source_information
+        return add_source_information(snapshot, self._library, self._broadcaster)
 
     def _build_broadcaster_snapshot(self) -> dict[str, object]:
         snapshot = self._broadcaster.snapshot()
@@ -356,10 +343,11 @@ class BroadcasterCouchController(CouchController):
 
     @Slot()
     def refreshBroadcaster(self) -> None:
-        self._broadcaster.refresh()
-        self._broadcaster_snapshot = self._build_broadcaster_snapshot()
-        self.broadcasterChanged.emit()
-        self.refreshLibrary()
+        from .performance import operation
+        with operation('channels.open', channels=len(self._broadcaster.records)):
+            self._broadcaster.refresh()
+            self._broadcaster_snapshot = self._build_broadcaster_snapshot()
+            self.broadcasterChanged.emit()
 
     @Slot(str, result="QVariantMap")
     def playLibraryAsset(self, asset_id: str) -> dict[str, object]:
@@ -578,7 +566,69 @@ class BroadcasterCouchController(CouchController):
         except (BroadcasterError, OSError, ValueError) as exc:
             return self._error(exc)
 
-    def _reload_lineup(
+    def _reload_lineup(self, *, replacement_channel_number=None, prepared=None) -> None:
+        if not hasattr(self._actions, 'replace_lineup'):
+            return self._reload_lineup_full(replacement_channel_number=replacement_channel_number)
+        from .media_resilience import _resolved_runtime
+        previous = dict(self._actions.runtime.channels)
+        definitions = {record.channel_number: record.definition for record in self._broadcaster.records}
+        changed = {number for number, definition in definitions.items()
+                   if self._lineup_definitions.get(number) != definition}
+        removed = set(previous) - set(definitions)
+        if self._library.revision() != self._lineup_library_revision:
+            changed.update(definitions)
+        if prepared is not None:
+            changed = set(prepared)
+        current = self._actions.runtime.current_channel
+        active_changed = current in changed or current in removed
+        was_active = bool(self._playback.get('active')) and not self._on_demand.active
+        paused = bool(self._playback.get('paused'))
+        if active_changed and was_active:
+            self._actions.suspend_decoder()
+        replacements = {}
+        try:
+            for number in changed:
+                if prepared is not None:
+                    replacements[number] = prepared[number]
+                else:
+                    replacements[number] = _resolved_runtime(definitions[number], self._library, self._runtime_store,
+                        persistent_when_complete=True, verify_files=True)
+            combined = {number: runtime for number, runtime in previous.items() if number not in changed and number not in removed}
+            combined.update({number: runtime for number, runtime in replacements.items() if runtime is not None})
+            service = GuideService(tuple(combined.values()), definitions=tuple(definitions.values()))
+            self._actions.replace_lineup(service, tuple(combined.values()))
+            self._service = service
+            self._lineup_definitions = definitions
+            self._lineup_library_revision = self._library.revision()
+        except Exception:
+            for runtime in replacements.values():
+                if runtime is not None and runtime.break_store is not None:
+                    runtime.break_store.close()
+            if active_changed and was_active and current in previous:
+                self._publish(self._actions.restore_after_lineup_change(current, paused=paused))
+            raise
+        for number in changed | removed:
+            old = previous.get(number)
+            if old is not None and old is not combined.get(number) and old.break_store is not None:
+                old.break_store.close()
+        self._snapshot = self._build_guide_snapshot()
+        self._home_television = self._build_home_television_view()
+        self.snapshotChanged.emit()
+        self.homeTelevisionChanged.emit()
+        if active_changed and was_active:
+            target = current if current in combined else replacement_channel_number
+            if target not in combined:
+                target = next(iter(sorted(combined)), None)
+            if target is None:
+                self._playback = {'active': False}
+                self.playbackChanged.emit()
+            else:
+                try:
+                    self._publish(self._actions.restore_after_lineup_change(target, paused=paused if target == current else False))
+                except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
+                    self._publish_playback_failure(exc)
+
+    def _reload_lineup_full(
         self,
         *,
         replacement_channel_number: int | None = None,
@@ -595,7 +645,8 @@ class BroadcasterCouchController(CouchController):
         prior_paused = bool(self._playback.get("paused", False))
 
         from .couch import _open_runtimes
-        runtimes = _open_runtimes(self._broadcaster.paths, self._library, self._runtime_store)
+        runtimes = _open_runtimes(self._broadcaster.paths, self._library, self._runtime_store,
+            definitions={record.path: record.definition for record in self._broadcaster.records})
 
         service = GuideService(tuple(runtimes), definitions=tuple(record.definition for record in self._broadcaster.records))
         television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
@@ -635,7 +686,7 @@ class BroadcasterCouchController(CouchController):
 
         self._service = service
         self._actions = actions
-        self._snapshot = build_couch_snapshot(service)
+        self._snapshot = self._build_guide_snapshot()
         self._home_television = self._build_home_television_view()
         self.snapshotChanged.emit()
         self.homeTelevisionChanged.emit()
@@ -903,7 +954,12 @@ class BroadcasterCouchController(CouchController):
             percent=100,
             message=str(result.get("message", "Studio Auto Fill is ready")),
         )
-        self.studioAutoFillCompleted.emit(dict(result))
+        # Transfer the large prepared model as one string; QML parses it into
+        # native arrays instead of walking thousands of QVariant maps.
+        publication = ({key: value for key, value in result.items()
+                        if key not in {'preparedRows', 'preparedDays'}}
+                       if result.get('publicationJson') else dict(result))
+        self.studioAutoFillCompleted.emit(publication)
 
     @Slot()
     def _on_studio_auto_fill_cancelled(self) -> None:
@@ -1312,50 +1368,48 @@ def run_qt(
     if not app.windowIcon().isNull():
         window.setIcon(app.windowIcon())
 
-    library_item = _attach_overlay(
-        engine,
-        window,
-        "LibraryScreen.qml",
-        z=85,
-    )
-    broadcaster_item = _attach_overlay(
-        engine,
-        window,
-        "BroadcasterScreen.qml",
-        z=90,
-    )
-    studio_item = _attach_overlay(
-        engine,
-        window,
-        "ChannelStudioScreen.qml",
-        z=92,
-    )
-    settings_item = _attach_overlay(
-        engine,
-        window,
-        "SettingsScreen.qml",
-        z=95,
-    )
     portable_notice = _attach_overlay(engine, window, "PortableDriveNotice.qml", z=300)
+    operation_notice = _attach_overlay(engine, window, "ChannelOperationOverlay.qml", z=400)
+    window._channelos_operation_notice = operation_notice
     window._channelos_portable_notice = portable_notice
-
     key_filter = BroadcasterKeyFilter(controller, window)
-    key_filter.bind_management_overlays(
-        library_item=library_item,
-        broadcaster_item=broadcaster_item,
-        studio_item=studio_item,
-    )
+    overlays = {}
+    factories = {
+        'library': ('LibraryScreen.qml', 85),
+        'broadcaster': ('BroadcasterScreen.qml', 90),
+        'studio': ('ChannelStudioScreen.qml', 92),
+        'settings': ('SettingsScreen.qml', 95),
+    }
+    def ensure_management_screen():
+        screen = str(window.property('screen'))
+        if screen in factories and screen not in overlays:
+            filename, z = factories[screen]
+            try:
+                overlays[screen] = _attach_overlay(engine, window, filename, z=z)
+            except Exception as exc:
+                logger.exception('Management screen could not open')
+                window.setProperty('statusMessage', str(exc))
+                window.setProperty('screen', 'home')
+                return
+        for name, item in overlays.items():
+            item.setVisible(screen == name)
+        key_filter.bind_management_overlays(library_item=overlays.get('library'),
+            broadcaster_item=overlays.get('broadcaster'), studio_item=overlays.get('studio'))
+        for name in factories:
+            setattr(window, '_channelos_' + name + '_item', overlays.get(name))
+    from .couch_qt import connect_screen_changed
+    connect_screen_changed(window, ensure_management_screen)
+    ensure_management_screen()
     app.installEventFilter(key_filter)
+    app.aboutToQuit.connect(lambda: app.removeEventFilter(key_filter))
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
-
     window._channelos_key_filter = key_filter
     window._channelos_video_window = video_window
-    window._channelos_library_item = library_item
-    window._channelos_broadcaster_item = broadcaster_item
-    window._channelos_studio_item = studio_item
-    window._channelos_settings_item = settings_item
     window._channelos_component_engine = engine
+    window._channelos_controller = controller
+    window._channelos_overlay_factory = ensure_management_screen
+    app._channelos_window = window
 
     controller_input = QtControllerInput(
         window,
@@ -1386,11 +1440,13 @@ def run_qt(
     # channelos.couch launches this Broadcaster-integrated Qt path. Keep Home
     # startup on the same native-surface gate as the narrower couch launcher so
     # a future integration cannot silently omit the playback request again.
-    window._channelos_home_startup_gate = _start_home_video_when_ready(
-        controller,
-        window,
-        video_window,
-    )
+    def start_home_gate():
+        window._channelos_home_startup_gate = _start_home_video_when_ready(controller, window, video_window)
+    if controller._defer_initial_views and hasattr(controller, 'startDataLoading'):
+        controller.initialDataReady.connect(start_home_gate)
+        QTimer.singleShot(0, controller.startDataLoading)
+    else:
+        start_home_gate()
 
     if not owns_application:
         return 0

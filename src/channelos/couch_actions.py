@@ -52,6 +52,29 @@ class CouchActions:
             return None
         return self._last_decision
 
+    def replace_lineup(self, service: GuideService, channels) -> bool:
+        """Install a prepared delta without replacing an unaffected decoder."""
+        by_number = {channel.channel_number: channel for channel in channels}
+        current = self.runtime.current_channel
+        active_changed = current is not None and by_number.get(current) is not self.runtime.channels.get(current)
+        self.service = service
+        self.runtime.channels = by_number
+        self.runtime.channel_numbers = tuple(sorted(by_number))
+        if self.runtime.previous_channel not in by_number:
+            self.runtime.previous_channel = None
+        if current not in by_number:
+            self.runtime.current_channel = None
+            self.runtime._viewer = None
+        elif active_changed:
+            self.runtime._viewer = self.runtime.store.load_viewer(current)
+            if self.runtime._viewer is None:
+                self.runtime.current_channel = None
+        if self._guide is not None:
+            self._guide.service = service
+        if active_changed:
+            self._last_decision = None
+        return active_changed
+
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         """Remember the UI's native video target and attach it to an active backend."""
 
@@ -104,6 +127,7 @@ class CouchActions:
             approximate_start - timedelta(seconds=1),
             approximate_start + timedelta(seconds=1),
             generated_at=reference,
+            channel_numbers=(int(channel_number),),
         )
         for row in horizon.rows:
             if row.channel_number != channel_number:

@@ -1257,10 +1257,10 @@ class RuntimeStore:
             connection.execute("INSERT INTO deleted_channel_archives(archive_id,channel_number,deleted_at,payload) VALUES(?,?,?,?)",
                 (identity, number, datetime_to_text(utc_now()), json.dumps(payload, sort_keys=True)))
             for table in reversed(order):
-                for row in payload.get(table, ()):
-                    columns = tuple(row)
-                    where = " AND ".join(f"{column} IS ?" for column in columns)
-                    connection.execute(f"DELETE FROM {table} WHERE {where}", tuple(row.values()))
+                if payload.get(table):
+                    columns = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
+                    where = "channel_number=?" if "channel_number" in columns else "plan_id IN (SELECT plan_id FROM ad_break_plans WHERE channel_number=?)"
+                    connection.execute(f"DELETE FROM {table} WHERE {where}", (number,))
             connection.execute("DELETE FROM runtime_meta WHERE key IN ('current_channel','previous_channel') AND value=?", (str(number),))
         return identity
 
@@ -1518,7 +1518,11 @@ class ChannelRuntime:
                 # viewer's paused/behind-live position.
                 preserve_clock_on_change=(programming.mode == "calendar"),
             )
-        break_store = BreakPlanStore(store.database_path)
+        break_store = BreakPlanStore(store.database_path, initialize=not getattr(store, '_break_schema_ready', False))
+        store._break_schema_ready = True
+        if getattr(store, '_snapshot_portable', None) is not None:
+            break_store.portable = store._snapshot_portable
+            break_store.connection.portable = store._snapshot_portable
         with break_store.connection:
             break_store.connection.execute("UPDATE ad_program_clock SET schedule_signature=? WHERE channel_number=? AND schedule_signature=''",
                 (previous_clock.schedule_signature if previous_clock else signature, channel.definition.channel))

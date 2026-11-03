@@ -502,7 +502,8 @@ def test_dependency_report_batches_locations_and_rejects_missing_mirror(tmp_path
 
 
 @pytest.mark.parametrize('last_channel', [False, True])
-def test_deleting_during_ad_archives_final_viewing_or_restores_decoder(tmp_path, monkeypatch, last_channel):
+@pytest.mark.parametrize('asynchronous', [False, True])
+def test_deleting_during_ad_archives_final_viewing_or_restores_decoder(tmp_path, monkeypatch, last_channel, asynchronous):
     import json
     from datetime import datetime, timedelta, timezone
     from PySide6.QtGui import QGuiApplication
@@ -535,7 +536,11 @@ def test_deleting_during_ad_archives_final_viewing_or_restores_decoder(tmp_path,
     def actions(service, runtime):
         return CouchActions(service, runtime, backend_factory=Backend)
     monkeypatch.setattr(broadcaster_qt, 'CouchActions', actions)
-    controller = broadcaster_qt.BroadcasterCouchController(guide, tv, library, service, store)
+    controller_type = broadcaster_qt.BroadcasterCouchController
+    if asynchronous:
+        from test_performance_operations import managed_controller_type
+        controller_type = managed_controller_type()
+    controller = controller_type(guide, tv, library, service, store)
     controller._actions = actions(guide, tv)
     controller._surface_ready = True
     decision = controller._actions.tune(7)
@@ -547,13 +552,24 @@ def test_deleting_during_ad_archives_final_viewing_or_restores_decoder(tmp_path,
     controller._publish(decision)
     backend = controller._actions._backend
     backend.position += 2
-    result = controller.deleteChannel(7)
+    if asynchronous:
+        from test_performance_operations import finish_job
+        responses = []
+        controller.channelMutationCompleted.connect(responses.append)
+        assert controller.startChannelMutation('delete', 7, {})['pending']
+        finish_job(app, controller)
+        result = responses[-1]
+    else:
+        result = controller.deleteChannel(7)
     try:
         if last_channel:
             assert not result['ok']
             assert service.channel_numbers == (7,)
             assert controller.playback['active']
-            assert backend.events.index('stop') < max(index for index, event in enumerate(backend.events) if event == 'play')
+            if asynchronous:
+                assert 'stop' not in backend.events, 'Refusal before commit should leave playback running'
+            else:
+                assert backend.events.index('stop') < max(index for index, event in enumerate(backend.events) if event == 'play')
         else:
             assert result['ok'], result
             assert service.channel_numbers == (8,)

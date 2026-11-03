@@ -170,13 +170,20 @@ def _resolved_runtime(
     *,
     persistent_when_complete: bool = False,
     verify_files: bool = False,
+    index=None,
+    availability=None,
 ) -> ChannelRuntime | None:
     """Resolve one channel against media that is usable for this launch."""
 
-    resolved = resolve_channel(definition, library, allow_offline_ads=True)
+    resolved = resolve_channel(definition, library, allow_offline_ads=True, index=index)
     available = _transient_available_media(resolved, library)
     if verify_files:
-        available = tuple(item for item in available if _path_is_usable(item.location.path))
+        usable = availability if availability is not None else {}
+        def check(path):
+            if path not in usable:
+                usable[path] = _path_is_usable(path)
+            return usable[path]
+        available = tuple(item for item in available if check(item.location.path))
     if not available:
         return None
 
@@ -408,7 +415,7 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
 
             self._service = service
             self._actions = actions
-            self._snapshot = build_couch_snapshot(service)
+            self._snapshot = self._build_guide_snapshot()
             self._home_television = self._build_home_television_view()
             self._broadcaster_snapshot = self._build_broadcaster_snapshot()
             self.snapshotChanged.emit()

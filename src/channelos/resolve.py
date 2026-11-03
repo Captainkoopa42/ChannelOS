@@ -54,6 +54,26 @@ _LEADING_ORDINAL_RE = re.compile(r"^\s*(\d{1,5})(?:[\s._-]|$)")
 _YEAR_RE = re.compile(r"(?<!\d)((?:19|20)\d{2})(?!\d)")
 
 
+class MediaResolutionIndex:
+    """One operation's immutable Library rows, shared across channel resolutions."""
+
+    def __init__(self, library: MediaLibrary) -> None:
+        self.library = library
+        self.rows = tuple(library.list_cached_media())
+        self.online = tuple(row for row in self.rows if row.location.online)
+        self._sources: dict[tuple[str, bool], tuple[IndexedMedia, ...]] = {}
+
+    def for_source(self, path, *, include_offline=False):
+        _, key = normalize_path(path)
+        identity = (key, include_offline)
+        if identity not in self._sources:
+            self._sources[identity] = tuple(
+                row for row in (self.rows if include_offline else self.online)
+                if _path_is_within(row.location.path_key, key)
+            )
+        return self._sources[identity]
+
+
 def _natural_key(value: str) -> tuple[tuple[int, object], ...]:
     """Case-insensitive natural ordering that keeps numeric runs numeric."""
 
@@ -168,7 +188,15 @@ def _resolve_preserved_sequence(
 
 def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
                     allow_offline_ads: bool = False,
-                    include_offline_programs: bool = False) -> ResolvedChannel:
+                    include_offline_programs: bool = False,
+                    index: MediaResolutionIndex | None = None) -> ResolvedChannel:
+    def source_media(path):
+        if index is not None:
+            return index.for_source(path, include_offline=include_offline_programs)
+        return library.list_cached_media(path) if include_offline_programs else library.list_online_media_for_source(path)
+
+    def online_media(path):
+        return index.for_source(path) if index is not None else library.list_online_media_for_source(path)
     source_keys = [normalize_path(source.path)[1] for source in channel.sources]
     ad_media: list[IndexedMedia] = []
     policies = (channel.advertising,) + (tuple(item.policy for item in channel.advertising.placements)
@@ -177,14 +205,13 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
     for policy in policies:
         for source in policy.sources:
             configured_ad_ids.update(item.asset.asset_id for item in (
-                library.list_cached_media(source.path) if include_offline_programs
-                else library.list_online_media_for_source(source.path)))
+                source_media(source.path)))
     if channel.advertising.enabled:
         active_policies = (tuple(item.policy for item in channel.advertising.placements if item.policy.enabled)
                            if channel.advertising.placements and channel.advertising.setup_mode == "advanced" else (channel.advertising,))
         seen_ad_assets: set[str] = set()
         for source in (source for policy in active_policies for source in policy.sources):
-            for item in library.list_online_media_for_source(source.path):
+            for item in online_media(source.path):
                 if allow_offline_ads and not item.location.path.is_file():
                     continue
                 if item.asset.asset_id in seen_ad_assets:
@@ -197,7 +224,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
             # The YAML carries a complete, portable snapshot of its collection.
             # Resolve by canonical identity, not by the Studio catalog database.
             indexed_ads: dict[str, IndexedMedia] = {}
-            for item in library.list_online_media():
+            for item in (index.online if index is not None else library.list_online_media()):
                 indexed_ads.setdefault(item.asset.asset_id, item)
             missing = [
                 asset_id for asset_id in requested_ids
@@ -220,8 +247,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
     advertising_ids = configured_ad_ids | {item.asset.asset_id for item in ad_media}
     seen_locations: set[str] = set()
     for source in channel.sources:
-        for item in (library.list_cached_media(source.path) if include_offline_programs
-                     else library.list_online_media_for_source(source.path)):
+        for item in source_media(source.path):
             if item.asset.asset_id in advertising_ids:
                 continue
             if item.location.path_key in seen_locations:

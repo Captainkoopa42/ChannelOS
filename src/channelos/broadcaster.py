@@ -401,6 +401,7 @@ class BroadcasterService:
             for path in channel_paths
         )
         self._records: dict[int, ChannelRecord] = {}
+        self._definition_cache: dict[Path, tuple[tuple[int, ...], ChannelDefinition]] = {}
         self._recover_deletions()
         self.refresh()
 
@@ -478,7 +479,11 @@ class BroadcasterService:
         managed_root = self._normalize_path(self.managed_directory)
 
         for path in self._all_candidate_paths():
-            definition = load_channel(path)
+            stat = path.stat()
+            revision = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
+            cached = self._definition_cache.get(path)
+            definition = cached[1] if cached is not None and cached[0] == revision else load_channel(path)
+            self._definition_cache[path] = (revision, definition)
             number = definition.channel
             if number in records:
                 previous = records[number]
@@ -501,6 +506,8 @@ class BroadcasterService:
             )
 
         self._records = records
+        active_paths = {record.path for record in records.values()}
+        self._definition_cache = {path: value for path, value in self._definition_cache.items() if path in active_paths}
 
     @property
     def records(self) -> tuple[ChannelRecord, ...]:
@@ -524,99 +531,114 @@ class BroadcasterService:
         }
         return tuple(sorted(roots, key=os.path.normcase))
 
-    def source_dependencies(self, source_root: str | Path, *, indexed_media=None) -> list[dict[str, object]]:
-        """Report references that would lose an indexed location on removal."""
-        _, root_key = self.library.storage_path(source_root)
+    def _before_mutation_commit(self, definition=None) -> None:
+        callback = getattr(self, '_commit_callback', None)
+        if callback is not None:
+            callback(definition)
+
+    def _source_dependency_context(self, indexed_media=None):
         indexed = self.library.list_cached_media() if indexed_media is None else indexed_media
-        affected = []
-        locations = {}
-        source_keys = {}
+        catalog = self.ad_catalog.read_snapshot()
+        locations, source_keys, affected_by_root, path_keys = {}, {}, {}, {}
         for item in indexed:
             location = item.location
             locations.setdefault(item.asset.asset_id, []).append(location)
             if location.source_root not in source_keys:
                 source_keys[location.source_root] = self.library.storage_path(location.source_root)[1]
-            if source_keys[location.source_root] == root_key:
-                affected.append(item)
-        survivor_cache = {}
-        def alternatives(asset_id):
-            if asset_id not in survivor_cache:
-                survivors = []
-                for location in locations.get(asset_id, ()):
-                    if source_keys[location.source_root] == root_key or not location.online:
-                        continue
-                    try:
-                        if location.path.is_file():
-                            survivors.append(location)
-                    except OSError:
-                        continue
-                survivor_cache[asset_id] = survivors
-            return survivor_cache[asset_id]
-        affected_keys = {item.location.path: normalize_path(item.location.path)[1] for item in affected}
-        matches = []
-        assigned_collections = set()
+            root_key = source_keys[location.source_root]
+            affected_by_root.setdefault(root_key, []).append(item)
+            path_keys[location.path] = normalize_path(location.path)[1]
+        channel_specs, assigned_collections = [], set()
         for record in self.records:
             definition = record.definition
             policies = (definition.advertising,) + tuple(p.policy for p in definition.advertising.placements)
-            selector_groups = [tuple(s.path for s in definition.sources)] + [tuple(s.path for s in p.sources) for p in policies]
-            selectors = tuple(path for group in selector_groups for path in group)
-            explicit = {asset for p in policies for asset in p.asset_ids}
+            groups = [tuple(s.path for s in definition.sources)] + [tuple(s.path for s in p.sources) for p in policies]
+            explicit = {asset for policy in policies for asset in policy.asset_ids}
             for block in definition.programming.calendar:
                 explicit.add(block.asset_id)
                 if block.filler:
                     explicit.update(block.filler.asset_ids)
-            assignment = self.ad_catalog.get_assignment(definition.channel)
+            assignment = catalog['assignments'].get(definition.channel)
             if assignment is not None:
                 collection_ids = {assignment.collection_id, *(p.collection_id for p in assignment.placements)} - {None}
                 assigned_collections.update(collection_ids)
-                for collection_id in collection_ids:
-                    collection = self.ad_catalog.get_collection(collection_id)
+                for identity in collection_ids:
+                    collection = catalog['collections'].get(identity)
                     if collection:
                         explicit.update(set(collection.asset_ids) - set(collection.excluded_asset_ids))
-                        group = tuple(Path(path) for path in collection.source_paths)
-                        selector_groups.append(group)
-                        selectors += group
-            key_groups = [tuple(normalize_path(path)[1] for path in group) for group in selector_groups]
+                        groups.append(tuple(Path(path) for path in collection.source_paths))
+            keys = tuple(tuple(normalize_path(path)[1] for path in group) for group in groups)
+            channel_specs.append((definition, keys, explicit))
+        return {'locations': locations, 'source_keys': source_keys, 'affected': affected_by_root,
+                'path_keys': path_keys, 'channels': channel_specs, 'catalog': catalog,
+                'assigned': assigned_collections, 'usable': {}}
+
+    def source_dependency_reports(self, source_roots, *, indexed_media=None):
+        context = self._source_dependency_context(indexed_media)
+        return {str(root): self.source_dependencies(root, context=context) for root in source_roots}
+
+    def source_dependencies(self, source_root: str | Path, *, indexed_media=None, context=None) -> list[dict[str, object]]:
+        """Fresh removal checks and batched presentation share the same rules."""
+        context = context if context is not None else self._source_dependency_context(indexed_media)
+        _, root_key = self.library.storage_path(source_root)
+        affected = context['affected'].get(root_key, ())
+        path_keys, source_keys = context['path_keys'], context['source_keys']
+        survivor_cache = {}
+        def alternatives(asset_id):
+            if asset_id not in survivor_cache:
+                survivors = []
+                for location in context['locations'].get(asset_id, ()):
+                    if source_keys[location.source_root] == root_key or not location.online:
+                        continue
+                    if location.path not in context['usable']:
+                        try:
+                            context['usable'][location.path] = location.path.is_file()
+                        except OSError:
+                            context['usable'][location.path] = False
+                    if context['usable'][location.path]:
+                        survivors.append(location)
+                survivor_cache[asset_id] = survivors
+            return survivor_cache[asset_id]
+        matches = []
+        for definition, groups, explicit in context['channels']:
             reasons = set()
             for item in affected:
-                asset_id = item.asset.asset_id
-                path_key = affected_keys[item.location.path]
-                required_groups = [group for group in key_groups if any(path_key_is_within(path_key, key) for key in group)]
-                if asset_id not in explicit and not required_groups:
+                asset_id, path_key = item.asset.asset_id, path_keys[item.location.path]
+                required = [group for group in groups if any(path_key_is_within(path_key, key) for key in group)]
+                if asset_id not in explicit and not required:
                     continue
                 survivors = alternatives(asset_id)
                 if asset_id in explicit and not survivors:
-                    reasons.add("scheduled or advertising asset")
-                for group in required_groups:
-                    if not any(path_key_is_within(normalize_path(loc.path)[1], selector) for loc in survivors for selector in group):
-                        reasons.add("program or advertising source")
-            # Empty/offline folders still express saved intent.
-            if not affected and any(path_key_is_within(normalize_path(path)[1], normalize_path(source_root)[1]) for path in selectors):
-                reasons.add("saved source")
+                    reasons.add('scheduled or advertising asset')
+                for group in required:
+                    if not any(path_key_is_within(path_keys[loc.path], key) for loc in survivors for key in group):
+                        reasons.add('program or advertising source')
+            if not affected and any(path_key_is_within(key, normalize_path(source_root)[1]) for group in groups for key in group):
+                reasons.add('saved source')
             if reasons:
-                matches.append({"channelNumber": definition.channel, "displayNumber": definition.display_number,
-                                "name": definition.name, "reasons": sorted(reasons)})
-        for collection in self.ad_catalog.list_collections():
-            if collection.collection_id in assigned_collections:
+                matches.append({'channelNumber': definition.channel, 'displayNumber': definition.display_number,
+                                'name': definition.name, 'reasons': sorted(reasons)})
+        for collection in context['catalog']['collections'].values():
+            if collection.collection_id in context['assigned']:
                 continue
             selectors = tuple(normalize_path(path)[1] for path in collection.source_paths)
             ids = set(collection.asset_ids) - set(collection.excluded_asset_ids)
             needed = False
             for item in affected:
                 asset_id = item.asset.asset_id
-                selected_by_source = any(path_key_is_within(affected_keys[item.location.path], key) for key in selectors)
-                if asset_id not in ids and not selected_by_source:
+                selected = any(path_key_is_within(path_keys[item.location.path], key) for key in selectors)
+                if asset_id not in ids and not selected:
                     continue
                 survivors = alternatives(asset_id)
-                if (asset_id in ids and not survivors or selected_by_source and not any(
-                        path_key_is_within(normalize_path(loc.path)[1], key) for loc in survivors for key in selectors)):
+                if (asset_id in ids and not survivors or selected and not any(
+                        path_key_is_within(path_keys[loc.path], key) for loc in survivors for key in selectors)):
                     needed = True
                     break
             if not affected and any(path_key_is_within(key, normalize_path(source_root)[1]) for key in selectors):
                 needed = True
             if needed:
-                matches.append({"channelNumber": 0, "displayNumber": "Ad collection", "name": collection.name,
-                                "kind": "collection", "reasons": ["saved ad collection"]})
+                matches.append({'channelNumber': 0, 'displayNumber': 'Ad collection', 'name': collection.name,
+                                'kind': 'collection', 'reasons': ['saved ad collection']})
         return matches
 
     def remove_library_source(self, source_root: str | Path):
@@ -676,11 +698,14 @@ class BroadcasterService:
             ),
         }
 
-    def studio_media(self) -> list[dict[str, Any]]:
+    def studio_media(self, *, indexed_media=None) -> list[dict[str, Any]]:
         """Return one online Library card per stable asset for Channel Studio."""
-
+        revision = self.library.revision()
+        cached = getattr(self, '_studio_media_cache', None)
+        if cached is not None and cached[0] == revision:
+            return cached[1]
         items: dict[str, dict[str, Any]] = {}
-        for media in self.library.list_online_media():
+        for media in (indexed_media if indexed_media is not None else self.library.list_online_media()):
             asset_id = media.asset.asset_id
             if asset_id not in items:
                 items[asset_id] = {
@@ -702,7 +727,9 @@ class BroadcasterService:
                 "path": str(media.location.path),
                 "sourceRoot": str(media.location.source_root),
             })
-        return list(items.values())
+        result = list(items.values())
+        self._studio_media_cache = (self.library.revision(), result)
+        return result
 
     @property
     def _studio_groups_path(self) -> Path:
@@ -987,21 +1014,23 @@ class BroadcasterService:
         from .calendar_reconcile import detached_store, replay_blocks, snapshot_matches
         resolved = resolve_channel(definition, self.library)
         by_id = {item.asset.asset_id: item for item in resolved.media}
+        media_maps = ({item.asset.asset_id: item for item in resolved.ad_media}, by_id)
         revision = advertising_signature(resolved)
         original = self._records.get(definition.channel)
         old_blocks = {block.start_utc: block for block in original.definition.programming.calendar} if original else {}
         blocks = definition.programming.calendar
         changes = [block.start_utc for block in blocks if old_blocks.get(block.start_utc) != block]
-        changes.extend(start for start in old_blocks if start not in {b.start_utc for b in blocks})
+        current_starts = {block.start_utc for block in blocks}
+        changes.extend(start for start in old_blocks if start not in current_starts)
         for block in blocks:
             media = by_id.get(block.asset_id)
             if media is None:
                 raise BroadcasterError("A scheduled show is outside this channel's indexed sources")
-            if not snapshot_matches(block.ad_plan, media, block.start_utc, revision, definition.channel, resolved.ad_media, program_media=resolved.media):
+            if not snapshot_matches(block.ad_plan, media, block.start_utc, revision, definition.channel, resolved.ad_media, program_media=resolved.media, media_maps=media_maps):
                 changes.append(block.start_utc)
         if not changes:
             return definition
-        with detached_store(self.runtime_database_path) as store:
+        with detached_store(self.runtime_database_path, channel_number=definition.channel) as store:
             replay_from = max(min(changes), datetime.now(timezone.utc)) if original else min(changes)
             reconciled = replay_blocks(resolved, blocks, store=store, replay_from=replay_from)
         return replace(definition, schema_version="0.6",
@@ -1533,7 +1562,7 @@ class BroadcasterService:
         with tempfile.TemporaryDirectory(
             prefix="channelos-broadcaster-validate-"
         ) as temporary:
-            validation_store = self._detached_runtime_store(Path(temporary) / "runtime.db")
+            validation_store = self._detached_runtime_store(Path(temporary) / "runtime.db", definition.channel)
             validation_at = (definition.programming.calendar[0].start_utc
                              if definition.programming.mode == "calendar" and validation_store.load_channel(definition.channel) is None else None)
             validated_runtime = ChannelRuntime.open(resolved, validation_store, now=validation_at)
@@ -1547,7 +1576,10 @@ class BroadcasterService:
 
         return resolved
 
-    def _detached_runtime_store(self, path: Path) -> RuntimeStore:
+    def _detached_runtime_store(self, path: Path, channel_number: int | None = None) -> RuntimeStore:
+        if channel_number is not None:
+            from .runtime_snapshot import channel_snapshot
+            return channel_snapshot(self.runtime_database_path, path, channel_number)
         if Path(self.runtime_database_path).is_file():
             with closing(sqlite3.connect(Path(self.runtime_database_path).resolve().as_uri() + "?mode=ro", uri=True)) as source:
                 with closing(sqlite3.connect(path)) as target:
@@ -1715,6 +1747,7 @@ class BroadcasterService:
 
         assignment = self._catalog_assignment_for_editor(raw)
         previous_assignment = self.ad_catalog.get_assignment(definition.channel)
+        self._before_mutation_commit(definition)
         try:
             self._atomic_write(target, serialize_channel(definition, portable=self.library.portable))
             if assignment is not None and definition.advertising.setup_mode == "advanced":
@@ -1789,6 +1822,7 @@ class BroadcasterService:
         backup = existing.path.with_suffix(
             existing.path.suffix + ".bak"
         )
+        self._before_mutation_commit(definition)
         shutil.copy2(existing.path, backup)
         previous_assignment = self.ad_catalog.get_assignment(definition.channel)
         try:
@@ -1872,6 +1906,7 @@ class BroadcasterService:
             suffix += 1
 
         assignment = self.ad_catalog.get_assignment(number)
+        self._before_mutation_commit()
         identity = uuid.uuid4().hex
         operation = {"channel": number, "archive_id": identity, "original": str(existing.path),
                      "backup": str(backup), "runtime_database": str(self.runtime_database_path),

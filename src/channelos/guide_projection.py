@@ -29,6 +29,7 @@ def install_incremental_guide_support(module):
             self._guide_range = None
             self._guide_queue = []
             self._guide_work = None
+            self._guide_errors = set()
             super().__init__(*args, **kwargs)
             self._guide_timer = QTimer(self)
             self._guide_timer.setSingleShot(True)
@@ -39,8 +40,11 @@ def install_incremental_guide_support(module):
             start = _floor_to_half_hour(now)
             identity = (start, tuple((r.channel_number, id(r)) for r in self._service._runtimes))
             if identity != self._guide_context:
+                old = dict(self._guide_context[1]) if self._guide_context and self._guide_context[0] == start else {}
+                retained = {number for number, runtime_id in identity[1] if old.get(number) == runtime_id}
                 self._guide_context = identity
-                self._guide_cache.clear()
+                self._guide_cache = {number: row for number, row in self._guide_cache.items() if number in retained}
+                self._guide_errors.clear()
                 self._guide_queue.clear()
                 self._guide_work = None
             rows = []
@@ -52,7 +56,8 @@ def install_incremental_guide_support(module):
             pending = ()
             if getattr(self, '_defer_initial_views', False) or getattr(self, '_startup_state', {}).get('active'):
                 pending = tuple(definition.channel for definition in self._service.definitions)
-            snapshot = build_couch_snapshot(self._service, at=now, prepared_rows=rows, pending_numbers=pending)
+            snapshot = build_couch_snapshot(self._service, at=now, prepared_rows=rows,
+                                           pending_numbers=pending, failed_numbers=self._guide_errors)
             self._queue_requested_rows(snapshot)
             return snapshot
 
@@ -66,7 +71,8 @@ def install_incremental_guide_support(module):
             active = self._guide_work[0].channel_number if self._guide_work else None
             if active not in wanted:
                 self._guide_work = None
-            self._guide_queue = [number for number in wanted if number not in self._guide_cache and number != active]
+            self._guide_queue = [number for number in wanted if number not in self._guide_cache
+                                 and number not in self._guide_errors and number != active]
             # Bound retained dense schedules while scrolling through a large lineup.
             if len(self._guide_cache) > 26:
                 self._guide_cache = {number: row for number, row in self._guide_cache.items() if number in wanted}
@@ -113,14 +119,20 @@ def install_incremental_guide_support(module):
                     published = True
                 except Exception:
                     logger.exception('Guide row %s could not be projected', runtime.channel_number)
+                    self._guide_errors.add(runtime.channel_number)
                     self._guide_work = None
-                    # A failed row stays pending until the next explicit refresh.
+                    published = True
                     break
             if published:
                 self._snapshot = self._build_guide_snapshot()
                 self.snapshotChanged.emit()
             if self._guide_queue or self._guide_work:
                 self._guide_timer.start(0)
+
+        @Slot()
+        def refresh(self):
+            self._guide_errors.clear()
+            super().refresh()
 
         @Slot()
         def stop(self):

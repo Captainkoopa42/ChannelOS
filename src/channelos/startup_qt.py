@@ -248,6 +248,12 @@ def install_startup_support(module):
                 return {'ok': False, 'message': 'Your setup is still loading. Try again in a moment.'}
             return super().removeLibrarySource(source_path)
 
+        @Slot('QVariantMap', str, str, result='QVariantMap')
+        def startStudioAutoFill(self, editor, start_utc, end_utc):
+            if self._startup_state.get('active'):
+                return {'ok': False, 'message': 'Your setup is still loading. Try again in a moment.'}
+            return super().startStudioAutoFill(editor, start_utc, end_utc)
+
         @Slot()
         def stop(self):
             self._startup_cancel.set()

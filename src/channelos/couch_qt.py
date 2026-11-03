@@ -821,6 +821,8 @@ class CouchController(QObject):
     ) -> dict[str, object]:
         if schedule_id.startswith('channelos:pending:'):
             return {'ok': False, 'message': 'This Guide row is still loading. Try again in a moment.'}
+        if schedule_id.startswith('channelos:guide-error:'):
+            return {'ok': False, 'message': 'This schedule could not load. Refresh the Guide to retry.'}
         if any(definition.channel == channel_number for definition in self._service.unavailable_channels):
             return {"ok": False, "message": "This channel's media is unavailable. Reconnect or scan its source in Library."}
         if not self._surface_ready:

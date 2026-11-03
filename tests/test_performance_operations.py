@@ -322,3 +322,69 @@ def test_failed_async_publication_rolls_back_definition_and_target_state(tmp_pat
     assert controller._broadcaster._records[8].definition.name == previous.definition.name
     assert controller._actions.runtime.channels[8].channel.definition.name == previous.definition.name
     controller.stop()
+
+
+def test_guide_error_is_visible_and_retries_only_on_refresh(tmp_path, monkeypatch):
+    import time
+    original = GuideService.iter_programs
+    failures = []
+    def fail(runtime, *args):
+        failures.append(runtime.channel_number)
+        raise ValueError('Unavailable schedule fixture')
+        yield
+    app, controller, root = controller_fixture(tmp_path, incremental_controller_type())
+    monkeypatch.setattr(GuideService, 'iter_programs', staticmethod(fail))
+    index = next(i for i, row in enumerate(controller.snapshot['rows']) if row['channelNumber'] == 7)
+    controller.requestGuideRows(index, index)
+    deadline = time.monotonic() + 3
+    while not controller.snapshot['rows'][index].get('isGuideError') and time.monotonic() < deadline:
+        app.processEvents()
+    assert controller.snapshot['rows'][index]['programs'][0]['title'] == 'SCHEDULE UNAVAILABLE'
+    for _ in range(10):
+        app.processEvents()
+    assert failures == [7]
+    monkeypatch.setattr(GuideService, 'iter_programs', staticmethod(original))
+    controller.refresh()
+    deadline = time.monotonic() + 3
+    while controller.snapshot['rows'][index].get('isPending') and time.monotonic() < deadline:
+        app.processEvents()
+    assert not controller.snapshot['rows'][index].get('isPending')
+    assert not controller.snapshot['rows'][index].get('isGuideError')
+    controller.stop()
+
+
+def test_partial_studio_clear_keeps_fixed_starts_and_invalidates_only_future_reservations():
+    from pathlib import Path
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlExpression
+    import channelos
+    from test_channel_studio_qml_runtime import FakeStudioController, FakeStudioHost
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller, host = FakeStudioController(), FakeStudioHost()
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty('channelOS', controller)
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(Path(channelos.__file__).parent / 'qml' / 'ChannelStudioScreen.qml')))
+    item = component.create()
+    assert item is not None, component.errors()
+    item.setProperty('hostWindow', host)
+    expression = QQmlExpression(engine.contextForObject(item), item, '''(function() {
+        var start = visibleStart().getTime(); var dates = [start-8*86400000,start,start+8*86400000];
+        calendarBlocks.clear();
+        for (var i=0;i<dates.length;++i) appendBlock({assetId:"sha256:test",durationSeconds:1800,
+            startUtc:new Date(dates[i]).toISOString(),
+            adPlan:{start_utc:new Date(dates[i]).toISOString(),end_utc:new Date(dates[i]+1860000).toISOString()}});
+        rebuildBlockIndex(); clearVisibleRange();
+        return JSON.stringify({count:calendarBlocks.count, past:calendarBlocks.get(0), future:calendarBlocks.get(1),
+            expectedPast:new Date(dates[0]).toISOString(),expectedFuture:new Date(dates[2]).toISOString()});
+    })()''')
+    value, _ = expression.evaluate()
+    assert not expression.hasError(), expression.error().toString()
+    result = json.loads(value)
+    assert result['count'] == 2
+    assert result['past']['startUtc'] == result['expectedPast']
+    assert result['future']['startUtc'] == result['expectedFuture']
+    assert json.loads(result['past']['adPlanJson']) is not None
+    assert json.loads(result['future']['adPlanJson']) is None
+    item.deleteLater()
+    app.processEvents()

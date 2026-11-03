@@ -31,6 +31,24 @@ ApplicationWindow {
     property int studioChannelNumber: 0
     property int selectedRow: 0
     property int selectedProgram: 0
+    property int guideSelectionChannel: 0
+    property string guideSelectionScheduleId: ""
+    property bool publishingGuideRows: false
+    readonly property var startupState: channelOS && typeof channelOS.startupState !== "undefined"
+                                       ? channelOS.startupState : ({active: false})
+    Rectangle {
+        z: 350
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: parent.height - height - 12
+        width: Math.min(parent.width - 48, startupLabel.implicitWidth + 36)
+        height: 38
+        radius: 8
+        color: "#0d2035"
+        border.color: "#1a91ff"
+        visible: Boolean(root.startupState.active)
+        Text { id: startupLabel; anchors.centerIn: parent; color: "#f4f7fb";
+               text: String(root.startupState.message || "Loading your channels…"); font.pixelSize: 15 }
+    }
     property int selectedLibrary: 0
     property string statusMessage: ""
     property bool liveHudVisible: false
@@ -107,7 +125,16 @@ ApplicationWindow {
                                        screen === "guide" ? selectedRow + 6 : -1)
     }
     onScreenChanged: requestVisibleGuideRows()
-    onSelectedRowChanged: requestVisibleGuideRows()
+    onSelectedRowChanged: { requestVisibleGuideRows(); rememberGuideSelection() }
+    onSelectedProgramChanged: rememberGuideSelection()
+
+    function rememberGuideSelection() {
+        if (publishingGuideRows || !rows || !rows[selectedRow]) return
+        guideSelectionChannel = Number(rows[selectedRow].channelNumber || 0)
+        var programs = programsForRow(selectedRow)
+        var selected = programs[selectedProgram]
+        guideSelectionScheduleId = selected && !selected.isPending ? String(selected.scheduleId || "") : ""
+    }
 
     function programsForRow(rowIndex) {
         if (!rows || rowIndex < 0 || rowIndex >= rows.length)
@@ -427,8 +454,29 @@ ApplicationWindow {
     onSettingsSnapshotChanged: syncDisplayedSettings()
 
     onRowsChanged: {
-        if (rows.length > 0)
-            selectRow(Math.min(selectedRow, rows.length - 1))
+        if (rows.length === 0) return
+        var rowIndex = Math.min(selectedRow, rows.length - 1)
+        for (var index = 0; index < rows.length; ++index) {
+            if (Number(rows[index].channelNumber) === guideSelectionChannel) {
+                rowIndex = index
+                break
+            }
+        }
+        var programs = programsForRow(rowIndex)
+        var programIndex = currentProgramIndex(rowIndex)
+        for (var item = 0; item < programs.length; ++item) {
+            if (String(programs[item].scheduleId) === guideSelectionScheduleId) {
+                programIndex = item
+                break
+            }
+        }
+        publishingGuideRows = true
+        selectedRow = rowIndex
+        selectedProgram = programIndex
+        publishingGuideRows = false
+        rememberGuideSelection()
+        requestVisibleGuideRows()
+        guideList.positionViewAtIndex(rowIndex, ListView.Contain)
     }
 
     onLibraryItemsChanged: {

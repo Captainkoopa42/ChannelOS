@@ -189,6 +189,7 @@ def build_couch_snapshot(
     guide_hours: float = DEFAULT_GUIDE_HOURS,
     prepared_rows=None,
     pending_numbers=(),
+    failed_numbers=(),
 ) -> dict[str, object]:
     """Project the authoritative Guide into a QML-friendly couch UI snapshot."""
     if guide_hours <= 0:
@@ -227,8 +228,11 @@ def build_couch_snapshot(
         row.update(channelNumber=number, displayNumber=definition.display_number,
                    channelName=definition.name, isUnassigned=False, isPending=True)
         for item in (*row['programs'], *row['displaySegments']):
-            item.update(channelNumber=number, title='LOADING GUIDE…', isUnassigned=False, isPending=True)
-        row['programs'][0]['scheduleId'] = f'channelos:pending:{number}'
+            item.update(channelNumber=number, title=('SCHEDULE UNAVAILABLE' if number in failed_numbers else 'LOADING GUIDE…'),
+                        isUnassigned=False, isPending=number not in failed_numbers)
+        row['isPending'] = number not in failed_numbers
+        row['isGuideError'] = number in failed_numbers
+        row['programs'][0]['scheduleId'] = f"channelos:{'guide-error' if number in failed_numbers else 'pending'}:{number}"
         rows.append(row)
 
     for definition in service.unavailable_channels:

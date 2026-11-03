@@ -468,3 +468,31 @@ def test_production_filter_clears_numeric_input_for_qml_and_all_tuning_routes(mo
     finally:
         window.close()
         app.processEvents()
+
+
+def test_incremental_guide_publication_retains_selected_occurrence():
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeChannelOS()
+    start = controller._snapshot['horizonStartMs']
+    row = {'channelNumber': 7, 'displayNumber': '007', 'channelName': 'Seven',
+           'programs': [{'scheduleId': str(i), 'channelNumber': 7, 'title': f'Show {i}',
+                        'startMs': start + i * 60000, 'endMs': start + (i + 1) * 60000,
+                        'isCurrent': i == 0} for i in range(3)], 'displaySegments': []}
+    controller._snapshot['rows'] = [row]
+    engine = QQmlApplicationEngine()
+    video = QWindow()
+    engine.rootContext().setContextProperty('channelOS', controller)
+    engine.rootContext().setContextProperty('channelOSVideoWindow', video)
+    engine.load(QUrl.fromLocalFile(str(Path(channelos.__file__).parent / 'qml' / 'Main.qml')))
+    window = engine.rootObjects()[0]
+    window.setProperty('screen', 'guide')
+    window.setProperty('selectedProgram', 2)
+    app.processEvents()
+    # Another station's row completes while the user is inspecting a future show.
+    controller._snapshot = {**controller._snapshot, 'rows': [row, {**row, 'channelNumber': 8}]}
+    controller.snapshotChanged.emit()
+    app.processEvents()
+    assert window.property('selectedRow') == 0
+    assert window.property('selectedProgram') == 2
+    assert window.property('guideSelectionScheduleId') == '2'
+    window.close()

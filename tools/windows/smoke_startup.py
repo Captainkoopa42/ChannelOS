@@ -114,6 +114,6 @@ def run(*, skip_video=False, vlc_dir=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--skip-video', action='store_true', help='Check shell loading without requiring a native decoder')
-    parser.add_argument('--vlc-dir', type=Path, default=Path('dist/windows/ChannelOS/vlc'))
+    parser.add_argument('--vlc-dir', type=Path, default=Path('dist/windows/ChannelOS/runtime/vlc'))
     options = parser.parse_args()
     run(skip_video=options.skip_video, vlc_dir=options.vlc_dir if options.vlc_dir.exists() else None)

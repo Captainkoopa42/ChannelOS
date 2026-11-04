@@ -1083,7 +1083,7 @@ Item {
                     opacity: shelfDelegate.expanded ? 1 : 0
                     spacing: 11
                     clip: true
-                    model: shelfDelegate.shelfData.items || []
+                    model: shelfDelegate.expanded ? (shelfDelegate.shelfData.items || []) : []
                     currentIndex: shelfDelegate.shelfIndex === libraryRoot.selectedShelf
                                   ? libraryRoot.selectedColumn : -1
                     boundsBehavior: Flickable.StopAtBounds

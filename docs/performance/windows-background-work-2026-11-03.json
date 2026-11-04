@@ -796,67 +796,67 @@
       {
         "operation": "construct-library-view",
         "items": 5000,
-        "seconds": 0.07523593299993081,
+        "seconds": 0.02405339000006279,
         "backend_refresh_requests": 0,
         "callbacks": {}
       },
       {
         "operation": "show-library",
         "items": 5000,
-        "seconds": 0.8825996880000275,
+        "seconds": 0.5663093620000836,
         "backend_refresh_requests": 1,
         "callbacks": {
           "shelves": {
             "count": 1,
-            "total_seconds": 0.25143669399994906,
-            "max_seconds": 0.25143669399994906
+            "total_seconds": 0.1927303310003481,
+            "max_seconds": 0.1927303310003481
           }
         }
       },
       {
         "operation": "one-library-changed-signal",
         "items": 5000,
-        "seconds": 0.5326323059998685,
+        "seconds": 0.4336503999998058,
         "backend_refresh_requests": 0,
         "callbacks": {
           "shelves": {
             "count": 1,
-            "total_seconds": 0.09399060600026132,
-            "max_seconds": 0.09399060600026132
+            "total_seconds": 0.08071904500002347,
+            "max_seconds": 0.08071904500002347
           }
         }
       },
       {
         "operation": "one-artwork-card-patch",
         "items": 5000,
-        "seconds": 0.0008547939996788045,
+        "seconds": 0.0007596300001750933,
         "backend_refresh_requests": 0,
         "callbacks": {}
       },
       {
         "operation": "one-search-character",
         "items": 5000,
-        "seconds": 0.036474143999839725,
+        "seconds": 0.046476177999920765,
         "backend_refresh_requests": 0,
         "callbacks": {
           "shelves": {
             "count": 1,
-            "total_seconds": 0.03354711900010443,
-            "max_seconds": 0.03354711900010443
+            "total_seconds": 0.04036190200031342,
+            "max_seconds": 0.04036190200031342
           }
         }
       },
       {
         "operation": "hidden-library-changed-signal",
         "items": 5000,
-        "seconds": 5.245200009085238e-05,
+        "seconds": 2.1470000319823157e-05,
         "backend_refresh_requests": 0,
         "callbacks": {}
       },
       {
         "operation": "hidden-artwork-card-patch",
         "items": 5000,
-        "seconds": 0.0005294689999573166,
+        "seconds": 0.00010133900013897801,
         "backend_refresh_requests": 0,
         "callbacks": {}
       }
@@ -922,6 +922,7 @@
     "history_plan_cache_limit": 256,
     "ad_source_cache_limit": 32,
     "library_hidden_catalog_rebuilds": 0,
-    "artwork_card_patch_catalog_rebuilds": 0
+    "artwork_card_patch_catalog_rebuilds": 0,
+    "collapsed_shelf_card_models": 0
   }
 }

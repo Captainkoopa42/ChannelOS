@@ -13,22 +13,25 @@ Item {
     property var excludedIds: []
     property bool readOnly: false
     property var expanded: ({})
-    readonly property var groups: AdSources.groups(mediaLibrary, sources, assetIds, [])
-    readonly property int clipCount: AdSources.selected(mediaLibrary, sources, assetIds, excludedIds).length
+    readonly property var preparedMedia: AdSources.prepare(mediaLibrary)
+    readonly property var groups: AdSources.groupPrepared(preparedMedia, sources, assetIds)
+    readonly property var membership: AdSources.membership(groups)
+    readonly property var selection: AdSources.selection(membership, excludedIds)
+    readonly property int clipCount: selection.total
     signal sourcesEdited(var paths)
     signal exclusionsEdited(var ids)
 
     function rows() {
         var result = [], needle = String(search.text || "").trim().toLowerCase()
         groups.forEach(function(group) {
-            var matching = group.media.filter(function(item) {
+            var matching = !needle ? group.media : group.media.filter(function(item) {
                 return !needle || String(item.title || "").toLowerCase().indexOf(needle) >= 0
                         || String(group.name).toLowerCase().indexOf(needle) >= 0
             })
             if (needle && !matching.length) return
             var open = Boolean(expanded[group.path]) || needle.length > 0
             result.push({source:true, path:group.path, name:group.name, count:group.media.length,
-                         selected:group.media.filter(function(item) { return excludedIds.indexOf(item.assetId) < 0 }).length, open:open})
+                         open:open})
             if (open) matching.forEach(function(item) { result.push({source:false, media:item}) })
         })
         return result
@@ -71,7 +74,7 @@ Item {
                         onClicked: { var next = Object.assign({}, bin.expanded); next[card.modelData.path] = !next[card.modelData.path]; bin.expanded = next }
                         contentItem: Column {
                             spacing: 4
-                            Text { width: parent.width; text: (card.modelData.open ? "▾  " : "▸  ") + card.modelData.name + " · " + card.modelData.selected + "/" + card.modelData.count; color: "#f4f7fb"; font.pixelSize: 12; elide: Text.ElideRight }
+                            Text { width: parent.width; text: (card.modelData.open ? "▾  " : "▸  ") + card.modelData.name + " · " + bin.selection.counts[card.modelData.path] + "/" + card.modelData.count; color: "#f4f7fb"; font.pixelSize: 12; elide: Text.ElideRight }
                             Text { width: parent.width; text: card.modelData.path || "Fixed selection"; color: "#9fb0c2"; font.pixelSize: 10; elide: Text.ElideMiddle }
                         }
                         ToolTip.visible: hovered; ToolTip.text: String(card.modelData.path || card.modelData.name)
@@ -83,7 +86,7 @@ Item {
                     visible: !card.modelData.source
                     enabled: !bin.readOnly
                     text: String((card.modelData.media || {}).title || "") + " · " + Number((card.modelData.media || {}).durationSeconds || 0).toFixed(0) + "s"
-                    checked: bin.excludedIds.indexOf(String((card.modelData.media || {}).assetId || "")) < 0
+                    checked: !bin.selection.ignored[String((card.modelData.media || {}).assetId || "")]
                     onClicked: {
                         var id = String(card.modelData.media.assetId), next = bin.excludedIds.filter(function(value) { return value !== id })
                         if (!checked) next.push(id)

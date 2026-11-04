@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
+import time
 import os
 import shutil
 import subprocess
@@ -33,6 +35,7 @@ class ArtworkCacheChange:
     removed_files: int = 0
     removed_bytes: int = 0
     remaining: ArtworkCacheStats = ArtworkCacheStats()
+    removed_paths: tuple[Path, ...] = ()
 
 
 class MediaArtworkCache:
@@ -58,6 +61,11 @@ class MediaArtworkCache:
         self._directory_lock = threading.RLock()
         self._cache_lock = threading.RLock()
         self._generation = 0
+        self._entries = None
+        self._cache_bytes = 0
+        self._oldest = []
+        self._directory_stamp = None
+        self._last_inventory = 0.0
 
     def clear_discovery_cache(self) -> None:
         """Allow newly added sidecar art to be found on the next request."""
@@ -103,81 +111,94 @@ class MediaArtworkCache:
         except OSError:
             return []
 
+    def _stamp(self):
+        try:
+            stat = self.cache_directory.stat()
+            return stat.st_mtime_ns, stat.st_ino
+        except OSError:
+            return None
+
+    def _inventory(self):
+        stamp = self._stamp()
+        if self._entries is not None and stamp == self._directory_stamp and time.monotonic() - self._last_inventory < 60:
+            return
+        entries = {}
+        for path in self._generated_cache_files():
+            try:
+                stat = path.stat()
+                entries[path] = (stat.st_mtime_ns, stat.st_size)
+            except OSError:
+                pass
+        self._entries = entries
+        self._cache_bytes = sum(size for _, size in entries.values())
+        self._oldest = [(stamp, str(path), size) for path, (stamp, size) in entries.items()]
+        heapq.heapify(self._oldest)
+        self._directory_stamp = stamp
+        self._last_inventory = time.monotonic()
+
+    def _register(self, path):
+        if self._entries is None:
+            return
+        stat = path.stat()
+        previous = self._entries.get(path)
+        if previous:
+            self._cache_bytes -= previous[1]
+        self._entries[path] = stat.st_mtime_ns, stat.st_size
+        self._cache_bytes += stat.st_size
+        heapq.heappush(self._oldest, (stat.st_mtime_ns, str(path), stat.st_size))
+        self._directory_stamp = self._stamp()
+
     def stats(self) -> ArtworkCacheStats:
         with self._cache_lock:
-            files = self._generated_cache_files()
-            sizes: list[int] = []
-            for path in files:
-                try:
-                    sizes.append(path.stat().st_size)
-                except OSError:
-                    pass
-            return ArtworkCacheStats(len(sizes), sum(sizes))
+            self._inventory()
+            return ArtworkCacheStats(len(self._entries), self._cache_bytes)
 
     def clear_generated(self) -> ArtworkCacheChange:
-        """Remove only ChannelOS-generated thumbnails, never user sidecars."""
-
+        """Remove generated thumbnails, retaining sidecars and in-flight protection."""
         with self._cache_lock:
             if self._portable:
                 self._portable.check_available()
             self._generation += 1
-            removed_files = 0
-            removed_bytes = 0
-            for path in self._generated_cache_files():
+            self._entries = None  # Explicit Clear reconciles externally changed files too.
+            self._inventory()
+            removed, size = [], 0
+            for path, (_, count) in tuple(self._entries.items()):
                 try:
-                    size = path.stat().st_size
                     path.unlink()
-                    removed_files += 1
-                    removed_bytes += size
+                    removed.append(path)
+                    size += count
+                    self._entries.pop(path)
+                    self._cache_bytes -= count
                 except OSError:
                     pass
-            return ArtworkCacheChange(
-                removed_files=removed_files,
-                removed_bytes=removed_bytes,
-                remaining=self.stats(),
-            )
+            self._directory_stamp = self._stamp()
+            self._oldest = [(stamp, str(path), size) for path, (stamp, size) in self._entries.items()]
+            heapq.heapify(self._oldest)
+            return ArtworkCacheChange(len(removed), size, ArtworkCacheStats(len(self._entries), self._cache_bytes), tuple(removed))
 
     def prune(self, max_bytes: int) -> ArtworkCacheChange:
-        """Keep the newest generated thumbnails within ``max_bytes``.
-
-        A zero limit means unlimited. Files that do not match ChannelOS's
-        generated-thumbnail naming scheme are deliberately ignored.
-        """
-
+        """Use one maintained inventory instead of rescanning on each cache hit."""
         limit = max(0, int(max_bytes))
-        if limit == 0:
-            return ArtworkCacheChange(remaining=self.stats())
-
         with self._cache_lock:
             if self._portable:
                 self._portable.check_available()
-            candidates: list[tuple[float, int, Path]] = []
-            for path in self._generated_cache_files():
+            self._inventory()
+            removed, size = [], 0
+            while limit and self._cache_bytes > limit and self._oldest:
+                stamp, text, count = heapq.heappop(self._oldest)
+                path = Path(text)
+                if self._entries.get(path) != (stamp, count):
+                    continue
                 try:
-                    details = path.stat()
-                    candidates.append((details.st_mtime, details.st_size, path))
+                    path.unlink(missing_ok=True)
                 except OSError:
-                    pass
-
-            total = sum(size for _modified, size, _path in candidates)
-            removed_files = 0
-            removed_bytes = 0
-            for _modified, size, path in sorted(candidates):
-                if total <= limit:
-                    break
-                try:
-                    path.unlink()
-                    total -= size
-                    removed_files += 1
-                    removed_bytes += size
-                except OSError:
-                    pass
-
-            return ArtworkCacheChange(
-                removed_files=removed_files,
-                removed_bytes=removed_bytes,
-                remaining=self.stats(),
-            )
+                    continue
+                self._entries.pop(path)
+                self._cache_bytes -= count
+                removed.append(path)
+                size += count
+            self._directory_stamp = self._stamp()
+            return ArtworkCacheChange(len(removed), size, ArtworkCacheStats(len(self._entries), self._cache_bytes), tuple(removed))
 
     def find_sidecar(self, media_path: str | Path) -> Path | None:
         media = Path(media_path)
@@ -311,6 +332,7 @@ class MediaArtworkCache:
                 if generation != self._generation:
                     return None
                 temporary.replace(destination)
+                self._register(destination)
             return destination
         except (OSError, subprocess.SubprocessError):
             return None

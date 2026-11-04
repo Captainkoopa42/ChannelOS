@@ -242,6 +242,6 @@ def test_artwork_publication_patches_cards_without_rebuilding_library() -> None:
         maxsplit=1,
     )[1].split("    @Slot()", maxsplit=1)[0]
 
-    assert "self._artwork_pending" in method
-    assert 'item["artworkUrl"]' in method
+    assert "libraryArtworkChanged.emit(patches)" in method
+    assert "libraryChanged.emit" not in method
     assert "_build_library_snapshot" not in method

@@ -25,6 +25,10 @@ Dialog {
     Connections {
         target: channelOS
         ignoreUnknownSignals: true
+        function onPortablePreviewCompleted(result) {
+            portableDialog.review = result
+            portableDialog.showResult(result)
+        }
         function onPortableSetupChanged() {
             if (portableDialog.setup.active && portableDialog.setup.available === false)
                 portableDialog.close()
@@ -36,8 +40,12 @@ Dialog {
         showOperation = false
     }
     function reviewCopy() {
-        review = channelOS.previewPortableCopy(destination.text, copyMedia.checked, copyApp.checked, copyArtwork.checked)
-        showResult(review)
+        review = ({})
+        var result = typeof channelOS.beginPortablePreview === "function"
+            ? channelOS.beginPortablePreview(destination.text, copyMedia.checked, copyApp.checked, copyArtwork.checked)
+            : channelOS.previewPortableCopy(destination.text, copyMedia.checked, copyApp.checked, copyArtwork.checked)
+        if (!result.pending) review = result
+        showResult(result)
     }
     function handleControllerIntent(intent) {
         if (intent === "BACK" || intent === "HOME") close()

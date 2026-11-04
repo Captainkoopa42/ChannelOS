@@ -11,6 +11,7 @@ import tempfile
 import uuid
 from contextlib import contextmanager, closing
 from dataclasses import dataclass, field
+from functools import cached_property
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -24,7 +25,9 @@ from .loader import load_channel
 from .portable import (APP_FOLDER, DATA_FOLDER, FORMAT_VERSION, MANIFEST_NAME,
                        PortablePaths, PortableSetupError, load_setup, path_tree)
 from .portable import SetupLock
-from .resolve import resolve_channel
+from .resolve import resolve_channel, MediaResolutionIndex
+from .models import ChannelDefinition
+from .portable import decode_tree
 from .runtime import RUNTIME_SCHEMA_VERSION, advertising_signature
 from .storage import inspect_database_version
 
@@ -134,11 +137,15 @@ class CopyPlan:
     def copy_application(self) -> bool:
         return self.application_directory is not None and self.application_directory != self.destination / APP_FOLDER
 
-    @property
+    @cached_property
     def paths(self) -> PortablePaths:
         return PortablePaths(self.destination, self.setup_id, self.case_sensitive,
             tuple({'source_id': f'source-{root.rank}', 'relative_path': root.relative,
                    'sort_rank': root.rank} for root in self.roots), require_marker=False)
+
+    @cached_property
+    def ordered_roots(self):
+        return tuple(sorted(self.roots, key=lambda item: len(item.original.parts), reverse=True))
 
     def encode(self, path: str) -> str:
         if str(path).startswith('portable://'):
@@ -146,7 +153,7 @@ class CopyPlan:
                 raise PortableSetupError('A portable source reference needs its original setup')
             path = str(self.source_portable.decode(path))
         physical = Path(path).expanduser().resolve(strict=False)
-        for source in sorted(self.roots, key=lambda item: len(item.original.parts), reverse=True):
+        for source in self.ordered_roots:
             if physical.is_relative_to(source.original):
                 relative = Path(source.relative) / physical.relative_to(source.original)
                 return 'portable://' + relative.as_posix().removeprefix('./')
@@ -313,33 +320,91 @@ class SetupSnapshot:
         self.temporary.cleanup()
 
 
-def snapshot_setup(plan: CopyPlan, library: MediaLibrary, runtime_database: Path,
-                   channels_directory: Path) -> SetupSnapshot:
-    """Call on the application's writer thread after active scans have finished.
+@dataclass
+class CapturedSetup:
+    snapshot: SetupSnapshot
+    databases: dict
+    channel_texts: tuple[str, ...]
+    studio_files: tuple
+    settings_text: str | None
+    source_portable: PortablePaths | None
 
-    One GUI turn takes SQLite backup snapshots and captures channel intent;
-    expensive media/application copying happens later in a worker.
+    def close_readers(self):
+        for connection in self.databases.values():
+            connection.close()
+        self.databases.clear()
+
+    def close(self):
+        self.close_readers()
+        self.snapshot.close()
+
+
+def capture_setup(plan: CopyPlan, library: MediaLibrary, runtime_database: Path,
+                  channels_directory: Path) -> CapturedSetup:
+    """Pin read snapshots and copy small intent files in one writer-thread turn.
+
+    Establishing a read transaction pins each database's current WAL snapshot;
+    the worker performs the backups and all resolution/conversion afterwards.
+    The connections are transferred exclusively, never shared between threads.
     """
     if library.portable:
         library.portable.check_available()
     temporary = tempfile.TemporaryDirectory(prefix='channelos-portable-snapshot-')
     root = Path(temporary.name)
-    data = root / DATA_FOLDER
-    data.mkdir()
+    (root / DATA_FOLDER).mkdir()
     snapshot = SetupSnapshot(plan, temporary, root,
         library.database_path.parent / 'artwork' if plan.include_artwork else None)
+    captured = CapturedSetup(snapshot, {}, (), (), None, library.portable)
     try:
-        _backup_database(library.database_path, data / 'library.db')
-        for name, source in [('runtime.db', runtime_database),
+        for name, source in [('library.db', library.database_path), ('runtime.db', runtime_database),
                              ('ad_catalog.sqlite', library.database_path.with_name('ad_catalog.sqlite'))]:
-            if source.is_file():
-                _backup_database(source, data / name)
+            if not source.is_file():
+                continue
+            connection = sqlite3.connect(f'{source.resolve().as_uri()}?mode=ro', uri=True,
+                                         check_same_thread=False)
+            captured.databases[name] = connection
+            connection.execute('BEGIN')
+            connection.execute('SELECT name FROM sqlite_master LIMIT 1').fetchone()
+        captured.channel_texts = tuple(path.read_text(encoding='utf-8') for path in plan.channel_paths)
+        studio = channels_directory / 'studio'
+        if studio.is_dir():
+            captured.studio_files = tuple((path.relative_to(studio), path.read_bytes())
+                for path in studio.rglob('*') if path.is_file())
+        settings = library.database_path.parent / 'settings.json'
+        if settings.is_file():
+            captured.settings_text = settings.read_text(encoding='utf-8')
+        return captured
+    except BaseException:
+        captured.close()
+        raise
+
+
+def prepare_snapshot(captured: CapturedSetup, *, should_cancel=None) -> SetupSnapshot:
+    """Prepare the pinned setup on a worker, with one shared Library projection."""
+    snapshot = captured.snapshot
+    plan, root = snapshot.plan, snapshot.root
+    data = root / DATA_FOLDER
+    def check():
+        if should_cancel is not None and should_cancel():
+            raise CopyCancelled('Portable setup preparation cancelled')
+    try:
+        for name, connection in captured.databases.items():
+            check()
+            with closing(sqlite3.connect(data / name)) as destination:
+                connection.backup(destination, pages=256, progress=lambda *_: check())
+        captured.close_readers()
+        # Decode the captured database against the source drive, without
+        # initializing or querying a live source database during conversion.
+        library = object.__new__(MediaLibrary)
+        library.database_path, library.portable = data / 'library.db', captured.source_portable
+        index = MediaResolutionIndex(library)
         channel_dir = data / 'channels'
         channel_dir.mkdir()
         revisions = {}
-        for path in plan.channel_paths:
-            definition = load_channel(path)
-            resolved = resolve_channel(definition, library, allow_offline_ads=True)
+        for text in captured.channel_texts:
+            check()
+            definition = ChannelDefinition.from_mapping(decode_tree(yaml.safe_load(text), library.portable))
+            resolved = resolve_channel(definition, library, allow_offline_ads=True, index=index)
             revisions[definition.channel] = advertising_signature(resolved, path_encoder=plan.encode)
             encoded = path_tree(channel_to_mapping(definition), plan.encode)
             old_revision = advertising_signature(resolved)
@@ -352,18 +417,22 @@ def snapshot_setup(plan: CopyPlan, library: MediaLibrary, runtime_database: Path
                             item['policy_revision'] = revisions[definition.channel]
             (channel_dir / f'channel-{definition.channel:04d}.yaml').write_text(
                 yaml.safe_dump(encoded, sort_keys=False, allow_unicode=True), encoding='utf-8')
-        studio = channels_directory / 'studio'
-        if studio.is_dir():
-            shutil.copytree(studio, channel_dir / 'studio')
-        settings = library.database_path.parent / 'settings.json'
-        if settings.is_file():
-            raw = json.loads(settings.read_text(encoding='utf-8'))
+        for relative, content in captured.studio_files:
+            check()
+            target = channel_dir / 'studio' / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        if captured.settings_text is not None:
+            raw = json.loads(captured.settings_text)
             if not isinstance(raw, dict):
                 raise PortableSetupError('The saved settings are invalid. Save your preferences in Settings, then retry the copy.')
             raw.pop('audio_output_device_id', None)
             (data / 'settings.json').write_text(json.dumps(raw, indent=2), encoding='utf-8')
+        check()
         _convert_library(data / 'library.db', plan, library)
+        check()
         _convert_catalog(data / 'ad_catalog.sqlite', plan)
+        check()
         _convert_runtime(data / 'runtime.db', plan, revisions)
         manifest = {'format': 'channelos-portable', 'version': FORMAT_VERSION,
                     'setup_id': plan.setup_id, 'case_sensitive': plan.case_sensitive,
@@ -375,6 +444,14 @@ def snapshot_setup(plan: CopyPlan, library: MediaLibrary, runtime_database: Path
     except BaseException:
         snapshot.close()
         raise
+    finally:
+        captured.close_readers()
+
+
+def snapshot_setup(plan: CopyPlan, library: MediaLibrary, runtime_database: Path,
+                   channels_directory: Path) -> SetupSnapshot:
+    """Synchronous service API; the Qt workflow transfers capture to a worker."""
+    return prepare_snapshot(capture_setup(plan, library, runtime_database, channels_directory))
 
 
 def _convert_library(database: Path, plan: CopyPlan, library: MediaLibrary):

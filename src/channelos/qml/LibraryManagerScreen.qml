@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "LibraryView.js" as LibraryView
 
 Item {
     id: libraryRoot
@@ -10,7 +11,8 @@ Item {
     property var hostWindow: null
     property var browseHost: null
     property bool active: false
-    visible: active && hostWindow !== null && hostWindow.screen === "library"
+    readonly property bool viewActive: active && hostWindow !== null && hostWindow.screen === "library"
+    visible: viewActive
 
     readonly property color appBackground: "#050c15"
     readonly property color panel: "#081625"
@@ -25,9 +27,24 @@ Item {
     readonly property color warning: "#ffb84a"
     readonly property color danger: "#ff6666"
 
-    property var snapshot: channelOS
-                           ? (channelOS.librarySnapshot || ({}))
-                           : ({})
+    property var snapshot: ({items: [], sources: []})
+    property var viewData: null
+    property bool catalogDirty: true
+    property bool filterDirty: true
+    property var orders: ({})
+    function syncLibraryView() {
+        if (!viewActive) return
+        if (catalogDirty) {
+            if (browseHost && browseHost.viewData && !browseHost.catalogDirty) viewData=browseHost.viewData
+            else viewData=LibraryView.prepare(channelOS ? channelOS.librarySnapshot : ({}))
+            snapshot=viewData.snapshot
+            orders=({})
+            catalogDirty=false
+            filterDirty=true
+        }
+        if (filterDirty) { filterDirty=false; rebuildMedia() }
+    }
+    function invalidateLibrary() { catalogDirty=true; if(viewActive) Qt.callLater(libraryRoot.syncLibraryView) }
     property var scan: channelOS
                        ? (channelOS.libraryScan || ({ active: false }))
                        : ({ active: false })
@@ -54,18 +71,11 @@ Item {
 
     function rebuildMedia() {
         var needle = String(query || "").trim().toLowerCase()
-        var next = []
-        for (var i = 0; i < allItems.length; ++i) {
-            var item = allItems[i]
-            var haystack = (String(item.title || "") + " "
-                            + String(item.fileName || "") + " "
-                            + String(item.sourceName || "") + " "
-                            + String(item.containerFormat || "")).toLowerCase()
-            if (!needle.length || haystack.indexOf(needle) >= 0)
-                next.push(item)
-        }
-
-        next.sort(function(a, b) {
+        if (!viewActive || !viewData) { filterDirty=true; return }
+        var ordered=orders[sortMode]
+        if (!ordered) {
+            ordered=viewData.items.slice(0)
+            ordered.sort(function(a, b) {
             if (sortMode === 1) {
                 var sourceA = String(a.sourceName || "").toLowerCase()
                 var sourceB = String(b.sourceName || "").toLowerCase()
@@ -82,6 +92,9 @@ Item {
             return 0
         })
 
+            orders[sortMode]=ordered
+        }
+        var next=needle.length ? ordered.filter(function(item){return viewData.search[item.assetId].indexOf(needle)>=0}) : ordered
         filteredItems = next
         if (filteredItems.length === 0)
             selectedMedia = 0
@@ -152,11 +165,17 @@ Item {
     }
 
     function chooseSource() {
-        beginPreflight(channelOS.chooseMediaFolder())
+        if (typeof channelOS.chooseMediaFolderPath === "function") {
+            var result=channelOS.chooseMediaFolderPath()
+            if (result && result.ok) preflightSource(result.path)
+        } else beginPreflight(channelOS.chooseMediaFolder())
     }
 
     function preflightSource(path) {
-        beginPreflight(channelOS.preflightMediaSource(String(path || "")))
+        if (typeof channelOS.startMediaPreflight === "function") {
+            var result=channelOS.startMediaPreflight(String(path || ""))
+            if (!result || !result.ok) setFeedback(result)
+        } else beginPreflight(channelOS.preflightMediaSource(String(path || "")))
     }
 
     function startPendingScan() {
@@ -208,25 +227,25 @@ Item {
         setFeedback(result)
     }
 
-    onQueryChanged: rebuildMedia()
-    onSortModeChanged: rebuildMedia()
-    onAllItemsChanged: rebuildMedia()
+    onQueryChanged: { filterDirty=true; if(viewActive) Qt.callLater(libraryRoot.syncLibraryView) }
+    onSortModeChanged: { filterDirty=true; if(viewActive) Qt.callLater(libraryRoot.syncLibraryView) }
 
-    onVisibleChanged: {
-        if (visible) {
-            channelOS.refreshLibrary()
-            rebuildMedia()
+    onViewActiveChanged: {
+        if (viewActive) {
+            if (!browseHost) channelOS.refreshLibrary()
+            syncLibraryView()
             forceActiveFocus()
         }
     }
 
-    Component.onCompleted: rebuildMedia()
+    Component.onCompleted: syncLibraryView()
 
     Connections {
         target: channelOS
+        ignoreUnknownSignals: true
+        function onMediaPreflightCompleted(result) { if (!result.cancelled) libraryRoot.beginPreflight(result) }
         function onLibraryChanged() {
-            libraryRoot.snapshot = channelOS.librarySnapshot || ({})
-            libraryRoot.rebuildMedia()
+            libraryRoot.invalidateLibrary()
         }
         function onLibraryScanChanged() {
             libraryRoot.scan = channelOS.libraryScan || ({ active: false })

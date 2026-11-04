@@ -17,36 +17,74 @@ function natural(a, b) {
     }
     return x.length - y.length
 }
-function groups(media, sources, ids, excluded) {
-    var result = [], seen = ({}), requested = ({}), ignored = ({})
-    ids.forEach(function(id) { requested[id] = true })
-    excluded.forEach(function(id) { ignored[id] = true })
-    sources.forEach(function(path) {
-        var parts = String(path).replace(/\\/g, "/").replace(/\/+$/, "").split("/")
-        result.push({path:path, name:parts[parts.length-1] || path, media:[]})
+function prepare(media) {
+    // Cross the QVariant boundary once, rather than once per source comparison.
+    var rows = JSON.parse(JSON.stringify(media || []))
+    return rows.map(function(item) {
+        return {item:item, locations:(item.locations && item.locations.length ? item.locations : [item]).map(function(location) {
+            return {value:location, key:key(location.path)}
+        })}
     })
-    media.forEach(function(item) {
-        var id = String(item.assetId || "")
-        if (!id || seen[id] || ignored[id]) return
-        var locations = item.locations && item.locations.length ? item.locations : [item]
-        for (var i = 0; i < result.length; ++i) {
-            for (var j = 0; j < locations.length; ++j) {
-                if (contains(locations[j].path, result[i].path)) {
-                    result[i].media.push(Object.assign({}, item, locations[j])); seen[id] = true; return
-                }
+}
+function groupPrepared(prepared, sources, ids) {
+    var result=[], roots=Object.create(null), requested=Object.create(null), seen=Object.create(null)
+    ids.forEach(function(id) { requested[String(id)]=true })
+    sources.forEach(function(path, index) {
+        var parts=String(path).replace(/\\/g,"/").replace(/\/+$/,"").split("/")
+        result.push({path:path, name:parts[parts.length-1] || path, media:[]})
+        var normalized=key(path)
+        if (!(normalized in roots)) roots[normalized]=index
+    })
+    var fixed=null
+    prepared.forEach(function(row) {
+        var item=row.item, id=String(item.assetId || "")
+        if (!id || seen[id]) return
+        var first=sources.length, location=null
+        row.locations.forEach(function(candidate) {
+            var path=candidate.key
+            while (path.length) {
+                if (path in roots && roots[path] < first) { first=roots[path]; location=candidate.value }
+                var slash=path.lastIndexOf("/")
+                if (slash<0) break
+                path=path.substring(0,slash)
+                // POSIX root is represented by the empty normalized key.
+                if (!path.length && "" in roots && roots[""]<first) { first=roots[""]; location=candidate.value }
             }
-        }
-        if (requested[id]) {
-            var group = result.filter(function(g) { return g.path === "" })[0]
-            if (!group) { group = {path:"", name:"Selected clips", media:[]}; result.push(group) }
-            group.media.push(item); seen[id] = true
+        })
+        if (location) { result[first].media.push(Object.assign({},item,location)); seen[id]=true }
+        else if (requested[id]) {
+            if (!fixed) { fixed={path:"", name:"Selected clips",media:[]}; result.push(fixed) }
+            fixed.media.push(item); seen[id]=true
         }
     })
     result.forEach(function(group) { group.media.sort(function(a,b) { return natural(a.path,b.path) }) })
     return result
 }
+function membership(groups) {
+    var byId=Object.create(null), counts=Object.create(null), total=0
+    groups.forEach(function(group) {
+        counts[group.path]=group.media.length
+        group.media.forEach(function(item) { byId[String(item.assetId)]=group.path; total++ })
+    })
+    return {byId:byId, counts:counts,total:total}
+}
+function selection(index, excluded) {
+    var ignored=Object.create(null), counts=Object.assign(Object.create(null),index.counts), total=index.total
+    excluded.forEach(function(value) {
+        var id=String(value)
+        if (!ignored[id] && id in index.byId) { total--; counts[index.byId[id]]-- }
+        ignored[id]=true
+    })
+    return {ignored:ignored, counts:counts,total:total}
+}
+function groups(media, sources, ids, excluded) {
+    var result=groupPrepared(prepare(media),sources,ids), ignored=Object.create(null)
+    excluded.forEach(function(id) { ignored[String(id)]=true })
+    result.forEach(function(group) { group.media=group.media.filter(function(item) { return !ignored[String(item.assetId)] }) })
+    return result
+}
 function selected(media, sources, ids, excluded) {
-    var result = []
-    groups(media, sources, ids, excluded).forEach(function(group) { result = result.concat(group.media) })
+    var result=[]
+    groups(media,sources,ids,excluded).forEach(function(group) { result=result.concat(group.media) })
     return result
 }

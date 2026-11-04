@@ -1614,6 +1614,8 @@ class ChannelRuntime:
                     channel.definition.channel, advertising_signature(channel),
                     start_at=revision_time, activated_at=revision_time,
                 )
+        if break_store is not None:
+            break_store._sync_plan_index(channel_number=channel.definition.channel)
         return cls(
             channel=channel,
             timeline=timeline,

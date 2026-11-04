@@ -412,6 +412,7 @@ class BreakPlanStore:
     """SQLite persistence for immutable plans and idempotent airing history."""
 
     def __init__(self, database_path: str | Path, *, initialize: bool = True) -> None:
+        self._plan_cache = {}
         self.path = str(database_path)
         self.portable = find_setup(database_path)
         if self.portable:
@@ -519,6 +520,13 @@ class BreakPlanStore:
         if 'schedule_signature' not in columns:
             self.connection.execute("ALTER TABLE ad_program_clock ADD COLUMN schedule_signature TEXT NOT NULL DEFAULT ''")
         self.connection.commit()
+        from .ad_plan_index import install
+        install(self.connection)
+
+    def _sync_plan_index(self, *, channel_number=None, plan_id=None):
+        from .ad_plan_index import sync
+        for identity in sync(self.connection, channel_number=channel_number, plan_id=plan_id):
+            self._plan_cache.pop(identity, None)
 
     def close(self) -> None:
         self.connection.close()
@@ -773,41 +781,12 @@ class BreakPlanStore:
         every Tune/Guide projection. No viewer count is changed by this action.
         """
         instant = _utc(through)
-        rows = self.connection.execute("""
-            SELECT plan_id, scheduled_at, payload FROM ad_break_plans
-            WHERE channel_number = ? AND scheduled_at <= ?
-              AND plan_id NOT IN (SELECT plan_id FROM ad_retired_plans)
-            ORDER BY scheduled_at, plan_id
-        """, (int(channel_number), instant.isoformat())).fetchall()
-        if not rows:
-            return 0
-        completed = {
-            (str(row[0]), int(row[1]))
-            for row in self.connection.execute("""
-                SELECT h.plan_id, h.segment_index FROM ad_break_history h
-                JOIN ad_break_plans p ON p.plan_id = h.plan_id
-                WHERE p.channel_number = ?
-            """, (int(channel_number),))
-        }
-        recorded = 0
-        for plan_id, start_text, payload in rows:
-            starts_at = _utc(datetime.fromisoformat(str(start_text)))
-            for index, segment in enumerate(json.loads(payload)):
-                if segment.get("event_type", "advertisement") != "advertisement":
-                    continue
-                if (str(plan_id), index) in completed:
-                    continue
-                ended_at = starts_at + timedelta(
-                    seconds=float(segment["start_offset_seconds"])
-                    + float(segment["duration_seconds"])
-                )
-                if ended_at > instant:
-                    continue
-                if self.record_aired(
-                    str(plan_id), index, str(segment["asset_id"]), aired_at=ended_at
-                ):
-                    recorded += 1
-        return recorded
+        self._sync_plan_index(channel_number=channel_number)
+        rows = self.connection.execute("""SELECT a.plan_id,a.segment_index,a.asset_id,a.ends_at
+            FROM ad_pending_airings a WHERE a.channel_number=? AND a.ends_at<=?
+            ORDER BY a.ends_at,a.plan_id,a.segment_index""", (int(channel_number),instant.timestamp())).fetchall()
+        return sum(bool(self.record_aired(str(identity),int(index),str(asset),
+            aired_at=datetime.fromtimestamp(float(ended), timezone.utc))) for identity,index,asset,ended in rows)
 
     def record_viewed(
         self, plan_id: str, segment_index: int, asset_id: str, *,
@@ -967,6 +946,10 @@ class BreakPlanStore:
     def save_program_clock(self, occurrence_id: str, channel_number: int, *,
                            content_start: datetime, content_end: datetime,
                            broadcast_start: datetime, broadcast_end: datetime, schedule_signature: str = "") -> None:
+        desired_end = _utc(broadcast_end).isoformat()
+        current = self.connection.execute('SELECT broadcast_end FROM ad_program_clock WHERE occurrence_id=?', (occurrence_id,)).fetchone()
+        if current is not None and str(current[0]) == desired_end:
+            return
         self.connection.execute("""
             INSERT INTO ad_program_clock(occurrence_id,channel_number,content_start,content_end,broadcast_start,broadcast_end,schedule_signature) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(occurrence_id) DO UPDATE SET
@@ -1038,19 +1021,27 @@ class BreakPlanStore:
 
     def load_plan(self, plan_id: str) -> BreakPlan | None:
         """Recover a plan by its stable plan ID."""
-        row = self.connection.execute("""
-            SELECT plan_id, opportunity_id, occurrence_id, channel_number,
-                   scheduled_at, reserved_seconds, strategy, timing_policy, payload
-            FROM ad_break_plans WHERE plan_id = ?
-        """, (str(plan_id),)).fetchone()
+        cached = self._plan_cache.get(str(plan_id))
+        if cached is not None:
+            dirty = self.connection.execute('SELECT 1 FROM ad_plan_index_changes WHERE plan_id=?',(str(plan_id),)).fetchone()
+            if dirty is None:
+                return cached
+            self._sync_plan_index(plan_id=plan_id)
+        row = self.connection.execute("""SELECT p.plan_id,p.opportunity_id,p.occurrence_id,p.channel_number,
+            p.scheduled_at,p.reserved_seconds,p.strategy,p.timing_policy,p.payload,m.payload
+            FROM ad_break_plans p LEFT JOIN ad_plan_metadata m ON m.plan_id=p.plan_id WHERE p.plan_id=?""", (str(plan_id),)).fetchone()
         if row is None:
             return None
-        return self._with_metadata(BreakPlan(
-            str(row[0]), str(row[1]), str(row[2]), int(row[3]),
-            datetime.fromisoformat(str(row[4])), float(row[5]),
-            tuple(PlannedSegment(**item) for item in decode_tree(json.loads(row[8]), self.portable)),
-            str(row[6]), str(row[7]),
-        ))
+        plan = BreakPlan(str(row[0]),str(row[1]),str(row[2]),int(row[3]),
+            datetime.fromisoformat(str(row[4])),float(row[5]),
+            tuple(PlannedSegment(**item) for item in decode_tree(json.loads(row[8]),self.portable)),str(row[6]),str(row[7]))
+        if row[9] is not None:
+            from dataclasses import replace
+            plan = replace(plan, **json.loads(row[9]))
+        if len(self._plan_cache) >= 256:
+            self._plan_cache.pop(next(iter(self._plan_cache)))
+        self._plan_cache[str(plan_id)] = plan
+        return plan
 
     def _with_metadata(self, plan: BreakPlan) -> BreakPlan:
         from dataclasses import replace
@@ -1066,24 +1057,12 @@ class BreakPlanStore:
         start_utc, end_utc = _utc(start), _utc(end)
         if end_utc <= start_utc:
             raise ValueError("plan query end must follow start")
-        # Compare parsed UTC instants in Python. SQLite's datetime() emits
-        # a space-separated timestamp while stored values use ISO's "T";
-        # lexicographic comparison across those formats is not chronologically safe.
-        rows = self.connection.execute("""
-            SELECT plan_id FROM ad_break_plans
-            WHERE channel_number = ?
-              AND plan_id NOT IN (SELECT plan_id FROM ad_retired_plans)
-            ORDER BY scheduled_at, plan_id
-        """, (int(channel_number),)).fetchall()
-        matches = []
-        for row in rows:
-            plan = self.load_plan(str(row[0]))
-            if plan is None:
-                continue
-            plan_end = plan.scheduled_at + timedelta(seconds=plan.reserved_seconds)
-            if plan.scheduled_at < end_utc and plan_end > start_utc:
-                matches.append(plan)
-        return tuple(matches)
+        self._sync_plan_index(channel_number=channel_number)
+        rows = self.connection.execute("""SELECT b.plan_id FROM ad_plan_bounds b
+            WHERE b.channel_number=? AND b.starts_at<? AND b.reserved_end>?
+            AND b.plan_id NOT IN (SELECT plan_id FROM ad_retired_plans)
+            ORDER BY b.starts_at,b.plan_id""", (int(channel_number),end_utc.timestamp(),start_utc.timestamp())).fetchall()
+        return tuple(plan for row in rows if (plan := self.load_plan(str(row[0]))) is not None)
 
     def plans_for_occurrence(self, occurrence_id: str) -> tuple[BreakPlan, ...]:
         """Load all immutable plans belonging to one program occurrence."""
@@ -1102,19 +1081,12 @@ class BreakPlanStore:
     ) -> BreakPlan | None:
         """Return the already-committed break containing a broadcast instant."""
         instant = _utc(at)
-        rows = self.connection.execute("""
-            SELECT plan_id FROM ad_break_plans
-            WHERE channel_number = ? AND scheduled_at <= ?
-              AND plan_id NOT IN (SELECT plan_id FROM ad_retired_plans)
-            ORDER BY scheduled_at DESC, plan_id
-        """, (int(channel_number), instant.isoformat())).fetchall()
-        for row in rows:
-            plan = self.load_plan(str(row[0]))
-            if plan is not None and instant < (
-                plan.scheduled_at + timedelta(seconds=plan.duration_seconds)
-            ):
-                return plan
-        return None
+        self._sync_plan_index(channel_number=channel_number)
+        row = self.connection.execute("""SELECT plan_id FROM ad_plan_bounds
+            WHERE channel_number=? AND starts_at<=? AND actual_end>?
+            AND plan_id NOT IN (SELECT plan_id FROM ad_retired_plans)
+            ORDER BY starts_at DESC,plan_id LIMIT 1""", (int(channel_number),instant.timestamp(),instant.timestamp())).fetchone()
+        return None if row is None else self.load_plan(str(row[0]))
 
     def aired_segments(self, plan_id: str) -> tuple[tuple[int, str, datetime], ...]:
         """Return the durable airing ledger for a plan in segment order."""

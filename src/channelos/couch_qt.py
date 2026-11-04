@@ -93,6 +93,9 @@ class CouchController(QObject):
     playbackChanged = Signal()
     homeTelevisionChanged = Signal()
     libraryChanged = Signal()
+    libraryArtworkChanged = Signal('QVariantMap')
+    libraryWatchChanged = Signal('QVariantMap')
+    artworkEvicted = Signal(object)
     libraryArtworkResolved = Signal(str, str, bool)
     onDemandChanged = Signal()
     settingsChanged = Signal()
@@ -112,6 +115,7 @@ class CouchController(QObject):
         )
         self._artwork_urls: dict[str, str] = {}
         self._artwork_paths: dict[str, Path] = {}
+        self._artwork_assets_by_path = {}
         self._artwork_pending: set[str] = set()
         self._artwork_unavailable: set[str] = set()
         self._artwork_dirty_assets: set[str] = set()
@@ -126,6 +130,7 @@ class CouchController(QObject):
             self._publish_library_artwork
         )
         self.libraryArtworkResolved.connect(self._accept_library_artwork)
+        self.artworkEvicted.connect(self._accept_evicted_artwork)
         self._actions = CouchActions(service, television)
         self._on_demand = OnDemandSession()
         self._last_on_demand_saved_at = 0.0
@@ -136,6 +141,8 @@ class CouchController(QObject):
         ] | None = None
         self._library_media: list[IndexedMedia] = []
         self._library_snapshot = self._build_library_snapshot()
+        self._index_library_cards()
+        self._library_revision = self._library_projection_revision()
         self._on_demand_view: dict[str, object] = {"active": False}
         self._snapshot = self._build_guide_snapshot()
         self._playback: dict[str, object] = {"active": False}
@@ -338,8 +345,22 @@ class CouchController(QObject):
         # unresolved visible cards on an explicit Library refresh.
         self._artwork_cache.clear_discovery_cache()
         self._artwork_unavailable.clear()
+        revision = self._library_projection_revision()
+        if revision == self._library_revision:
+            return
         self._library_snapshot = self._build_library_snapshot()
+        self._index_library_cards()
+        self._library_revision = self._library_projection_revision()
         self.libraryChanged.emit()
+
+    def _library_projection_revision(self):
+        broadcaster = getattr(self, "_broadcaster", None)
+        definitions = tuple((record.channel_number, record.definition) for record in broadcaster.records) if broadcaster else ()
+        return self._library.revision(), definitions
+
+    def _index_library_cards(self):
+        self._library_cards = {str(item['assetId']): item for item in self._library_snapshot.get('items', ())}
+        self._library_media_by_id = {item.asset.asset_id: item for item in self._library_media}
 
     @Slot(str, result=str)
     def requestLibraryArtwork(self, asset_id: str) -> str:
@@ -350,14 +371,7 @@ class CouchController(QObject):
         if target in self._artwork_pending or target in self._artwork_unavailable:
             return ""
 
-        media = next(
-            (
-                item
-                for item in self._library_media
-                if item.asset.asset_id == target
-            ),
-            None,
-        )
+        media = self._library_media_by_id.get(target)
         if media is None:
             self._artwork_unavailable.add(target)
             return ""
@@ -370,6 +384,10 @@ class CouchController(QObject):
                 float(media.asset.duration_seconds or 0.0),
             )
         )
+        self._start_artwork_worker()
+        return ""
+
+    def _start_artwork_worker(self):
         if self._artwork_worker is None:
             self._artwork_worker = threading.Thread(
                 target=self._resolve_library_artwork,
@@ -377,12 +395,17 @@ class CouchController(QObject):
                 daemon=True,
             )
             self._artwork_worker.start()
-        return ""
 
     def _resolve_library_artwork(self) -> None:
         while True:
             asset_id, media_path, duration = self._artwork_queue.get()
             try:
+                if not asset_id:
+                    change = self._artwork_cache.prune(int(duration) * 1024 * 1024)
+                    self._artwork_cache_bytes = change.remaining.size_bytes
+                    self._artwork_cache_files = change.remaining.file_count
+                    self.artworkEvicted.emit(change.removed_paths)
+                    continue
                 settings = self._settings
                 playback_active = (
                     self._on_demand.active
@@ -415,6 +438,8 @@ class CouchController(QObject):
                         resolved = None
                     self._artwork_cache_bytes = change.remaining.size_bytes
                     self._artwork_cache_files = change.remaining.file_count
+                    if change.removed_paths:
+                        self.artworkEvicted.emit(change.removed_paths)
                 self.libraryArtworkResolved.emit(
                     asset_id,
                     "" if resolved is None else str(resolved),
@@ -435,12 +460,11 @@ class CouchController(QObject):
         retryable: bool,
     ) -> None:
         self._artwork_pending.discard(asset_id)
-        missing = self._forget_missing_generated_artwork()
-        self._artwork_dirty_assets.update(missing)
-        artwork_changed = bool(missing)
+        artwork_changed = False
         resolved = Path(resolved_path) if resolved_path else None
         if resolved is not None and resolved.exists():
             self._artwork_paths[asset_id] = resolved
+            self._artwork_assets_by_path[resolved] = asset_id
             self._artwork_urls[asset_id] = QUrl.fromLocalFile(
                 resolved_path
             ).toString()
@@ -448,7 +472,18 @@ class CouchController(QObject):
             artwork_changed = True
         elif not retryable:
             self._artwork_unavailable.add(asset_id)
-        if artwork_changed:
+        if artwork_changed and not self._artwork_publish_timer.isActive():
+            self._artwork_publish_timer.start()
+
+    @Slot(object)
+    def _accept_evicted_artwork(self, paths):
+        for path in paths:
+            asset_id = self._artwork_assets_by_path.pop(path, None)
+            if asset_id:
+                self._artwork_paths.pop(asset_id, None)
+                self._artwork_urls.pop(asset_id, None)
+                self._artwork_dirty_assets.add(asset_id)
+        if self._artwork_dirty_assets and not self._artwork_publish_timer.isActive():
             self._artwork_publish_timer.start()
         self.settingsChanged.emit()
 
@@ -469,27 +504,19 @@ class CouchController(QObject):
 
     @Slot()
     def _publish_library_artwork(self) -> None:
-        # Wait for the current visible-card request burst to settle, then patch
-        # only artwork URLs. Rebuilding the complete Library snapshot for every
-        # generated thumbnail repeatedly queried both databases on large shelves.
-        if self._artwork_pending:
-            self._artwork_publish_timer.start()
-            return
-
+        # Publish a bounded batch while other artwork requests are still pending.
+        # Presentation changes never invalidate the Library's catalog projection.
         dirty = set(self._artwork_dirty_assets)
         self._artwork_dirty_assets.clear()
         if not dirty:
             return
 
-        items = self._library_snapshot.get("items", [])
-        if isinstance(items, list):
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                asset_id = str(item.get("assetId", ""))
-                if asset_id in dirty:
-                    item["artworkUrl"] = self._artwork_urls.get(asset_id, "")
-        self.libraryChanged.emit()
+        patches = {asset_id: self._artwork_urls.get(asset_id, '') for asset_id in dirty}
+        for asset_id, url in patches.items():
+            if asset_id in self._library_cards:
+                self._library_cards[asset_id]['artworkUrl'] = url
+        self.libraryArtworkChanged.emit(patches)
+        self.settingsChanged.emit()
 
     @Slot()
     def refreshPlayback(self) -> None:
@@ -504,7 +531,7 @@ class CouchController(QObject):
             return
 
         self._playback = self._decision_view(decision)
-        self._home_television = self._home_view_from_decision(decision)
+        self._home_television = self._home_view_from_decision(decision, view=self._playback)
         self.playbackChanged.emit()
         self.homeTelevisionChanged.emit()
 
@@ -554,6 +581,16 @@ class CouchController(QObject):
         )
         self._last_on_demand_saved_at = now_monotonic
         self._last_on_demand_saved_signature = signature
+        card = self._library_cards.get(saved.asset_id)
+        if card is not None:
+            patch = {
+                'continueWatching': saved.resumable,
+                'watchPositionSeconds': saved.position_seconds,
+                'watchProgress': saved.progress_fraction,
+                'lastWatchedAt': saved.last_watched_at.isoformat(),
+            }
+            card.update(patch)
+            self.libraryWatchChanged.emit({saved.asset_id: patch})
         return saved
 
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
@@ -593,8 +630,9 @@ class CouchController(QObject):
     def _home_view_from_decision(
         self,
         decision: TuneDecision,
+        *, view=None,
     ) -> dict[str, object]:
-        view = self._decision_view(decision)
+        view = dict(self._decision_view(decision) if view is None else view)
         view["mode"] = "current"
         view["isUnassigned"] = False
         view["stateLabel"] = "WATCHING"
@@ -745,7 +783,7 @@ class CouchController(QObject):
         self._actions.set_volume(self._volume)
         self._actions.set_muted(self._muted)
         self._playback = self._decision_view(decision)
-        self._home_television = self._home_view_from_decision(decision)
+        self._home_television = self._home_view_from_decision(decision, view=self._playback)
         self.playbackChanged.emit()
         self.homeTelevisionChanged.emit()
         return {
@@ -1042,19 +1080,19 @@ class CouchController(QObject):
             self._actions.set_muted(self._muted)
 
     def _save_settings(self, settings: CouchSettings) -> None:
+        previous = self._settings
+        if previous == settings:
+            return
         self._settings_store.save(settings)
         self._settings = settings
         self._volume = settings.volume_percent
         self._muted = settings.muted
-        self._artwork_unavailable.clear()
-        change = self._artwork_cache.prune(
-            settings.artwork_cache_limit_mb * 1024 * 1024
-        )
-        if self._forget_missing_generated_artwork():
-            self._library_snapshot = self._build_library_snapshot()
-            self.libraryChanged.emit()
-        self._artwork_cache_bytes = change.remaining.size_bytes
-        self._artwork_cache_files = change.remaining.file_count
+        if (previous.generate_video_thumbnails, previous.thumbnail_width, previous.background_artwork_during_playback) != (settings.generate_video_thumbnails, settings.thumbnail_width, settings.background_artwork_during_playback):
+            self._artwork_unavailable.clear()
+        if previous.artwork_cache_limit_mb != settings.artwork_cache_limit_mb:
+            # Cache maintenance belongs to the existing serial artwork worker.
+            self._artwork_queue.put(('', Path(), settings.artwork_cache_limit_mb))
+            self._start_artwork_worker()
         self.settingsChanged.emit()
 
     @staticmethod
@@ -1710,7 +1748,6 @@ class CouchKeyFilter(QObject):
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
         self._window.setProperty("infoVisible", False)
-        self._controller.refreshLibrary()
         self._window.setProperty("screen", "library")
         self._select_library(
             int(self._window.property("selectedLibrary"))

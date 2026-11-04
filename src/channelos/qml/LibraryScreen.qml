@@ -508,10 +508,13 @@ Item {
     onSelectedColumnChanged: publishInfoSelection()
 
     onViewActiveChanged: {
+        if (channelOS && typeof channelOS.setLibraryArtworkActive === 'function')
+            channelOS.setLibraryArtworkActive(viewActive)
         if (viewActive) {
             channelOS.refreshLibrary()
             updateClock()
             syncLibraryView()
+            publishInfoSelection()
             forceActiveFocus()
         }
     }
@@ -543,6 +546,8 @@ Item {
                 var item=libraryRoot.viewData.byId[id]
                 if(item) item.artworkUrl=String(patches[id] || "")
             })
+            if (libraryRoot.viewActive && Object.prototype.hasOwnProperty.call(patches, String(libraryRoot.selectedItem().assetId || "")))
+                libraryRoot.publishInfoSelection()
         }
         function onLibraryWatchChanged(patches) {
             if (!libraryRoot.viewData) return

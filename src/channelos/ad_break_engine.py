@@ -413,6 +413,7 @@ class BreakPlanStore:
 
     def __init__(self, database_path: str | Path, *, initialize: bool = True) -> None:
         self._plan_cache = {}
+        self._plan_cache_generation = None
         self.path = str(database_path)
         self.portable = find_setup(database_path)
         if self.portable:
@@ -1021,12 +1022,13 @@ class BreakPlanStore:
 
     def load_plan(self, plan_id: str) -> BreakPlan | None:
         """Recover a plan by its stable plan ID."""
+        generation = self.connection.execute('SELECT value FROM ad_plan_cache_generation WHERE singleton=1').fetchone()[0]
+        if generation != self._plan_cache_generation:
+            self._plan_cache.clear()
+            self._plan_cache_generation = generation
         cached = self._plan_cache.get(str(plan_id))
         if cached is not None:
-            dirty = self.connection.execute('SELECT 1 FROM ad_plan_index_changes WHERE plan_id=?',(str(plan_id),)).fetchone()
-            if dirty is None:
-                return cached
-            self._sync_plan_index(plan_id=plan_id)
+            return cached
         row = self.connection.execute("""SELECT p.plan_id,p.opportunity_id,p.occurrence_id,p.channel_number,
             p.scheduled_at,p.reserved_seconds,p.strategy,p.timing_policy,p.payload,m.payload
             FROM ad_break_plans p LEFT JOIN ad_plan_metadata m ON m.plan_id=p.plan_id WHERE p.plan_id=?""", (str(plan_id),)).fetchone()

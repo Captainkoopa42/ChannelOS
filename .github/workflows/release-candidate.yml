@@ -2,7 +2,7 @@ name: release-candidate
 
 on:
   push:
-    branches: ["release/windows-0.0.6", "perf/windows-interactions"]
+    branches: ["perf/windows-background-work"]
 
 permissions:
   contents: read
@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: write
     env:
-      CANDIDATE_TAG: v0.0.6-rc.3
+      CANDIDATE_TAG: v0.0.6-rc.4
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -43,7 +43,7 @@ jobs:
           assert bom['product']['git_commit'] == os.environ['GITHUB_SHA'], bom['product']
           digest = hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
           pathlib.Path('release-output/SHA256SUMS.txt').write_text(f'{digest}  {path.name}\n')
-          notes = pathlib.Path('docs/releases/v0.0.6-rc.3.md').read_text()
+          notes = pathlib.Path('docs/releases/v0.0.6-rc.4.md').read_text()
           notes += '\nVerified source commit: `' + os.environ['GITHUB_SHA'] + '`\n'
           notes += '\nBuild and smoke checks: https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '\n'
           pathlib.Path('release-output/RELEASE-NOTES.md').write_text(notes)
@@ -56,5 +56,5 @@ jobs:
             test "$published" = "$GITHUB_SHA" || { echo "Existing candidate tag names another commit; retained its files."; exit 1; }
             gh release view "$CANDIDATE_TAG"
           else
-            gh release create "$CANDIDATE_TAG"               release-output/ChannelOS-0.0.6-windows-x64.zip               release-output/SHA256SUMS.txt               --target "$GITHUB_SHA" --prerelease               --title "ChannelOS 0.0.6 — Windows performance candidate 3"               --notes-file release-output/RELEASE-NOTES.md
+            gh release create "$CANDIDATE_TAG"               release-output/ChannelOS-0.0.6-windows-x64.zip               release-output/SHA256SUMS.txt               --target "$GITHUB_SHA" --prerelease               --title "ChannelOS 0.0.6 — Windows performance candidate 4"               --notes-file release-output/RELEASE-NOTES.md
           fi

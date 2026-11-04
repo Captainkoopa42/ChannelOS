@@ -27,6 +27,8 @@ def install(connection):
         CREATE INDEX IF NOT EXISTS idx_ad_pending_airings_due ON ad_pending_airings(channel_number,ends_at);
         CREATE TABLE IF NOT EXISTS ad_plan_index_changes(plan_id TEXT PRIMARY KEY,channel_number INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS idx_ad_plan_changes_channel ON ad_plan_index_changes(channel_number);
+        CREATE TABLE IF NOT EXISTS ad_plan_cache_generation (singleton INTEGER PRIMARY KEY CHECK(singleton=1), value INTEGER NOT NULL);
+        INSERT OR IGNORE INTO ad_plan_cache_generation VALUES(1,0);
     ''')
     for table in ('ad_break_plans', 'ad_plan_metadata', 'ad_retired_plans'):
         for event in ('INSERT', 'UPDATE', 'DELETE'):
@@ -35,7 +37,8 @@ def install(connection):
                          else f'SELECT plan_id,channel_number FROM ad_break_plans WHERE plan_id={prefix}.plan_id')
             connection.execute(f'''CREATE TRIGGER IF NOT EXISTS cos_index_{table}_{event.lower()}
                 AFTER {event} ON {table} BEGIN
-                  INSERT OR REPLACE INTO ad_plan_index_changes(plan_id,channel_number) {selection}; END''')
+                  INSERT OR REPLACE INTO ad_plan_index_changes(plan_id,channel_number) {selection};
+                  UPDATE ad_plan_cache_generation SET value=value+1 WHERE singleton=1; END''')
     connection.executescript('''
         CREATE TRIGGER IF NOT EXISTS cos_index_history_insert AFTER INSERT ON ad_break_history BEGIN
             DELETE FROM ad_pending_airings WHERE plan_id=NEW.plan_id AND segment_index=NEW.segment_index; END;

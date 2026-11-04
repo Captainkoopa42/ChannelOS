@@ -20,46 +20,64 @@ function natural(a, b) {
 function prepare(media) {
     // Cross the QVariant boundary once, rather than once per source comparison.
     var rows = JSON.parse(JSON.stringify(media || []))
-    return rows.map(function(item) {
+    var indexed = rows.map(function(item) {
         return {item:item, locations:(item.locations && item.locations.length ? item.locations : [item]).map(function(location) {
             return {value:location, key:key(location.path)}
         })}
     })
-}
-function groupPrepared(prepared, sources, ids) {
-    var result=[], roots=Object.create(null), requested=Object.create(null), seen=Object.create(null)
-    ids.forEach(function(id) { requested[String(id)]=true })
-    sources.forEach(function(path, index) {
-        var parts=String(path).replace(/\\/g,"/").replace(/\/+$/,"").split("/")
-        result.push({path:path, name:parts[parts.length-1] || path, media:[]})
-        var normalized=key(path)
-        if (!(normalized in roots)) roots[normalized]=index
-    })
-    var fixed=null
-    prepared.forEach(function(row) {
-        var item=row.item, id=String(item.assetId || "")
-        if (!id || seen[id]) return
-        var first=sources.length, location=null
-        row.locations.forEach(function(candidate) {
-            var path=candidate.key
+    var parents=Object.create(null)
+    indexed.forEach(function(row) {
+        row.locations.forEach(function(location) {
+            var path=location.key
             while (path.length) {
-                if (path in roots && roots[path] < first) { first=roots[path]; location=candidate.value }
+                if (!(path in parents)) parents[path]=[]
+                parents[path].push({row:row,location:location})
                 var slash=path.lastIndexOf("/")
                 if (slash<0) break
                 path=path.substring(0,slash)
-                // POSIX root is represented by the empty normalized key.
-                if (!path.length && "" in roots && roots[""]<first) { first=roots[""]; location=candidate.value }
             }
         })
-        if (location) { result[first].media.push(Object.assign({},item,location)); seen[id]=true }
-        else if (requested[id]) {
-            if (!fixed) { fixed={path:"", name:"Selected clips",media:[]}; result.push(fixed) }
-            fixed.media.push(item); seen[id]=true
-        }
     })
-    result.forEach(function(group) { group.media.sort(function(a,b) { return natural(a.path,b.path) }) })
+    return {rows:indexed, parents:parents, buckets:Object.create(null), order:[]}
+}
+function sourceMedia(prepared, path) {
+    var root=key(path)
+    if (root in prepared.buckets) return prepared.buckets[root]
+    var media=[], seen=Object.create(null)
+    ;(prepared.parents[root] || []).forEach(function(candidate) {
+        var item=candidate.row.item, id=String(item.assetId || "")
+        if (!id || seen[id]) return
+        media.push(Object.assign({},item,candidate.location.value)); seen[id]=true
+    })
+    media.sort(function(a,b) { return natural(a.path,b.path) })
+    if (prepared.order.length>=32) delete prepared.buckets[prepared.order.shift()]
+    prepared.order.push(root); prepared.buckets[root]=media
+    return media
+}
+function groupPrepared(prepared, sources, ids) {
+    var result=[], requested=Object.create(null), seen=Object.create(null)
+    ids.forEach(function(id) { requested[String(id)]=true })
+    sources.forEach(function(path) {
+        var parts=String(path).replace(/\\/g,"/").replace(/\/+$/,"").split("/")
+        var selected=sourceMedia(prepared,path).filter(function(item) {
+            var id=String(item.assetId)
+            if (seen[id]) return false
+            seen[id]=true; return true
+        })
+        result.push({path:path,name:parts[parts.length-1] || path,media:selected})
+    })
+    var fixed=[]
+    prepared.rows.forEach(function(row) {
+        var id=String(row.item.assetId || "")
+        if (requested[id] && !seen[id]) { fixed.push(row.item); seen[id]=true }
+    })
+    if (fixed.length) {
+        fixed.sort(function(a,b) { return natural(a.path,b.path) })
+        result.push({path:"",name:"Selected clips",media:fixed})
+    }
     return result
 }
+
 function membership(groups) {
     var byId=Object.create(null), counts=Object.create(null), total=0
     groups.forEach(function(group) {

@@ -441,10 +441,11 @@ class MediaLibrary:
         content_sha256: str,
         probe: MediaProbeResult,
         _connection=None,
+        _fingerprint=None,
     ) -> tuple[MediaAsset, bool]:
         path_text, path_key = self.storage_path(path)
         source_text, source_key = self.storage_path(source_root)
-        stat = path.stat()
+        stat = _fingerprint if _fingerprint is not None else path.stat()
         now = utc_now_text()
         asset_id = media_asset_id(content_sha256)
 

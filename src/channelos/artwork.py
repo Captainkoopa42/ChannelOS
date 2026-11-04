@@ -146,6 +146,9 @@ class MediaArtworkCache:
         self._entries[path] = stat.st_mtime_ns, stat.st_size
         self._cache_bytes += stat.st_size
         heapq.heappush(self._oldest, (stat.st_mtime_ns, str(path), stat.st_size))
+        if len(self._oldest) > max(64, 2 * len(self._entries)):
+            self._oldest = [(stamp, str(item), size) for item, (stamp, size) in self._entries.items()]
+            heapq.heapify(self._oldest)
         self._directory_stamp = self._stamp()
 
     def stats(self) -> ArtworkCacheStats:
@@ -184,6 +187,7 @@ class MediaArtworkCache:
                 self._portable.check_available()
             self._inventory()
             removed, size = [], 0
+            failed = []
             while limit and self._cache_bytes > limit and self._oldest:
                 stamp, text, count = heapq.heappop(self._oldest)
                 path = Path(text)
@@ -192,11 +196,14 @@ class MediaArtworkCache:
                 try:
                     path.unlink(missing_ok=True)
                 except OSError:
+                    failed.append((stamp, text, count))
                     continue
                 self._entries.pop(path)
                 self._cache_bytes -= count
                 removed.append(path)
                 size += count
+            for entry in failed:
+                heapq.heappush(self._oldest, entry)
             self._directory_stamp = self._stamp()
             return ArtworkCacheChange(len(removed), size, ArtworkCacheStats(len(self._entries), self._cache_bytes), tuple(removed))
 

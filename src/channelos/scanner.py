@@ -118,6 +118,12 @@ class MediaScanner:
         if cls._cancel_requested(check):
             raise ScanCancelled("media scan cancelled")
 
+    @staticmethod
+    def _verify_unchanged(path, fingerprint):
+        latest = path.stat()
+        if (latest.st_size, latest.st_mtime_ns) != (fingerprint.st_size, fingerprint.st_mtime_ns):
+            raise OSError(f'Media changed while it was being indexed: {path}. Wait for the file to finish saving, then rescan this source.')
+
     def discover(
         self,
         source: str | Path,
@@ -179,6 +185,7 @@ class MediaScanner:
                         # unavailable), a later technical scan can enrich it using
                         # the already-trusted content hash instead of re-reading it.
                         if cached.duration_seconds is None or cached.container_format is None:
+                            fingerprint = session.trusted_fingerprint(path)
                             probe_result, probe_failed = self._probe(
                                 path,
                                 should_cancel,
@@ -186,11 +193,13 @@ class MediaScanner:
                             if probe_failed:
                                 probe_errors += 1
                             if self._adds_technical_data(cached, probe_result):
+                                self._verify_unchanged(path, fingerprint)
                                 session.upsert_file(
                                     path,
                                     source_path,
                                     content_sha256=cached.content_sha256,
                                     probe=probe_result,
+                                    _fingerprint=fingerprint,
                                 )
                                 metadata_enriched += 1
                             else:
@@ -205,6 +214,7 @@ class MediaScanner:
                         )
                         continue
 
+                    fingerprint = path.stat()
                     try:
                         digest = sha256_file(
                             path,
@@ -222,11 +232,13 @@ class MediaScanner:
                     if probe_failed:
                         probe_errors += 1
 
+                    self._verify_unchanged(path, fingerprint)
                     _, created = session.upsert_file(
                         path,
                         source_path,
                         content_sha256=digest,
                         probe=probe_result,
+                        _fingerprint=fingerprint,
                     )
                     if created:
                         new_assets += 1

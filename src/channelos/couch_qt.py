@@ -96,6 +96,7 @@ class CouchController(QObject):
     libraryArtworkChanged = Signal('QVariantMap')
     libraryWatchChanged = Signal('QVariantMap')
     artworkEvicted = Signal(object)
+    artworkCacheCleared = Signal('QVariantMap')
     libraryArtworkResolved = Signal(str, str, bool)
     onDemandChanged = Signal()
     settingsChanged = Signal()
@@ -119,9 +120,9 @@ class CouchController(QObject):
         self._artwork_pending: set[str] = set()
         self._artwork_unavailable: set[str] = set()
         self._artwork_dirty_assets: set[str] = set()
-        self._artwork_queue: queue.Queue[
-            tuple[str, Path, float]
-        ] = queue.Queue()
+        self._artwork_queue: queue.Queue[tuple] = queue.LifoQueue()
+        self._artwork_epoch = 0
+        self._artwork_stopped = False
         self._artwork_worker: threading.Thread | None = None
         self._artwork_publish_timer = QTimer(self)
         self._artwork_publish_timer.setSingleShot(True)
@@ -382,6 +383,7 @@ class CouchController(QObject):
                 target,
                 media.location.path,
                 float(media.asset.duration_seconds or 0.0),
+                self._artwork_epoch,
             )
         )
         self._start_artwork_worker()
@@ -396,15 +398,34 @@ class CouchController(QObject):
             )
             self._artwork_worker.start()
 
+    @Slot(bool)
+    def setLibraryArtworkActive(self, active):
+        if not active:
+            self._artwork_epoch += 1
+            self._artwork_pending.clear()
+
     def _resolve_library_artwork(self) -> None:
         while True:
-            asset_id, media_path, duration = self._artwork_queue.get()
+            job = self._artwork_queue.get()
+            asset_id, media_path, duration = job[:3]
             try:
+                if self._artwork_stopped:
+                    return
+                if asset_id == '__clear__':
+                    change = self._artwork_cache.clear_generated()
+                    self._artwork_cache_bytes = change.remaining.size_bytes
+                    self._artwork_cache_files = change.remaining.file_count
+                    self.artworkEvicted.emit(change.removed_paths)
+                    self.artworkCacheCleared.emit({'ok': True, 'message': f'Cleared {change.removed_files} generated thumbnails.',
+                        'removedFiles': change.removed_files, 'removedBytes': change.removed_bytes})
+                    continue
                 if not asset_id:
                     change = self._artwork_cache.prune(int(duration) * 1024 * 1024)
                     self._artwork_cache_bytes = change.remaining.size_bytes
                     self._artwork_cache_files = change.remaining.file_count
                     self.artworkEvicted.emit(change.removed_paths)
+                    continue
+                if len(job) == 4 and job[3] != self._artwork_epoch:
                     continue
                 settings = self._settings
                 playback_active = (
@@ -440,15 +461,21 @@ class CouchController(QObject):
                     self._artwork_cache_files = change.remaining.file_count
                     if change.removed_paths:
                         self.artworkEvicted.emit(change.removed_paths)
+                if self._artwork_stopped:
+                    return
                 self.libraryArtworkResolved.emit(
                     asset_id,
                     "" if resolved is None else str(resolved),
                     deferred,
                 )
-            except Exception:
+            except Exception as exc:
                 # Artwork is optional presentation. A failure must never take
                 # down Library browsing or replace the established fallback.
-                self.libraryArtworkResolved.emit(asset_id, "", False)
+                if not self._artwork_stopped:
+                    if asset_id == '__clear__':
+                        self.artworkCacheCleared.emit({'ok': False, 'message': str(exc)})
+                    else:
+                        self.libraryArtworkResolved.emit(asset_id, "", False)
             finally:
                 self._artwork_queue.task_done()
 
@@ -463,6 +490,9 @@ class CouchController(QObject):
         artwork_changed = False
         resolved = Path(resolved_path) if resolved_path else None
         if resolved is not None and resolved.exists():
+            previous = self._artwork_paths.get(asset_id)
+            if previous is not None and previous != resolved:
+                self._artwork_assets_by_path.pop(previous, None)
             self._artwork_paths[asset_id] = resolved
             self._artwork_assets_by_path[resolved] = asset_id
             self._artwork_urls[asset_id] = QUrl.fromLocalFile(
@@ -479,28 +509,13 @@ class CouchController(QObject):
     def _accept_evicted_artwork(self, paths):
         for path in paths:
             asset_id = self._artwork_assets_by_path.pop(path, None)
-            if asset_id:
+            if asset_id and self._artwork_paths.get(asset_id) == path:
                 self._artwork_paths.pop(asset_id, None)
                 self._artwork_urls.pop(asset_id, None)
                 self._artwork_dirty_assets.add(asset_id)
         if self._artwork_dirty_assets and not self._artwork_publish_timer.isActive():
             self._artwork_publish_timer.start()
         self.settingsChanged.emit()
-
-    def _forget_missing_generated_artwork(self) -> tuple[str, ...]:
-        missing = [
-            asset_id
-            for asset_id, path in self._artwork_paths.items()
-            if (
-                path.parent == self._artwork_cache.cache_directory
-                and self._artwork_cache._is_generated_cache_file(path)
-                and not path.exists()
-            )
-        ]
-        for asset_id in missing:
-            self._artwork_paths.pop(asset_id, None)
-            self._artwork_urls.pop(asset_id, None)
-        return tuple(missing)
 
     @Slot()
     def _publish_library_artwork(self) -> None:
@@ -1292,23 +1307,11 @@ class CouchController(QObject):
 
         try:
             change = self._artwork_cache.clear_generated()
-            removed_assets = [
-                asset_id
-                for asset_id, path in self._artwork_paths.items()
-                if (
-                    path.parent == self._artwork_cache.cache_directory
-                    and self._artwork_cache._is_generated_cache_file(path)
-                )
-            ]
-            for asset_id in removed_assets:
-                self._artwork_paths.pop(asset_id, None)
-                self._artwork_urls.pop(asset_id, None)
             self._artwork_unavailable.clear()
             self._artwork_cache_bytes = change.remaining.size_bytes
             self._artwork_cache_files = change.remaining.file_count
-            self._library_snapshot = self._build_library_snapshot()
-            self.libraryChanged.emit()
-            self.settingsChanged.emit()
+            self._accept_evicted_artwork(change.removed_paths)
+            self._publish_library_artwork()
             return {
                 "ok": True,
                 "message": (
@@ -1322,6 +1325,15 @@ class CouchController(QObject):
             }
         except OSError as exc:
             return self._error(exc)
+
+    @Slot(result='QVariantMap')
+    def beginArtworkCacheClear(self):
+        self._artwork_epoch += 1
+        self._artwork_pending.clear()
+        self._artwork_unavailable.clear()
+        self._artwork_queue.put(('__clear__', Path(), 0))
+        self._start_artwork_worker()
+        return {'ok': True, 'pending': True, 'message': 'Clearing generated thumbnails…'}
 
     @Slot(result="QVariantMap")
     def resetSettings(self) -> dict[str, object]:
@@ -1341,6 +1353,8 @@ class CouchController(QObject):
             return self._error(exc)
 
     def stop(self) -> None:
+        self._artwork_stopped = True
+        self._artwork_queue.put(('', Path(), 0))
         if self._on_demand.active:
             self._persist_on_demand_state(
                 self._on_demand.state(),

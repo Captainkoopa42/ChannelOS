@@ -6,7 +6,7 @@ import tempfile
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, QEvent, Signal, Slot
 
 from .broadcaster import BroadcasterError, ChannelConflictError
 from .loader import load_channel
@@ -189,6 +189,8 @@ def install_channel_operations_support(module):
                 return {'ok': False, 'message': 'Your setup is still loading. Try again in a moment.'}
             if self._mutation_thread is not None:
                 return {'ok': False, 'message': 'Wait for the current channel operation to finish.'}
+            if getattr(self, '_recovery_thread', None) is not None or getattr(self, '_recovery_adopting', False):
+                return {'ok': False, 'message': 'Wait for media recovery to finish before changing a channel.'}
             if kind not in {'create', 'update', 'delete', 'add_library_item'}:
                 return {'ok': False, 'message': 'Unknown channel operation'}
             if self.libraryScan.get('active') or self.studioAutoFill.get('active'):
@@ -327,6 +329,20 @@ def install_channel_operations_support(module):
 
     key_base = module.BroadcasterKeyFilter
     class ManagedKeyFilter(key_base):
+        def eventFilter(self, watched, event):
+            if getattr(self._controller, 'channelMutation', {}).get('active'):
+                if event.type() == QEvent.Type.ShortcutOverride:
+                    event.accept()
+                    return True
+                if event.type() == QEvent.Type.KeyPress:
+                    command = self.command_for_key(event.key())
+                    if command is not None and command.intent in {ControlIntent.BACK, ControlIntent.SELECT}:
+                        self._controller.cancelChannelMutation()
+                    return True
+                if event.type() == QEvent.Type.KeyRelease:
+                    return True
+            return super().eventFilter(watched, event)
+
         def dispatch_command(self, command):
             if getattr(self._controller, 'channelMutation', {}).get('active'):
                 if command.intent is ControlIntent.BACK:

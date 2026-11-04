@@ -177,7 +177,8 @@ Item {
 
     function activateAction(index) {
         if (index === 12) {
-            showResult(channelOS.clearArtworkCache())
+            showResult(typeof channelOS.beginArtworkCacheClear === "function"
+                       ? channelOS.beginArtworkCacheClear() : channelOS.clearArtworkCache())
         } else if (index === 13) {
             showResult(channelOS.openDiagnosticLogs())
         } else if (index === 14) {
@@ -530,6 +531,8 @@ Item {
 
     Connections {
         target: channelOS
+        ignoreUnknownSignals: true
+        function onArtworkCacheCleared(result) { settingsRoot.showResult(result) }
         function onSettingsChanged() {
             if (settingsRoot.startupModeApplied)
                 Qt.callLater(settingsRoot.applyDisplayMode)

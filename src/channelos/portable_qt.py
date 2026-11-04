@@ -65,7 +65,7 @@ class _PreviewWorker(QObject):
         try:
             destination, copy_media, include_app, include_artwork = self.options
             plan = plan_copy(self.library, self.paths, destination, copy_media=copy_media,
-                include_artwork=include_artwork, runtime_database=self.runtime,
+                include_artwork=include_artwork, runtime_database=self.runtime, should_cancel=self.cancellation.is_set,
                 application_directory=Path(sys.executable).parent if include_app else None)
             if self.cancellation.is_set():
                 raise CopyCancelled('Copy review cancelled')

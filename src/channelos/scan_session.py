@@ -43,11 +43,11 @@ class ScanSession:
             return None
         if cached[:2] != (stat.st_size,stat.st_mtime_ns):
             return None
-        self.matched[str(path)] = text,key
+        self.matched[str(path)] = text,key,stat
         return cached[2]
 
     def mark_seen_cached(self, path, source):
-        text,key = self.matched.pop(str(path))
+        text,key,_ = self.matched.pop(str(path))
         # Retain the trusted size/mtime fingerprint. A concurrent edit must not
         # acquire a new fingerprint without hashing its changed contents.
         self.pending.append((text,self.source_key,self.source_text,utc_now_text(),key))
@@ -75,3 +75,6 @@ class ScanSession:
         except Exception:
             self.connection.rollback()
             raise
+
+    def trusted_fingerprint(self, path):
+        return self.matched[str(path)][2]

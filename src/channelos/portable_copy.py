@@ -132,6 +132,7 @@ class CopyPlan:
     application_files: tuple[Path, ...] = ()
     include_artwork: bool = True
     source_portable: PortablePaths | None = None
+    _encoded_paths: dict = field(default_factory=dict, repr=False, compare=False)
 
     @property
     def copy_application(self) -> bool:
@@ -148,6 +149,14 @@ class CopyPlan:
         return tuple(sorted(self.roots, key=lambda item: len(item.original.parts), reverse=True))
 
     def encode(self, path: str) -> str:
+        key = str(path)
+        if key in self._encoded_paths:
+            return self._encoded_paths[key]
+        reference = self._encode_uncached(path)
+        self._encoded_paths[key] = reference
+        return reference
+
+    def _encode_uncached(self, path: str) -> str:
         if str(path).startswith('portable://'):
             if not self.source_portable:
                 raise PortableSetupError('A portable source reference needs its original setup')
@@ -184,7 +193,12 @@ def _target_available(destination: Path) -> None:
 
 def plan_copy(library: MediaLibrary, channel_paths: Iterable[Path], destination: str | Path, *,
               copy_media: bool = False, application_directory: Path | None = None,
-              include_artwork: bool = True, runtime_database: Path | None = None) -> CopyPlan:
+              include_artwork: bool = True, runtime_database: Path | None = None,
+              should_cancel: Callable[[], bool] | None = None) -> CopyPlan:
+    def check():
+        if should_cancel is not None and should_cancel():
+            raise CopyCancelled('Copy review cancelled')
+    check()
     destination = Path(destination).expanduser().resolve(strict=False)
     _target_available(destination)
     paths = tuple(Path(path) for path in channel_paths)
@@ -197,15 +211,19 @@ def plan_copy(library: MediaLibrary, channel_paths: Iterable[Path], destination:
         return text
 
     for path in paths:
+        check()
         path_tree(channel_to_mapping(load_channel(path)), collect)
     catalog_path = library.database_path.with_name('ad_catalog.sqlite')
     if catalog_path.is_file():
         catalog = AdCatalogStore(catalog_path)
         for collection in catalog.list_collections():
+            check()
             sources.update(Path(path).resolve(strict=False) for path in collection.source_paths)
         for profile in catalog.list_profiles():
+            check()
             path_tree(dict(profile.defaults), collect)
         for assignment in catalog.list_assignments():
+            check()
             path_tree(dict(assignment.overrides), collect)
             for placement in assignment.placements:
                 path_tree(dict(placement.overrides), collect)
@@ -218,6 +236,7 @@ def plan_copy(library: MediaLibrary, channel_paths: Iterable[Path], destination:
             tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if 'ad_break_plans' in tables:
                 for row in db.execute('SELECT payload FROM ad_break_plans'):
+                    check()
                     for segment in json.loads(row[0]):
                         if segment.get('media_path'):
                             path = library.physical_path(segment['media_path']).resolve(strict=False)
@@ -246,6 +265,7 @@ def plan_copy(library: MediaLibrary, channel_paths: Iterable[Path], destination:
     targets = {}
     indexed_paths = set()
     for row in rows:
+        check()
         source = library.physical_path(row['path'])
         indexed_paths.add(source)
         reference = plan.encode(str(source))
@@ -260,6 +280,7 @@ def plan_copy(library: MediaLibrary, channel_paths: Iterable[Path], destination:
             raise PortableSetupError('Some indexed media is outside the destination. Select its containing drive/folder, or enable "Copy media outside destination".')
         items.append(MediaCopy(source, reference, int(row['size_bytes']), row['content_sha256'], needs_copy, available))
     for source, digest in historical_files.items():
+        check()
         if source in indexed_paths:
             continue
         reference = plan.encode(str(source))
@@ -279,6 +300,7 @@ def plan_copy(library: MediaLibrary, channel_paths: Iterable[Path], destination:
             raise PortableSetupError('The destination already has an application folder; choose another destination or exclude the app')
         app_files = []
         for directory, directories, files in os.walk(app, followlinks=False):
+            check()
             for name in [*directories, *files]:
                 path = Path(directory) / name
                 if path.is_symlink() and not path.resolve(strict=False).is_relative_to(app):

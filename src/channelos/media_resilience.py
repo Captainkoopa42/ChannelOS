@@ -7,9 +7,6 @@ from typing import Any
 
 from PySide6.QtCore import Slot
 
-from .couch_actions import CouchActions
-from .couch_model import build_couch_snapshot
-from .guide import GuideService
 from .library import (
     IndexedMedia,
     MediaLibrary,
@@ -18,11 +15,9 @@ from .library import (
 )
 from .playback import PlaybackError
 from .resolve import ResolvedChannel, resolve_channel
-from .runtime import ChannelRuntime, ChannelRuntimeError, TelevisionRuntime
+from .runtime import ChannelRuntime, ChannelRuntimeError
 
 logger = logging.getLogger(__name__)
-
-_MAX_RECOVERY_ATTEMPTS = 8
 
 
 def _path_is_usable(path: Path) -> bool:
@@ -56,6 +51,7 @@ def _mark_location_offline(library: MediaLibrary, path: str | Path) -> bool:
 def _transient_available_media(
     resolved: ResolvedChannel,
     library: MediaLibrary | None = None,
+    *, index=None, root_availability=None,
 ) -> tuple[IndexedMedia, ...]:
     """Exclude disconnected source roots without persisting them as deleted/offline.
 
@@ -64,7 +60,7 @@ def _transient_available_media(
     rebuilding identity, metadata, schedules, or watch history.
     """
 
-    root_available: dict[str, bool] = {}
+    root_available: dict[str, bool] = root_availability if root_availability is not None else {}
     selected: list[IndexedMedia | None] = []
     unavailable: list[tuple[int, IndexedMedia]] = []
     for media in resolved.media:
@@ -85,9 +81,14 @@ def _transient_available_media(
             normalize_path(source.path)[1]
             for source in resolved.definition.sources
         )
-        alternatives = library.online_locations_for_assets(
-            media.asset.asset_id for _, media in unavailable
-        )
+        if index is None:
+            alternatives = library.online_locations_for_assets(media.asset.asset_id for _, media in unavailable)
+        else:
+            if not hasattr(index, "locations_by_asset"):
+                index.locations_by_asset = {}
+                for row in index.online:
+                    index.locations_by_asset.setdefault(row.asset.asset_id, []).append(row.location)
+            alternatives = index.locations_by_asset
         for index, media in unavailable:
             for location in alternatives.get(media.asset.asset_id, ()):
                 if not any(
@@ -163,20 +164,10 @@ def _degrade_calendar_for_available_media(
     return replace(resolved, definition=degraded_definition)
 
 
-def _resolved_runtime(
-    definition,
-    library: MediaLibrary,
-    store,
-    *,
-    persistent_when_complete: bool = False,
-    verify_files: bool = False,
-    index=None,
-    availability=None,
-) -> ChannelRuntime | None:
-    """Resolve one channel against media that is usable for this launch."""
-
+def _usable_channel(definition, library, *, verify_files=False, index=None,
+                    availability=None, root_availability=None):
     resolved = resolve_channel(definition, library, allow_offline_ads=True, index=index)
-    available = _transient_available_media(resolved, library)
+    available = _transient_available_media(resolved, library, index=index, root_availability=root_availability)
     if verify_files:
         usable = availability if availability is not None else {}
         def check(path):
@@ -186,15 +177,37 @@ def _resolved_runtime(
         available = tuple(item for item in available if check(item.location.path))
     if not available:
         return None
+    return _degrade_calendar_for_available_media(replace(resolved, media=available))
 
-    complete = available == resolved.media
-    resolved = replace(resolved, media=available)
-    original_definition = resolved.definition
-    resolved = _degrade_calendar_for_available_media(resolved)
+
+def _resolved_runtime(
+    definition,
+    library: MediaLibrary,
+    store,
+    *,
+    persistent_when_complete: bool = False,
+    verify_files: bool = False,
+    index=None,
+    availability=None,
+    root_availability=None,
+    prepared_channel=None,
+) -> ChannelRuntime | None:
+    """Resolve one channel against media that is usable for this launch."""
+
+    resolved = prepared_channel if prepared_channel is not None else _usable_channel(
+        definition, library, verify_files=verify_files, index=index,
+        availability=availability, root_availability=root_availability)
+    if resolved is None:
+        return None
+    complete = resolved.definition == definition
+    if index is not None:
+        complete = complete and resolved.media == resolve_channel(definition, library, allow_offline_ads=True, index=index).media
+    elif persistent_when_complete:
+        complete = complete and resolved.media == resolve_channel(definition, library, allow_offline_ads=True).media
 
     try:
         return ChannelRuntime.open(resolved, store, transient=not (
-            persistent_when_complete and complete and resolved.definition == original_definition))
+            persistent_when_complete and complete))
     except ChannelRuntimeError:
         # A temporarily smaller shuffle pool can invalidate a repeat-avoidance
         # promise even though the remaining media is perfectly playable. Relax
@@ -217,34 +230,6 @@ def _resolved_runtime(
         )
 
 
-def _runtime_asset_sets(controller: Any):
-    return {
-        int(number): ({media.asset.asset_id for media in runtime.channel.media},
-                      {media.asset.asset_id for media in runtime.channel.ad_media})
-        for number, runtime in controller._actions.runtime.channels.items()
-    }
-
-
-def _desired_asset_sets(controller: Any):
-    desired = {}
-    for record in controller._broadcaster.records:
-        resolved = resolve_channel(record.definition, controller._library, allow_offline_ads=True)
-        available = tuple(item for item in _transient_available_media(resolved, controller._library)
-                          if _path_is_usable(item.location.path))
-        if available:
-            desired[int(record.definition.channel)] = (
-                {media.asset.asset_id for media in available},
-                {media.asset.asset_id for media in resolved.ad_media},
-            )
-    return desired
-
-
-def _lineup_needs_refresh(controller: Any) -> bool:
-    try:
-        return _runtime_asset_sets(controller) != _desired_asset_sets(controller)
-    except (OSError, ValueError):
-        return False
-
 
 def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
     """Make missing/moved/disconnected media a recoverable runtime condition."""
@@ -253,20 +238,17 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
     if getattr(base_controller, "_channelos_media_resilience_enabled", False):
         return
 
-    class ResilientBroadcasterController(base_controller):
+    from .recovery_jobs import RecoveryJobs
+
+    class ResilientBroadcasterController(RecoveryJobs, base_controller):
         _channelos_media_resilience_enabled = True
 
         def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
+            self._initialize_recovery_jobs()
             self._media_recovery_active = False
             self._pending_on_demand_media: IndexedMedia | None = None
             self._temporarily_unavailable_roots: set[Path] = set()
-
-        @Slot(object)
-        def _on_library_scan_completed(self, summary) -> None:
-            super()._on_library_scan_completed(summary)
-            if _lineup_needs_refresh(self):
-                self._reload_resilient_lineup(restore_if_active=bool(self._playback.get("active")))
 
         def _missing_media_target(self) -> tuple[IndexedMedia, str] | None:
             pending = self._pending_on_demand_media
@@ -336,182 +318,23 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
                 "playback": self._playback,
             }
 
-        def _reload_resilient_lineup(
-            self,
-            *,
-            restore_if_active: bool,
-            propagate_playback_error: bool = False,
-        ) -> bool:
-            """Rebuild television from currently usable media without editing channels."""
+        def _reload_resilient_lineup(self, *, restore_if_active, propagate_playback_error=False):
+            self._request_media_recovery(restore_if_active=restore_if_active)
+            return False  # Adoption is asynchronous; returned roots remain pending until it succeeds.
 
-            old_runtime = self._actions.runtime
-            prior_channel = old_runtime.current_channel
-            prior_paused = bool(self._actions.paused)
-            should_restore = bool(
-                restore_if_active
-                and not self._on_demand.active
-                and self._surface_ready
-                and prior_channel is not None
-            )
-
-            runtimes: list[ChannelRuntime] = []
-            unavailable_channels: list[str] = []
-            for record in self._broadcaster.records:
-                try:
-                    runtime = _resolved_runtime(
-                        record.definition,
-                        self._library,
-                        self._runtime_store, persistent_when_complete=True, verify_files=True,
-                    )
-                except ChannelRuntimeError as exc:
-                    logger.warning(
-                        "Channel %s temporarily unavailable while rebuilding lineup: %s",
-                        record.definition.display_number,
-                        exc,
-                    )
-                    runtime = None
-                if runtime is None:
-                    unavailable_channels.append(record.definition.display_number)
-                    continue
-                runtimes.append(runtime)
-
-            service = GuideService(tuple(runtimes), definitions=tuple(record.definition for record in self._broadcaster.records))
-            television = TelevisionRuntime(tuple(runtimes), self._runtime_store)
-
-            # A legacy or partially-written runtime may still name a current
-            # channel without retaining its Viewer Clock. Normalize that state
-            # before the working decoder is retired so restoration cannot fail
-            # with "no channel is currently tuned".
-            if television.current_channel is not None:
-                try:
-                    television.status()
-                except ChannelRuntimeError:
-                    television.tune(
-                        television.current_channel,
-                        return_behavior="live",
-                    )
-                    prior_paused = False
-
-            actions = CouchActions(service, television)
-            actions.set_audio_output_device(
-                self._settings.audio_output_device_id or None
-            )
-            if self._video_surface is not None:
-                actions.attach_video_surface(self._video_surface)
-
-            restore_channel: int | None = None
-            if should_restore and television.channel_numbers:
-                if prior_channel in television.channels:
-                    restore_channel = int(prior_channel)
-                else:
-                    restore_channel = int(television.channel_numbers[0])
-                    prior_paused = False
-
-            previous_actions = self._actions
-            previous_actions.stop()
-            for runtime in previous_actions.runtime.channels.values():
-                if runtime.break_store is not None:
-                    runtime.break_store.close()
-
-            self._service = service
-            self._actions = actions
-            self._snapshot = self._build_guide_snapshot()
-            self._home_television = self._build_home_television_view()
-            self._broadcaster_snapshot = self._build_broadcaster_snapshot()
-            self.snapshotChanged.emit()
-            self.homeTelevisionChanged.emit()
-            self.broadcasterChanged.emit()
-
-            if unavailable_channels:
-                logger.warning(
-                    "Temporarily excluded channel(s) without usable media: %s",
-                    ", ".join(unavailable_channels),
-                )
-
-            if restore_channel is None:
-                self._playback = {"active": False}
-                self.playbackChanged.emit()
-                return True
-
-            try:
-                decision = actions.restore_after_lineup_change(
-                    restore_channel,
-                    paused=prior_paused,
-                )
-                self._publish(decision)
-            except (ChannelRuntimeError, PlaybackError, ValueError) as exc:
-                if propagate_playback_error and isinstance(exc, PlaybackError):
-                    raise
-                base_controller._publish_playback_failure(self, exc)
-                return False
-            return True
-
-        def _recover_on_demand_media(
-            self,
-            media: IndexedMedia,
-        ) -> dict[str, object]:
+        def _recover_on_demand_media(self, media):
             message = self._retire_missing_media(media)
             self._on_demand.stop()
             self._on_demand_view = {"active": False}
             self.onDemandChanged.emit()
-            self.refreshLibrary()
-            if _lineup_needs_refresh(self):
-                self._reload_resilient_lineup(
-                    restore_if_active=False,
-                )
-            logger.info("Recovered missing On Demand media without a playback error screen")
-            return {
-                "ok": False,
-                "message": (
-                    f"{message}. ChannelOS kept your watch history and updated the Library."
-                ),
-            }
+            self._request_media_recovery(restore_if_active=False)
+            return {"ok": False, "pending": True, "message": f"{message}. Updating available media…"}
 
-        def _recover_television_media(
-            self,
-            media: IndexedMedia,
-        ) -> dict[str, object]:
-            last_message = "Media is temporarily unavailable"
-            current = media
-
-            for _attempt in range(_MAX_RECOVERY_ATTEMPTS):
-                last_message = self._retire_missing_media(current)
-                self.refreshLibrary()
-                try:
-                    rebuilt = self._reload_resilient_lineup(
-                        restore_if_active=True,
-                        propagate_playback_error=True,
-                    )
-                except PlaybackError:
-                    target = self._missing_media_target()
-                    if target is not None and target[1] == "television":
-                        current = target[0]
-                        continue
-                    raise
-
-                if not rebuilt:
-                    return self._publish_temporary_unavailable(
-                        "This channel's media is temporarily unavailable. "
-                        "ChannelOS preserved the channel and will use the media again when it returns."
-                    )
-
-                if bool(self._playback.get("active")):
-                    logger.info(
-                        "Recovered unavailable television media and continued playback"
-                    )
-                    return {
-                        "ok": True,
-                        "recovered": True,
-                        "message": f"{last_message}; ChannelOS continued with available programming.",
-                        "playback": self._playback,
-                    }
-
-                return self._publish_temporary_unavailable(last_message)
-
-            return self._publish_temporary_unavailable(
-                "ChannelOS found several unavailable programs in a row. "
-                "The channel was preserved and will recover when its media returns."
-            )
+        def _recover_television_media(self, media):
+            message = self._retire_missing_media(media)
+            result = self._publish_temporary_unavailable(f"{message}. Checking available programming…")
+            self._request_media_recovery(restore_if_active=True)
+            return {**result, 'pending': True}
 
         def _publish_playback_failure(self, exc: Exception) -> dict[str, object]:
             if self._media_recovery_active or not isinstance(exc, PlaybackError):
@@ -587,31 +410,14 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
                 )
 
         @Slot(object)
-        def _on_library_scan_completed(self, summary) -> None:
-            super()._on_library_scan_completed(summary)
-            if not _lineup_needs_refresh(self):
-                return
-            try:
-                rebuilt = self._reload_resilient_lineup(
-                    restore_if_active=bool(
-                        self._playback.get("active")
-                        or self._playback.get("temporaryUnavailable")
-                    ),
-                )
-                if rebuilt:
-                    logger.info(
-                        "Rebuilt television lineup after Library availability changed"
-                    )
-                else:
-                    logger.warning(
-                        "Library availability changed but no usable replacement lineup was ready"
-                    )
-            except (ChannelRuntimeError, PlaybackError, ValueError):
-                # The successful Library scan remains authoritative even if an
-                # unrelated decoder/runtime problem prevents immediate reload.
-                logger.exception(
-                    "Library scan completed but live lineup refresh could not complete"
-                )
+        def _on_library_scan_completed(self, summary):
+            # Indexing has finished; prepare cards and only changed runtimes off Qt.
+            self._set_library_scan(active=False, phase='ready', current=int(summary.discovered),
+                total=int(summary.discovered), fileName='', message=(
+                    f'Scan complete — {summary.discovered} files • {summary.new_assets} new • {summary.cache_hits} unchanged'))
+            self._request_media_recovery(restore_if_active=bool(
+                self._playback.get('active') or self._playback.get('temporaryUnavailable')))
+
 
     broadcaster_qt_module.BroadcasterCouchController = ResilientBroadcasterController
     logger.info("Installed self-healing media availability support")

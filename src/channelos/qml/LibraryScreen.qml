@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import "LibraryView.js" as LibraryView
 
 Item {
     id: libraryRoot
@@ -9,6 +10,7 @@ Item {
     z: 85
 
     property var hostWindow: null
+    readonly property bool viewActive: hostWindow !== null && hostWindow.screen === "library" && !managerVisible
     visible: hostWindow !== null && hostWindow.screen === "library"
 
     readonly property color appBackground: "#050c15"
@@ -21,10 +23,32 @@ Item {
     readonly property color accent: "#1a91ff"
     readonly property color accentBright: "#42adff"
 
-    property var snapshot: channelOS
-                           ? (channelOS.librarySnapshot || ({}))
-                           : ({})
-    readonly property var preferences: channelOS ? channelOS.settings : ({})
+    property var snapshot: ({items: [], sources: []})
+    property var viewData: null
+    property bool catalogDirty: true
+    property bool shelvesDirty: true
+    property bool watchDirty: false
+    function syncLibraryView() {
+        if (!viewActive) return
+        if (catalogDirty) {
+            viewData = LibraryView.prepare(channelOS ? channelOS.librarySnapshot : ({}))
+            snapshot = viewData.snapshot
+            viewData.shelves = LibraryView.shelves(viewData)
+            catalogDirty = false
+            shelvesDirty = true
+            watchDirty = false
+        }
+        if (watchDirty && viewData) {
+            viewData.shelves = LibraryView.shelves(viewData)
+            watchDirty = false
+        }
+        if (shelvesDirty) { shelvesDirty = false; rebuildShelves() }
+    }
+    function invalidateLibrary() {
+        catalogDirty = true
+        if (viewActive) Qt.callLater(libraryRoot.syncLibraryView)
+    }
+    readonly property var preferences: channelOS && channelOS.settings ? channelOS.settings : ({})
     readonly property bool reducedMotion: Boolean(preferences.reducedMotion)
     readonly property int artworkWidth: Number(preferences.thumbnailWidth || 640)
     property var allItems: snapshot.items || []
@@ -135,7 +159,7 @@ Item {
     }
 
     function defaultShelfId() {
-        return continueItems(allItems).length ? "continue" : "all"
+        return viewData && viewData.shelves && viewData.shelves.length && viewData.shelves[0].shelfId === "continue" ? "continue" : "all"
     }
 
     function remainingLabel(item) {
@@ -151,90 +175,12 @@ Item {
     function rebuildShelves() {
         var needle = String(query || "").trim().toLowerCase()
         var next = []
-        var owned = sortedCopy(allItems)
-
+        if (!viewActive || !viewData) { shelvesDirty = true; return }
+        var owned = viewData.items
         if (needle.length) {
-            var matches = []
-            for (var matchIndex = 0; matchIndex < owned.length; ++matchIndex) {
-                if (matchesQuery(owned[matchIndex], needle))
-                    matches.push(owned[matchIndex])
-            }
-            next.push({
-                shelfId: "search",
-                title: "SEARCH RESULTS",
-                subtitle: matches.length + " matching owned media item"
-                          + (matches.length === 1 ? "" : "s"),
-                items: matches,
-                featured: true
-            })
-        } else if (owned.length) {
-            var continuing = continueItems(owned)
-            if (continuing.length) {
-                next.push({
-                    shelfId: "continue",
-                    title: "CONTINUE WATCHING",
-                    subtitle: "Resume your saved On Demand playhead",
-                    items: continuing,
-                    featured: true
-                })
-            }
-
-            next.push({
-                shelfId: "all",
-                title: "ALL MEDIA",
-                subtitle: "Your complete indexed collection",
-                items: owned,
-                featured: true
-            })
-
-            for (var sourceIndex = 0; sourceIndex < sources.length; ++sourceIndex) {
-                var source = sources[sourceIndex]
-                var sourceItems = []
-                var sourcePath = String(source.path || "")
-                for (var itemIndex = 0; itemIndex < owned.length; ++itemIndex) {
-                    if (String(owned[itemIndex].sourceRoot || "") === sourcePath)
-                        sourceItems.push(owned[itemIndex])
-                }
-                if (sourceItems.length) {
-                    next.push({
-                        shelfId: "source:" + sourcePath,
-                        title: String(source.name || "MEDIA SOURCE").toUpperCase(),
-                        subtitle: sourceItems.length + " indexed item"
-                                  + (sourceItems.length === 1 ? "" : "s"),
-                        items: sourceItems,
-                        featured: false
-                    })
-                }
-            }
-
-            var featureLength = []
-            var shortForm = []
-            for (var durationIndex = 0; durationIndex < owned.length; ++durationIndex) {
-                var duration = Number(owned[durationIndex].durationSeconds || 0)
-                if (duration >= 3600)
-                    featureLength.push(owned[durationIndex])
-                else if (duration > 0 && duration < 3600)
-                    shortForm.push(owned[durationIndex])
-            }
-            if (featureLength.length) {
-                next.push({
-                    shelfId: "feature",
-                    title: "FEATURE LENGTH",
-                    subtitle: "Long-form movies, recordings, and specials",
-                    items: featureLength,
-                    featured: false
-                })
-            }
-            if (shortForm.length) {
-                next.push({
-                    shelfId: "short",
-                    title: "SHORT FORM",
-                    subtitle: "Episodes, clips, and shorter programs",
-                    items: shortForm,
-                    featured: false
-                })
-            }
-        }
+            var matches = owned.filter(function(item) { return viewData.search[item.assetId].indexOf(needle) >= 0 })
+            next.push({shelfId:"search", title:"SEARCH RESULTS", subtitle:matches.length+" matching owned media item"+(matches.length===1?"":"s"), items:matches,featured:true})
+        } else next = viewData.shelves
 
         shelves = next
         var expandedStillExists = false
@@ -526,7 +472,6 @@ Item {
 
     function returnFromManager() {
         managerVisible = false
-        channelOS.refreshLibrary()
         forceActiveFocus()
     }
 
@@ -555,26 +500,28 @@ Item {
         selectedColumn = 0
         expandedShelfId = String(query || "").trim().length
                           ? "search" : defaultShelfId()
-        rebuildShelves()
+        shelvesDirty = true
+        if (viewActive) Qt.callLater(libraryRoot.syncLibraryView)
     }
-    onAllItemsChanged: rebuildShelves()
-    onSourcesChanged: rebuildShelves()
     onHostWindowChanged: publishInfoSelection()
     onSelectedShelfChanged: publishInfoSelection()
     onSelectedColumnChanged: publishInfoSelection()
 
-    onVisibleChanged: {
-        if (visible) {
+    onViewActiveChanged: {
+        if (channelOS && typeof channelOS.setLibraryArtworkActive === 'function')
+            channelOS.setLibraryArtworkActive(viewActive)
+        if (viewActive) {
             channelOS.refreshLibrary()
             updateClock()
-            rebuildShelves()
+            syncLibraryView()
+            publishInfoSelection()
             forceActiveFocus()
         }
     }
 
     Component.onCompleted: {
         updateClock()
-        rebuildShelves()
+        syncLibraryView()
         publishInfoSelection()
     }
 
@@ -593,9 +540,27 @@ Item {
                                                                        libraryRoot.addToChannelChannels.length - 1))
             }
         }
+        function onLibraryArtworkChanged(patches) {
+            if (!libraryRoot.viewData) return
+            Object.keys(patches).forEach(function(id) {
+                var item=libraryRoot.viewData.byId[id]
+                if(item) item.artworkUrl=String(patches[id] || "")
+            })
+            if (libraryRoot.viewActive && Object.prototype.hasOwnProperty.call(patches, String(libraryRoot.selectedItem().assetId || "")))
+                libraryRoot.publishInfoSelection()
+        }
+        function onLibraryWatchChanged(patches) {
+            if (!libraryRoot.viewData) return
+            Object.keys(patches).forEach(function(id) {
+                var item=libraryRoot.viewData.byId[id]
+                if(item) Object.assign(item, patches[id])
+            })
+            libraryRoot.watchDirty=true
+            libraryRoot.shelvesDirty=true
+            if(libraryRoot.viewActive) Qt.callLater(libraryRoot.syncLibraryView)
+        }
         function onLibraryChanged() {
-            libraryRoot.snapshot = channelOS.librarySnapshot || ({})
-            libraryRoot.rebuildShelves()
+            libraryRoot.invalidateLibrary()
         }
     }
 
@@ -1118,7 +1083,7 @@ Item {
                     opacity: shelfDelegate.expanded ? 1 : 0
                     spacing: 11
                     clip: true
-                    model: shelfDelegate.shelfData.items || []
+                    model: shelfDelegate.expanded ? (shelfDelegate.shelfData.items || []) : []
                     currentIndex: shelfDelegate.shelfIndex === libraryRoot.selectedShelf
                                   ? libraryRoot.selectedColumn : -1
                     boundsBehavior: Flickable.StopAtBounds
@@ -1147,7 +1112,7 @@ Item {
                         }
 
                         function requestArtwork() {
-                            if (!shelfDelegate.expanded || artworkUrl.length)
+                            if (!libraryRoot.visible || !shelfDelegate.expanded || artworkUrl.length)
                                 return
                             if (channelOS && typeof channelOS.requestLibraryArtwork === "function") {
                                 var resolved = channelOS.requestLibraryArtwork(
@@ -1159,6 +1124,18 @@ Item {
 
                         Component.onCompleted: requestArtwork()
                         onShelfOpenChanged: requestArtwork()
+                        Connections {
+                            target: channelOS
+                            ignoreUnknownSignals: true
+                            function onLibraryArtworkChanged(patches) {
+                                var id=String(mediaCard.modelData.assetId || "")
+                                if (Object.prototype.hasOwnProperty.call(patches,id)) mediaCard.artworkUrl=String(patches[id] || "")
+                            }
+                        }
+                        Connections {
+                            target: libraryRoot
+                            function onVisibleChanged() { if(libraryRoot.visible) mediaCard.requestArtwork() }
+                        }
 
                         Rectangle {
                             anchors.left: parent.left

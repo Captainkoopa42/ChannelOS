@@ -118,6 +118,12 @@ class MediaScanner:
         if cls._cancel_requested(check):
             raise ScanCancelled("media scan cancelled")
 
+    @staticmethod
+    def _verify_unchanged(path, fingerprint):
+        latest = path.stat()
+        if (latest.st_size, latest.st_mtime_ns) != (fingerprint.st_size, fingerprint.st_mtime_ns):
+            raise OSError(f'Media changed while it was being indexed: {path}. Wait for the file to finish saving, then rescan this source.')
+
     def discover(
         self,
         source: str | Path,
@@ -162,81 +168,88 @@ class MediaScanner:
         new_assets = known_assets = probe_errors = 0
 
         try:
-            self._raise_if_cancelled(should_cancel)
-
-            for index, path in enumerate(media_files, start=1):
+            with self.library.scan_session(source_path) as session:
                 self._raise_if_cancelled(should_cancel)
-                discovered += 1
-                cached = self.library.cached_asset_for_unchanged_path(path)
-                if cached is not None:
-                    cache_hits += 1
-                    known_assets += 1
 
-                    # A content cache hit must not permanently freeze an asset at
-                    # the metadata quality of its first scan. If a file was
-                    # originally indexed with --no-probe (or while ffprobe was
-                    # unavailable), a later technical scan can enrich it using
-                    # the already-trusted content hash instead of re-reading it.
-                    if cached.duration_seconds is None or cached.container_format is None:
-                        probe_result, probe_failed = self._probe(
-                            path,
-                            should_cancel,
-                        )
-                        if probe_failed:
-                            probe_errors += 1
-                        if self._adds_technical_data(cached, probe_result):
-                            self.library.upsert_file(
+                for index, path in enumerate(media_files, start=1):
+                    self._raise_if_cancelled(should_cancel)
+                    discovered += 1
+                    cached = session.cached_asset_for_unchanged_path(path)
+                    if cached is not None:
+                        cache_hits += 1
+                        known_assets += 1
+
+                        # A content cache hit must not permanently freeze an asset at
+                        # the metadata quality of its first scan. If a file was
+                        # originally indexed with --no-probe (or while ffprobe was
+                        # unavailable), a later technical scan can enrich it using
+                        # the already-trusted content hash instead of re-reading it.
+                        if cached.duration_seconds is None or cached.container_format is None:
+                            fingerprint = session.trusted_fingerprint(path)
+                            probe_result, probe_failed = self._probe(
                                 path,
-                                source_path,
-                                content_sha256=cached.content_sha256,
-                                probe=probe_result,
+                                should_cancel,
                             )
-                            metadata_enriched += 1
+                            if probe_failed:
+                                probe_errors += 1
+                            if self._adds_technical_data(cached, probe_result):
+                                self._verify_unchanged(path, fingerprint)
+                                session.upsert_file(
+                                    path,
+                                    source_path,
+                                    content_sha256=cached.content_sha256,
+                                    probe=probe_result,
+                                    _fingerprint=fingerprint,
+                                )
+                                metadata_enriched += 1
+                            else:
+                                session.mark_seen_cached(path, source_path)
                         else:
-                            self.library.mark_seen_cached(path, source_path)
+                            session.mark_seen_cached(path, source_path)
+                        self._report(
+                            on_progress,
+                            current=index,
+                            total=total,
+                            path=path,
+                        )
+                        continue
+
+                    fingerprint = path.stat()
+                    try:
+                        digest = sha256_file(
+                            path,
+                            should_cancel=should_cancel,
+                        )
+                    except InterruptedError as exc:
+                        raise ScanCancelled("media scan cancelled") from exc
+
+                    hashed += 1
+                    self._raise_if_cancelled(should_cancel)
+                    probe_result, probe_failed = self._probe(
+                        path,
+                        should_cancel,
+                    )
+                    if probe_failed:
+                        probe_errors += 1
+
+                    self._verify_unchanged(path, fingerprint)
+                    _, created = session.upsert_file(
+                        path,
+                        source_path,
+                        content_sha256=digest,
+                        probe=probe_result,
+                        _fingerprint=fingerprint,
+                    )
+                    if created:
+                        new_assets += 1
                     else:
-                        self.library.mark_seen_cached(path, source_path)
+                        known_assets += 1
                     self._report(
                         on_progress,
                         current=index,
                         total=total,
                         path=path,
                     )
-                    continue
-
-                try:
-                    digest = sha256_file(
-                        path,
-                        should_cancel=should_cancel,
-                    )
-                except InterruptedError as exc:
-                    raise ScanCancelled("media scan cancelled") from exc
-
-                hashed += 1
-                self._raise_if_cancelled(should_cancel)
-                probe_result, probe_failed = self._probe(
-                    path,
-                    should_cancel,
-                )
-                if probe_failed:
-                    probe_errors += 1
-
-                _, created = self.library.upsert_file(
-                    path,
-                    source_path,
-                    content_sha256=digest,
-                    probe=probe_result,
-                )
-                if created:
-                    new_assets += 1
-                else:
-                    known_assets += 1
-                self._report(
-                    on_progress,
-                    current=index,
-                    total=total,
-                    path=path,
-                )
 
             self._raise_if_cancelled(should_cancel)
             self.library.reconcile_source(source_path, media_files)

@@ -1,0 +1,928 @@
+{
+  "date": "2026-11-03",
+  "method": "Disposable generated fixtures; Python 3.12 and PySide6 6.11.2; offscreen Qt; fake playback decoder except separate native Windows acceptance. Wall-clock observations, not thresholds or hardware guarantees. Warm playback is reported separately from initial derived-index catch-up.",
+  "before": {
+    "backend-results.json": [
+      {
+        "operation": "volume-change",
+        "seconds": 0.0002981489997182507,
+        "cache_files": 0,
+        "repeat": 0,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.00022886500028107548,
+        "cache_files": 0,
+        "repeat": 1,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.00023156899987952784,
+        "cache_files": 0,
+        "repeat": 2,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.013808738000079757,
+        "cache_files": 1000,
+        "repeat": 0,
+        "filesystem_stat_calls": 2001
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.011473479000414954,
+        "cache_files": 1000,
+        "repeat": 1,
+        "filesystem_stat_calls": 2001
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.01052070400055527,
+        "cache_files": 1000,
+        "repeat": 2,
+        "filesystem_stat_calls": 2001
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.14460985499954404,
+        "cache_files": 10000,
+        "repeat": 0,
+        "filesystem_stat_calls": 20001
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.11310034100006305,
+        "cache_files": 10000,
+        "repeat": 1,
+        "filesystem_stat_calls": 20001
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.11694432799959031,
+        "cache_files": 10000,
+        "repeat": 2,
+        "filesystem_stat_calls": 20001
+      },
+      {
+        "operation": "cached-source-rescan",
+        "seconds": 4.245539173999532,
+        "connections": 2003,
+        "sql": 11019,
+        "PRAGMA": 6009,
+        "BEGIN": 1003,
+        "INSERT": 1002,
+        "COMMIT": 1003,
+        "SELECT": 1000,
+        "UPDATE": 1001,
+        "CREATE": 1,
+        "files": 1000,
+        "cache_hits": 1000,
+        "progress_notifications": 1001
+      },
+      {
+        "operation": "cached-source-rescan",
+        "seconds": 14.506753177000064,
+        "connections": 10003,
+        "sql": 55019,
+        "PRAGMA": 30009,
+        "BEGIN": 5003,
+        "INSERT": 5002,
+        "COMMIT": 5003,
+        "SELECT": 5000,
+        "UPDATE": 5001,
+        "CREATE": 1,
+        "files": 5000,
+        "cache_hits": 5000,
+        "progress_notifications": 5001
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.007085398000526766,
+        "sql": 83,
+        "SELECT": 65,
+        "BEGIN": 6,
+        "INSERT": 6,
+        "COMMIT": 6,
+        "historical_plans": 100,
+        "repeat": 0
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.00855444599983457,
+        "sql": 83,
+        "SELECT": 65,
+        "BEGIN": 6,
+        "INSERT": 6,
+        "COMMIT": 6,
+        "historical_plans": 100,
+        "repeat": 1
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.0068514750000758795,
+        "sql": 83,
+        "SELECT": 65,
+        "BEGIN": 6,
+        "INSERT": 6,
+        "COMMIT": 6,
+        "historical_plans": 100,
+        "repeat": 2
+      },
+      {
+        "operation": "completed-history-reconcile",
+        "seconds": 0.000592852999943716,
+        "sql": 2,
+        "SELECT": 2,
+        "historical_plans": 100
+      },
+      {
+        "operation": "one-minute-plan-range",
+        "seconds": 0.03189825099980226,
+        "sql": 1841,
+        "SELECT": 1841,
+        "historical_plans": 100,
+        "occurrence_query_plan": [
+          "SCAN ad_break_plans"
+        ]
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.013384871000198473,
+        "sql": 83,
+        "SELECT": 65,
+        "BEGIN": 6,
+        "INSERT": 6,
+        "COMMIT": 6,
+        "historical_plans": 1000,
+        "repeat": 0
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.011315451999507786,
+        "sql": 83,
+        "SELECT": 65,
+        "BEGIN": 6,
+        "INSERT": 6,
+        "COMMIT": 6,
+        "historical_plans": 1000,
+        "repeat": 1
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.016905284999666037,
+        "sql": 83,
+        "SELECT": 65,
+        "BEGIN": 6,
+        "INSERT": 6,
+        "COMMIT": 6,
+        "historical_plans": 1000,
+        "repeat": 2
+      },
+      {
+        "operation": "completed-history-reconcile",
+        "seconds": 0.004595053999764787,
+        "sql": 2,
+        "SELECT": 2,
+        "historical_plans": 1000
+      },
+      {
+        "operation": "one-minute-plan-range",
+        "seconds": 0.05175992199929169,
+        "sql": 3641,
+        "SELECT": 3641,
+        "historical_plans": 1000,
+        "occurrence_query_plan": [
+          "SCAN ad_break_plans"
+        ]
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.06842459500057885,
+        "sql": 83,
+        "SELECT": 65,
+        "BEGIN": 6,
+        "INSERT": 6,
+        "COMMIT": 6,
+        "historical_plans": 10000,
+        "repeat": 0
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.0652157080003235,
+        "sql": 83,
+        "SELECT": 65,
+        "BEGIN": 6,
+        "INSERT": 6,
+        "COMMIT": 6,
+        "historical_plans": 10000,
+        "repeat": 1
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.07304364599986002,
+        "sql": 83,
+        "SELECT": 65,
+        "BEGIN": 6,
+        "INSERT": 6,
+        "COMMIT": 6,
+        "historical_plans": 10000,
+        "repeat": 2
+      },
+      {
+        "operation": "completed-history-reconcile",
+        "seconds": 0.06662529299956077,
+        "sql": 2,
+        "SELECT": 2,
+        "historical_plans": 10000
+      },
+      {
+        "operation": "one-minute-plan-range",
+        "seconds": 0.3061366239999188,
+        "sql": 21641,
+        "SELECT": 21641,
+        "historical_plans": 10000,
+        "occurrence_query_plan": [
+          "SCAN ad_break_plans"
+        ]
+      },
+      {
+        "operation": "portable-plan-once",
+        "seconds": 1.3505624059998809,
+        "connections": 7,
+        "sql": 20,
+        "PRAGMA": 11,
+        "SELECT": 6,
+        "CREATE": 3,
+        "channels": 50,
+        "files": 5000
+      },
+      {
+        "operation": "portable-snapshot-before-worker",
+        "seconds": 3.1089517509999496,
+        "connections": 59,
+        "sql": 5285,
+        "PRAGMA": 153,
+        "SELECT": 107,
+        "BEGIN": 1,
+        "DELETE": 2,
+        "INSERT": 5020,
+        "UPDATE": 1,
+        "COMMIT": 1,
+        "channels": 50,
+        "files": 5000
+      }
+    ],
+    "qml-results.json": [
+      {
+        "operation": "construct-library-view",
+        "items": 1000,
+        "seconds": 0.1569861050002146,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "manager": {
+            "count": 2,
+            "total_seconds": 0.026814989999365935,
+            "max_seconds": 0.016406011999606562
+          },
+          "shelves": {
+            "count": 3,
+            "total_seconds": 0.04851611700087233,
+            "max_seconds": 0.02140023399988422
+          }
+        }
+      },
+      {
+        "operation": "show-library",
+        "items": 1000,
+        "seconds": 0.36313325599985546,
+        "backend_refresh_requests": 1,
+        "callbacks": {
+          "manager": {
+            "count": 3,
+            "total_seconds": 0.04513166300148441,
+            "max_seconds": 0.016468937000354344
+          },
+          "shelves": {
+            "count": 6,
+            "total_seconds": 0.160393023999859,
+            "max_seconds": 0.039159006999398116
+          }
+        }
+      },
+      {
+        "operation": "one-library-changed-signal",
+        "items": 1000,
+        "seconds": 0.14735331799965934,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "manager": {
+            "count": 2,
+            "total_seconds": 0.024847133000548638,
+            "max_seconds": 0.012427262000528572
+          },
+          "shelves": {
+            "count": 3,
+            "total_seconds": 0.05377703299927816,
+            "max_seconds": 0.020095175999813364
+          }
+        }
+      },
+      {
+        "operation": "one-search-character",
+        "items": 1000,
+        "seconds": 0.030774752000070293,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "shelves": {
+            "count": 1,
+            "total_seconds": 0.019937799000217638,
+            "max_seconds": 0.019937799000217638
+          }
+        }
+      },
+      {
+        "operation": "hidden-library-changed-signal",
+        "items": 1000,
+        "seconds": 0.17949365899949044,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "manager": {
+            "count": 2,
+            "total_seconds": 0.022364467999977933,
+            "max_seconds": 0.011310457000035967
+          },
+          "shelves": {
+            "count": 3,
+            "total_seconds": 0.07142252500034374,
+            "max_seconds": 0.027787938000074064
+          }
+        }
+      },
+      {
+        "operation": "construct-library-view",
+        "items": 5000,
+        "seconds": 0.9456265140006508,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "manager": {
+            "count": 2,
+            "total_seconds": 0.1903333060008663,
+            "max_seconds": 0.11749781100024848
+          },
+          "shelves": {
+            "count": 3,
+            "total_seconds": 0.3078063219991236,
+            "max_seconds": 0.12840550199962308
+          }
+        }
+      },
+      {
+        "operation": "show-library",
+        "items": 5000,
+        "seconds": 2.628172841000378,
+        "backend_refresh_requests": 1,
+        "callbacks": {
+          "manager": {
+            "count": 3,
+            "total_seconds": 0.41357850800068263,
+            "max_seconds": 0.17380302699984895
+          },
+          "shelves": {
+            "count": 6,
+            "total_seconds": 1.09174035200067,
+            "max_seconds": 0.2445441440004288
+          }
+        }
+      },
+      {
+        "operation": "one-library-changed-signal",
+        "items": 5000,
+        "seconds": 1.1262034549999953,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "manager": {
+            "count": 2,
+            "total_seconds": 0.21108000500044,
+            "max_seconds": 0.11475620700002764
+          },
+          "shelves": {
+            "count": 3,
+            "total_seconds": 0.4727200100005575,
+            "max_seconds": 0.2304921410004681
+          }
+        }
+      },
+      {
+        "operation": "one-search-character",
+        "items": 5000,
+        "seconds": 0.12575300099979358,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "shelves": {
+            "count": 1,
+            "total_seconds": 0.1012228170002345,
+            "max_seconds": 0.1012228170002345
+          }
+        }
+      },
+      {
+        "operation": "hidden-library-changed-signal",
+        "items": 5000,
+        "seconds": 1.2561819169995943,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "manager": {
+            "count": 2,
+            "total_seconds": 0.29989616100101557,
+            "max_seconds": 0.21523407900076563
+          },
+          "shelves": {
+            "count": 3,
+            "total_seconds": 0.6246828199991796,
+            "max_seconds": 0.2774781019998045
+          }
+        }
+      }
+    ],
+    "ad-bin-results.json": [
+      {
+        "operation": "select-20-ad-sources",
+        "items": 1000,
+        "sources": 20,
+        "seconds": 0.14094781199855788
+      },
+      {
+        "operation": "exclude-one-ad",
+        "items": 1000,
+        "sources": 20,
+        "seconds": 0.06385909199889284
+      },
+      {
+        "operation": "search-selected-ads",
+        "items": 1000,
+        "sources": 20,
+        "seconds": 0.007276021000507171
+      },
+      {
+        "operation": "select-20-ad-sources",
+        "items": 5000,
+        "sources": 20,
+        "seconds": 1.0484760680010368
+      },
+      {
+        "operation": "exclude-one-ad",
+        "items": 5000,
+        "sources": 20,
+        "seconds": 0.5332689019996906
+      },
+      {
+        "operation": "search-selected-ads",
+        "items": 5000,
+        "sources": 20,
+        "seconds": 0.01201963300081843
+      }
+    ],
+    "recovery-results.json": {
+      "operation": "resilient-lineup-rebuild",
+      "seconds": 1.283914,
+      "connections": 203,
+      "statements": 860,
+      "PRAGMA": 457,
+      "SELECT": 253,
+      "BEGIN": 50,
+      "UPDATE": 50,
+      "COMMIT": 50,
+      "profiled": false,
+      "calls": {},
+      "file_availability_checks": 12500,
+      "guide_rows_projected": 0
+    }
+  },
+  "after": {
+    "backend-after.json": [
+      {
+        "operation": "volume-change",
+        "seconds": 0.00043845400000463997,
+        "cache_files": 0,
+        "repeat": 0,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.00019698099981724226,
+        "cache_files": 0,
+        "repeat": 1,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.00016804599999886705,
+        "cache_files": 0,
+        "repeat": 2,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.0005045629998221557,
+        "cache_files": 1000,
+        "repeat": 0,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.0006465519998073432,
+        "cache_files": 1000,
+        "repeat": 1,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.0006672380000054545,
+        "cache_files": 1000,
+        "repeat": 2,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.0003690769999593613,
+        "cache_files": 10000,
+        "repeat": 0,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.0004049480000958283,
+        "cache_files": 10000,
+        "repeat": 1,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "volume-change",
+        "seconds": 0.00033812399988164543,
+        "cache_files": 10000,
+        "repeat": 2,
+        "filesystem_stat_calls": 1
+      },
+      {
+        "operation": "cached-source-rescan",
+        "seconds": 0.14623644399989644,
+        "connections": 4,
+        "sql": 2031,
+        "PRAGMA": 12,
+        "BEGIN": 7,
+        "INSERT": 1002,
+        "COMMIT": 7,
+        "SELECT": 1,
+        "UPDATE": 1001,
+        "CREATE": 1,
+        "files": 1000,
+        "cache_hits": 1000,
+        "progress_notifications": 1001
+      },
+      {
+        "operation": "cached-source-rescan",
+        "seconds": 0.6761500009999963,
+        "connections": 4,
+        "sql": 10063,
+        "PRAGMA": 12,
+        "BEGIN": 23,
+        "INSERT": 5002,
+        "COMMIT": 23,
+        "SELECT": 1,
+        "UPDATE": 5001,
+        "CREATE": 1,
+        "files": 5000
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.010295016000100077,
+        "sql": 449,
+        "SELECT": 47,
+        "SAVEPOINT": 1,
+        "DELETE": 300,
+        "INSERT": 100,
+        "RELEASE": 1,
+        "historical_plans": 100,
+        "repeat": 0
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.009404123999956937,
+        "sql": 46,
+        "SELECT": 44,
+        "SAVEPOINT": 1,
+        "RELEASE": 1,
+        "historical_plans": 100,
+        "repeat": 1
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.009986085000036837,
+        "sql": 46,
+        "SELECT": 44,
+        "SAVEPOINT": 1,
+        "RELEASE": 1,
+        "historical_plans": 100,
+        "repeat": 2
+      },
+      {
+        "operation": "completed-history-reconcile",
+        "seconds": 6.480299998656847e-05,
+        "sql": 4,
+        "SAVEPOINT": 1,
+        "SELECT": 2,
+        "RELEASE": 1,
+        "historical_plans": 100
+      },
+      {
+        "operation": "one-minute-plan-range",
+        "seconds": 0.00010269399990647798,
+        "sql": 4,
+        "SAVEPOINT": 1,
+        "SELECT": 2,
+        "RELEASE": 1,
+        "historical_plans": 100,
+        "occurrence_query_plan": [
+          "SEARCH ad_break_plans USING INDEX idx_ad_break_plans_occurrence (occurrence_id=?)"
+        ]
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.04469510699982493,
+        "sql": 4049,
+        "SELECT": 47,
+        "SAVEPOINT": 1,
+        "DELETE": 3000,
+        "INSERT": 1000,
+        "RELEASE": 1,
+        "historical_plans": 1000,
+        "repeat": 0
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.019941537000022436,
+        "sql": 46,
+        "SELECT": 44,
+        "SAVEPOINT": 1,
+        "RELEASE": 1,
+        "historical_plans": 1000,
+        "repeat": 1
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.01097577900009128,
+        "sql": 46,
+        "SELECT": 44,
+        "SAVEPOINT": 1,
+        "RELEASE": 1,
+        "historical_plans": 1000,
+        "repeat": 2
+      },
+      {
+        "operation": "completed-history-reconcile",
+        "seconds": 7.194299996626796e-05,
+        "sql": 4,
+        "SAVEPOINT": 1,
+        "SELECT": 2,
+        "RELEASE": 1,
+        "historical_plans": 1000
+      },
+      {
+        "operation": "one-minute-plan-range",
+        "seconds": 0.00020822300007239392,
+        "sql": 4,
+        "SAVEPOINT": 1,
+        "SELECT": 2,
+        "RELEASE": 1,
+        "historical_plans": 1000,
+        "occurrence_query_plan": [
+          "SEARCH ad_break_plans USING INDEX idx_ad_break_plans_occurrence (occurrence_id=?)"
+        ]
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.23759869200011963,
+        "sql": 40049,
+        "SELECT": 47,
+        "SAVEPOINT": 1,
+        "DELETE": 30000,
+        "INSERT": 10000,
+        "RELEASE": 1,
+        "historical_plans": 10000,
+        "repeat": 0
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.008408360999965225,
+        "sql": 46,
+        "SELECT": 44,
+        "SAVEPOINT": 1,
+        "RELEASE": 1,
+        "historical_plans": 10000,
+        "repeat": 1
+      },
+      {
+        "operation": "playback-refresh",
+        "seconds": 0.006792077999989488,
+        "sql": 46,
+        "SELECT": 44,
+        "SAVEPOINT": 1,
+        "RELEASE": 1,
+        "historical_plans": 10000,
+        "repeat": 2
+      },
+      {
+        "operation": "completed-history-reconcile",
+        "seconds": 7.560800008832302e-05,
+        "sql": 4,
+        "SAVEPOINT": 1,
+        "SELECT": 2,
+        "RELEASE": 1,
+        "historical_plans": 10000
+      },
+      {
+        "operation": "one-minute-plan-range",
+        "seconds": 0.00011826700006167812,
+        "sql": 4,
+        "SAVEPOINT": 1,
+        "SELECT": 2,
+        "RELEASE": 1,
+        "historical_plans": 10000,
+        "occurrence_query_plan": [
+          "SEARCH ad_break_plans USING INDEX idx_ad_break_plans_occurrence (occurrence_id=?)"
+        ]
+      },
+      {
+        "operation": "portable-plan-once",
+        "seconds": 3.7653796750000765,
+        "connections": 7,
+        "sql": 20,
+        "PRAGMA": 11,
+        "SELECT": 6,
+        "CREATE": 3,
+        "channels": 50,
+        "files": 5000
+      },
+      {
+        "operation": "portable-capture-on-gui",
+        "seconds": 0.004076857000200107,
+        "connections": 3,
+        "sql": 6,
+        "BEGIN": 3,
+        "SELECT": 3,
+        "channels": 50,
+        "files": 5000
+      },
+      {
+        "operation": "portable-prepare-in-worker",
+        "seconds": 1.6083374929999081,
+        "connections": 7,
+        "sql": 5039,
+        "PRAGMA": 6,
+        "SELECT": 8,
+        "BEGIN": 1,
+        "DELETE": 2,
+        "INSERT": 5020,
+        "UPDATE": 1,
+        "COMMIT": 1,
+        "channels": 50,
+        "files": 5000
+      }
+    ],
+    "qml-after.json": [
+      {
+        "operation": "construct-library-view",
+        "items": 5000,
+        "seconds": 0.02405339000006279,
+        "backend_refresh_requests": 0,
+        "callbacks": {}
+      },
+      {
+        "operation": "show-library",
+        "items": 5000,
+        "seconds": 0.5663093620000836,
+        "backend_refresh_requests": 1,
+        "callbacks": {
+          "shelves": {
+            "count": 1,
+            "total_seconds": 0.1927303310003481,
+            "max_seconds": 0.1927303310003481
+          }
+        }
+      },
+      {
+        "operation": "one-library-changed-signal",
+        "items": 5000,
+        "seconds": 0.4336503999998058,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "shelves": {
+            "count": 1,
+            "total_seconds": 0.08071904500002347,
+            "max_seconds": 0.08071904500002347
+          }
+        }
+      },
+      {
+        "operation": "one-artwork-card-patch",
+        "items": 5000,
+        "seconds": 0.0007596300001750933,
+        "backend_refresh_requests": 0,
+        "callbacks": {}
+      },
+      {
+        "operation": "one-search-character",
+        "items": 5000,
+        "seconds": 0.046476177999920765,
+        "backend_refresh_requests": 0,
+        "callbacks": {
+          "shelves": {
+            "count": 1,
+            "total_seconds": 0.04036190200031342,
+            "max_seconds": 0.04036190200031342
+          }
+        }
+      },
+      {
+        "operation": "hidden-library-changed-signal",
+        "items": 5000,
+        "seconds": 2.1470000319823157e-05,
+        "backend_refresh_requests": 0,
+        "callbacks": {}
+      },
+      {
+        "operation": "hidden-artwork-card-patch",
+        "items": 5000,
+        "seconds": 0.00010133900013897801,
+        "backend_refresh_requests": 0,
+        "callbacks": {}
+      }
+    ],
+    "ad-bin-after.json": [
+      {
+        "operation": "select-20-ad-sources",
+        "items": 1000,
+        "sources": 20,
+        "seconds": 0.08624122900027942
+      },
+      {
+        "operation": "exclude-one-ad",
+        "items": 1000,
+        "sources": 20,
+        "seconds": 0.0007513699997616641
+      },
+      {
+        "operation": "search-selected-ads",
+        "items": 1000,
+        "sources": 20,
+        "seconds": 0.012354983000022912
+      },
+      {
+        "operation": "select-20-ad-sources",
+        "items": 5000,
+        "sources": 20,
+        "seconds": 0.4113708659997428
+      },
+      {
+        "operation": "exclude-one-ad",
+        "items": 5000,
+        "sources": 20,
+        "seconds": 0.0016793569998299063
+      },
+      {
+        "operation": "search-selected-ads",
+        "items": 5000,
+        "sources": 20,
+        "seconds": 0.018545188000189228
+      }
+    ],
+    "recovery-after.json": {
+      "operation": "resilient-background-recovery",
+      "seconds": 1.818077164999977,
+      "gui_dispatch_seconds": 0.0006589270001313707,
+      "file_availability_checks": 5000,
+      "retained_runtime_count": 50,
+      "qt_heartbeats": 307,
+      "connections": 4,
+      "statements": 17,
+      "PRAGMA": 9,
+      "SELECT": 6,
+      "BEGIN": 1,
+      "COMMIT": 1
+    }
+  },
+  "work_bounds": {
+    "volume_change_stat_calls_at_10000_cached_images": 1,
+    "previous_volume_change_stat_calls_at_10000_cached_images": 20001,
+    "rescan_progress_publications": "100 ms and final result; per-file CLI callback retained",
+    "recovery_gui_adoption_budget_ms": 4,
+    "history_plan_cache_limit": 256,
+    "ad_source_cache_limit": 32,
+    "library_hidden_catalog_rebuilds": 0,
+    "artwork_card_patch_catalog_rebuilds": 0,
+    "collapsed_shelf_card_models": 0
+  }
+}

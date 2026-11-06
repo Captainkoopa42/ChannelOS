@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -123,7 +124,12 @@ class _LibraryScanWorker(QObject):
         scanner = MediaScanner(self._library)
         logger.info("Library scan worker started source=%s", self._source.name)
 
+        last_publication = [0.0]
         def publish(progress: ScanProgress) -> None:
+            now = time.monotonic()
+            if progress.current not in {0,progress.total} and now - last_publication[0] < .1:
+                return
+            last_publication[0] = now
             self.progress.emit(
                 int(progress.current),
                 int(progress.total),
@@ -220,6 +226,7 @@ class BroadcasterCouchController(CouchController):
 
     broadcasterChanged = Signal()
     libraryScanChanged = Signal()
+    mediaPreflightCompleted = Signal("QVariantMap")
     studioAutoFillChanged = Signal()
     studioAutoFillCompleted = Signal("QVariantMap")
 
@@ -372,6 +379,49 @@ class BroadcasterCouchController(CouchController):
             return {"ok": False, "cancelled": True, "message": ""}
         return self.preflightMediaSource(folder)
 
+    @Slot(result="QVariantMap")
+    def chooseMediaFolderPath(self):
+        folder = QFileDialog.getExistingDirectory(None, "Choose a ChannelOS media folder", str(Path.home()), QFileDialog.Option.ShowDirsOnly)
+        return {"ok":bool(folder),"cancelled":not bool(folder),"path":folder}
+
+    @Slot(str, result="QVariantMap")
+    def startMediaPreflight(self, source_path):
+        if self._scan_thread is not None:
+            return {"ok":False,"message":"A Library operation is already finishing."}
+        if getattr(self, 'startupState', {}).get('active') or getattr(self, 'channelMutation', {}).get('active'):
+            return {"ok":False,"message":"Wait for the current setup operation to finish."}
+        from .library_jobs import SourcePreflightWorker
+        cancel = threading.Event()
+        worker = SourcePreflightWorker(self._library, source_path, cancel)
+        thread = QThread(self)
+        thread.setObjectName('source-preflight')
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.completed.connect(self._on_preflight_completed)
+        worker.failed.connect(self._on_preflight_failed)
+        worker.cancelled.connect(self._on_preflight_cancelled)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_library_scan_thread_finished)
+        self._scan_thread, self._scan_worker, self._scan_cancel_event = thread, worker, cancel
+        self._scan_kind, self._pending_preflight = 'preflight', None
+        self._set_library_scan(active=True,phase='discovering',sourcePath=str(source_path),current=0,total=0,
+            fileName='',message='Checking this source…')
+        thread.start(QThread.Priority.LowPriority)
+        return {"ok":True,"pending":True,"message":"Checking this source…"}
+
+    @Slot(object)
+    def _on_preflight_completed(self, result):
+        self._pending_preflight = result
+
+    @Slot(str)
+    def _on_preflight_failed(self, message):
+        self._pending_preflight = {"ok":False,"message":message}
+
+    @Slot()
+    def _on_preflight_cancelled(self):
+        self._pending_preflight = {"ok":False,"cancelled":True,"message":"Source check cancelled."}
+
     @Slot(str, result="QVariantMap")
     def preflightMediaSource(self, source_path: str) -> dict[str, object]:
         try:
@@ -431,6 +481,7 @@ class BroadcasterCouchController(CouchController):
         thread.finished.connect(self._on_library_scan_thread_finished)
         thread.started.connect(worker.run)
 
+        self._scan_kind = "scan"
         self._scan_thread = thread
         self._scan_worker = worker
         self._scan_cancel_event = cancel_event
@@ -515,6 +566,11 @@ class BroadcasterCouchController(CouchController):
         self._scan_thread = None
         if thread is not None:
             thread.deleteLater()
+        if getattr(self, '_scan_kind', '') == 'preflight':
+            result = self._pending_preflight or {"ok":False,"cancelled":True,"message":"Source check cancelled."}
+            self._pending_preflight = None
+            self._set_library_scan(active=False,phase='ready' if result.get('ok') else 'cancelled' if result.get('cancelled') else 'error', message=result.get('message',''))
+            self.mediaPreflightCompleted.emit(result)
 
     @Slot(result="QVariantMap")
     def cancelMediaScan(self) -> dict[str, object]:

@@ -184,6 +184,8 @@ def install_startup_support(module):
         def _startup_metadata(self, payload):
             self._library_snapshot = payload['snapshot']
             self._library_media = payload['media']
+            self._index_library_cards()
+            self._library_revision = self._library_projection_revision()
             self._broadcaster._studio_media_cache = payload['studioCache']
             self._artwork_cache_bytes = payload['cacheStats'].size_bytes
             self._artwork_cache_files = payload['cacheStats'].file_count

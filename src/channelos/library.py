@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 import sqlite3
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -408,6 +409,10 @@ class MediaLibrary:
                 (source_key,),
             )
 
+    def scan_session(self, source_root):
+        from .scan_session import ScanSession
+        return ScanSession(self, source_root)
+
     def cached_asset_for_unchanged_path(self, path: Path) -> MediaAsset | None:
         _, path_key = self.storage_path(path)
         try:
@@ -435,14 +440,16 @@ class MediaLibrary:
         *,
         content_sha256: str,
         probe: MediaProbeResult,
+        _connection=None,
+        _fingerprint=None,
     ) -> tuple[MediaAsset, bool]:
         path_text, path_key = self.storage_path(path)
         source_text, source_key = self.storage_path(source_root)
-        stat = path.stat()
+        stat = _fingerprint if _fingerprint is not None else path.stat()
         now = utc_now_text()
         asset_id = media_asset_id(content_sha256)
 
-        with self.connect() as connection:
+        with (self.connect() if _connection is None else nullcontext(_connection)) as connection:
             existed = (
                 connection.execute(
                     "SELECT 1 FROM media_assets WHERE asset_id = ?", (asset_id,)

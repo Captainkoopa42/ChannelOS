@@ -15,7 +15,7 @@ from .playback import PlaybackError
 from .portable import (SetupLock, load_setup,
                        recent_setups, remember_setup)
 from .portable_copy import (CopyCancelled, inspect_setup, plan_copy,
-                            publish_snapshot, snapshot_setup)
+                            publish_snapshot, capture_setup, prepare_snapshot)
 
 logger = logging.getLogger(__name__)
 
@@ -27,15 +27,16 @@ class _CopyWorker(QObject):
     cancelled = Signal()
     finished = Signal()
 
-    def __init__(self, snapshot, cancellation):
+    def __init__(self, captured, cancellation):
         super().__init__()
-        self.snapshot = snapshot
+        self.captured = captured
         self.cancellation = cancellation
 
     @Slot()
     def run(self):
         try:
-            result = publish_snapshot(self.snapshot, on_progress=self.progress.emit,
+            snapshot = prepare_snapshot(self.captured, should_cancel=self.cancellation.is_set)
+            result = publish_snapshot(snapshot, on_progress=self.progress.emit,
                                       should_cancel=self.cancellation.is_set)
         except CopyCancelled:
             self.cancelled.emit()
@@ -44,6 +45,36 @@ class _CopyWorker(QObject):
             self.failed.emit(str(exc))
         else:
             self.completed.emit(result)
+        finally:
+            self.finished.emit()
+
+
+class _PreviewWorker(QObject):
+    completed = Signal(object)
+    failed = Signal(str)
+    cancelled = Signal()
+    finished = Signal()
+
+    def __init__(self, library, paths, runtime, options, cancellation):
+        super().__init__()
+        self.library, self.paths, self.runtime = library, paths, runtime
+        self.options, self.cancellation = options, cancellation
+
+    @Slot()
+    def run(self):
+        try:
+            destination, copy_media, include_app, include_artwork = self.options
+            plan = plan_copy(self.library, self.paths, destination, copy_media=copy_media,
+                include_artwork=include_artwork, runtime_database=self.runtime, should_cancel=self.cancellation.is_set,
+                application_directory=Path(sys.executable).parent if include_app else None)
+            if self.cancellation.is_set():
+                raise CopyCancelled('Copy review cancelled')
+            self.completed.emit((plan, plan.summary()))
+        except CopyCancelled:
+            self.cancelled.emit()
+        except Exception as exc:
+            logger.exception('Portable copy review failed')
+            self.failed.emit(str(exc))
         finally:
             self.finished.emit()
 
@@ -57,6 +88,7 @@ def install_portable_support(module):
         _channelos_portable_enabled = True
         portableSetupChanged = Signal()
         portableCopyChanged = Signal()
+        portablePreviewCompleted = Signal("QVariantMap")
 
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
@@ -65,6 +97,9 @@ def install_portable_support(module):
             self._portable_cancellation = None
             self._portable_available = True
             self._portable_pending_watch = None
+            self._portable_review = None
+            self._portable_preview_result = None
+            self._portable_job_kind = ''
             self._portable_message = ''
             self._portable_copy = {'active': False, 'phase': 'idle', 'percent': 0, 'message': '', 'destination': ''}
             self._portable_monitor = QTimer(self)
@@ -94,9 +129,65 @@ def install_portable_support(module):
         def _copy_blocker(self):
             if self._portable_thread is not None:
                 return 'A portable copy is already running or finishing.'
+            if getattr(self, 'startupState', {}).get('active') or getattr(self, 'channelMutation', {}).get('active'):
+                return 'Wait for the current setup operation to finish before copying.'
             if self._scan_thread is not None or self._studio_auto_fill_thread is not None:
                 return 'Wait for the current Library scan or Studio Auto Fill to finish before copying.'
             return ''
+
+        def _copy_revision(self):
+            def stamp(path):
+                try:
+                    info = path.stat()
+                    return str(path), info.st_mtime_ns, info.st_size, info.st_ino
+                except FileNotFoundError:
+                    return str(path), None
+            catalog = self._library.database_path.with_name('ad_catalog.sqlite')
+            return (self._library.revision(), stamp(catalog), stamp(Path(str(catalog) + '-wal')),
+                    tuple(stamp(path) for path in self._broadcaster.paths))
+
+        def _launch_portable_worker(self, worker, kind, cancellation):
+            thread = QThread(self)
+            thread.setObjectName('portable-setup-' + kind)
+            worker.moveToThread(thread)
+            worker.failed.connect(self._portable_failed)
+            worker.cancelled.connect(self._portable_cancelled)
+            worker.finished.connect(thread.quit)
+            worker.finished.connect(worker.deleteLater)
+            thread.finished.connect(self._portable_finished)
+            thread.started.connect(worker.run)
+            self._portable_thread, self._portable_worker = thread, worker
+            self._portable_cancellation, self._portable_job_kind = cancellation, kind
+            thread.start(QThread.Priority.LowPriority)
+
+        @Slot(str, bool, bool, bool, result='QVariantMap')
+        def beginPortablePreview(self, destination, copy_media, include_app, include_artwork):
+            blocker = self._copy_blocker()
+            if blocker:
+                return {'ok': False, 'message': blocker}
+            if include_app and not getattr(sys, 'frozen', False):
+                return {'ok': False, 'message': 'A packaged build is required to include the executable.'}
+            options = (destination, copy_media, include_app, include_artwork)
+            self._portable_review = None
+            self._portable_preview_result = None
+            self._portable_preview_revision = self._copy_revision()
+            self._portable_preview_options = options
+            cancellation = threading.Event()
+            worker = _PreviewWorker(self._library, tuple(self._broadcaster.paths),
+                self._runtime_store.database_path, options, cancellation)
+            worker.completed.connect(self._portable_review_ready)
+            self._set_copy(active=True, phase='reviewing', percent=0, message='Checking the setup and destination…')
+            self._launch_portable_worker(worker, 'review', cancellation)
+            return {'ok': True, 'pending': True, 'message': 'Checking the setup and destination…'}
+
+        @Slot(object)
+        def _portable_review_ready(self, result):
+            if self._portable_preview_revision != self._copy_revision():
+                self._portable_preview_result = {'ok': False, 'message': 'The setup changed during review. Review the copy again.'}
+                return
+            plan, summary = result
+            self._portable_review = (self._portable_preview_options, self._portable_preview_revision, plan)
+            self._portable_preview_result = {'ok': True, **summary, 'message': 'Review this copy, then choose Copy Setup.'}
 
         @Slot(result='QVariantMap')
         def choosePortableDestination(self):
@@ -115,49 +206,44 @@ def install_portable_support(module):
                     copy_media=copy_media, include_artwork=include_artwork,
                     runtime_database=self._runtime_store.database_path,
                     application_directory=Path(sys.executable).parent if include_app else None)
+                self._portable_review = ((destination, copy_media, include_app, include_artwork), self._copy_revision(), plan)
                 return {'ok': True, **plan.summary(), 'message': 'Review this copy, then choose Copy Setup.'}
             except (OSError, ValueError, sqlite3.Error) as exc:
                 return self._error(exc)
 
         @Slot(str, bool, bool, bool, result='QVariantMap')
         def startPortableCopy(self, destination, copy_media, include_app, include_artwork):
-            review = self.previewPortableCopy(destination, copy_media, include_app, include_artwork)
-            if not review.get('ok'):
-                return review
+            blocker = self._copy_blocker()
+            if blocker:
+                return {'ok': False, 'message': blocker}
+            reviewed = self._portable_review
+            options = (destination, copy_media, include_app, include_artwork)
+            if not reviewed or reviewed[0] != options or reviewed[1] != self._copy_revision():
+                self._portable_review = None
+                return {'ok': False, 'message': 'Review the current setup and copy options before copying.'}
             try:
-                plan = plan_copy(self._library, self._broadcaster.paths, destination,
-                    copy_media=copy_media, include_artwork=include_artwork,
-                    runtime_database=self._runtime_store.database_path,
-                    application_directory=Path(sys.executable).parent if include_app else None)
                 if self._on_demand.active:
                     self._persist_on_demand_state(self._on_demand.state(), force=True)
-                snapshot = snapshot_setup(plan, self._library, self._runtime_store.database_path,
-                                          self._broadcaster.managed_directory)
+                checkpoint = getattr(self, '_checkpoint_playback_history', None)
+                if checkpoint is not None:
+                    checkpoint()
+                captured = capture_setup(reviewed[2], self._library, self._runtime_store.database_path,
+                                         self._broadcaster.managed_directory)
             except (OSError, ValueError, sqlite3.Error) as exc:
                 return self._error(exc)
+            self._portable_review = None
             cancellation = threading.Event()
-            thread = QThread(self)
-            thread.setObjectName('portable-setup-copy')
-            worker = _CopyWorker(snapshot, cancellation)
-            worker.moveToThread(thread)
+            worker = _CopyWorker(captured, cancellation)
             worker.progress.connect(self._portable_progress)
             worker.completed.connect(self._portable_completed)
-            worker.failed.connect(self._portable_failed)
-            worker.cancelled.connect(self._portable_cancelled)
-            worker.finished.connect(thread.quit)
-            worker.finished.connect(worker.deleteLater)
-            thread.finished.connect(self._portable_finished)
-            thread.started.connect(worker.run)
-            self._portable_thread, self._portable_worker = thread, worker
-            self._portable_cancellation = cancellation
-            self._set_copy(active=True, phase='copying', percent=0,
-                           message='Copying the setup snapshot…', destination='', setupId='')
-            thread.start()
+            self._set_copy(active=True, phase='preparing', percent=0,
+                message='Preparing the captured setup…', destination='', setupId='')
+            self._launch_portable_worker(worker, 'copy', cancellation)
             return {'ok': True, 'message': 'Portable copy started. You can keep using the current setup.'}
 
         @Slot(object, object, str)
         def _portable_progress(self, current, total, message):
-            self._set_copy(percent=min(100, int(current * 100 / max(1, total))), message=message)
+            self._set_copy(phase='copying', percent=min(100, int(current * 100 / max(1, total))), message=message)
 
         @Slot(object)
         def _portable_completed(self, result):
@@ -171,10 +257,14 @@ def install_portable_support(module):
 
         @Slot(str)
         def _portable_failed(self, message):
+            if self._portable_job_kind == 'review':
+                self._portable_preview_result = {'ok': False, 'message': message}
             self._set_copy(active=False, phase='error', message=message)
 
         @Slot()
         def _portable_cancelled(self):
+            if self._portable_job_kind == 'review':
+                self._portable_preview_result = {'ok': False, 'cancelled': True, 'message': 'Copy review cancelled.'}
             self._set_copy(active=False, phase='cancelled', message='Copy cancelled. Your current setup and media were kept.')
 
         @Slot()
@@ -183,6 +273,10 @@ def install_portable_support(module):
             self._portable_thread = self._portable_worker = self._portable_cancellation = None
             if thread:
                 thread.deleteLater()
+            if self._portable_job_kind == 'review':
+                result = self._portable_preview_result or {'ok': False, 'message': 'Copy review cancelled.'}
+                self._set_copy(active=False, phase='reviewed' if result.get('ok') else 'error', message=result['message'])
+                self.portablePreviewCompleted.emit(result)
 
         @Slot(result='QVariantMap')
         def cancelPortableCopy(self):

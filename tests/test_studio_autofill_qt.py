@@ -356,7 +356,9 @@ def test_qml_ad_settings_survive_real_autofill_preview_and_apply(
         started = evaluate('channelOS.startStudioAutoFill(editorObject(), '
                            '"2026-09-07T00:00:00+00:00", "2026-09-07T00:02:00+00:00")')
         assert started["ok"] is True
-        _process_until(lambda: controller._studio_auto_fill_thread is None)
+        # This exercises real database/file work on the hosted Windows runner.
+        # Guard a stalled worker without imposing a two-second speed threshold.
+        _process_until(lambda: controller._studio_auto_fill_thread is None, timeout=15.0)
         _process_until(lambda: not item.property("autoFillApplying"))
         assert controller.studioAutoFill["phase"] == "ready", controller.studioAutoFill["message"]
         assert received[0]["adPriority"] == 0

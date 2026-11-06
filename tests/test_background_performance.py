@@ -6,6 +6,7 @@ import os
 import sqlite3
 import threading
 import time
+from contextlib import closing
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -166,7 +167,7 @@ def test_portable_capture_pins_writer_state_before_worker_conversion(tmp_path):
         path.write_text(path.read_text().replace('Travel TV','Later TV'))
         snapshot = prepare_snapshot(captured)
         try:
-            with sqlite3.connect(snapshot.root / 'ChannelOS-Data' / 'runtime.db') as copied:
+            with closing(sqlite3.connect(snapshot.root / 'ChannelOS-Data' / 'runtime.db')) as copied:
                 position = copied.execute('SELECT position_seconds FROM on_demand_watch').fetchone()[0]
             assert position == watch.position_seconds
             text = next((snapshot.root / 'ChannelOS-Data' / 'channels').glob('*.yaml')).read_text()

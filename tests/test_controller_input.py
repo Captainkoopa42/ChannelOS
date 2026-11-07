@@ -215,7 +215,7 @@ def test_controller_threshold_validation_is_explicit() -> None:
 
 def test_non_windows_backend_is_optional(monkeypatch) -> None:
     monkeypatch.setattr("channelos.controller_input.sys.platform", "linux")
-    monkeypatch.setattr("channelos.controller_input.SDLBackend.try_create", classmethod(lambda cls: None))
+    monkeypatch.setattr("channelos.controller_input.SDLBackend.available", staticmethod(lambda: False))
     assert XInputBackend.try_create() is None
     assert create_controller_backend() is None
 
@@ -394,3 +394,32 @@ def test_every_layout_draws_known_controls_on_the_canvas() -> None:
             assert 0 <= control["x"] <= 100 and 0 <= control["y"] <= 60, (family["id"], control)
             assert control["label"]
     assert {"xbox", "playstation", "switch", "gamecube", "n64", "snes", "nes", "genesis", "atari", "generic"} <= names
+
+
+def test_threaded_backend_starts_off_the_gui_thread_and_samples() -> None:
+    import threading
+    import time as clock
+    started_on = []
+
+    class Slow:
+        def read_first(self):
+            return ControllerReading("sdl:9", "Pad", snapshot(GamepadButton.SOUTH), family="generic")
+
+    def factory():
+        started_on.append(threading.current_thread().name)
+        clock.sleep(0.05)
+        return Slow()
+
+    begin = clock.monotonic()
+    backend = controller_input.ThreadedBackend(factory)
+    assert clock.monotonic() - begin < 0.04, "creation never blocks the caller"
+    assert backend.read_first() is None
+    assert backend.started.wait(2)
+    deadline = clock.monotonic() + 2
+    reading = None
+    while reading is None and clock.monotonic() < deadline:
+        reading = backend.read_first()
+        clock.sleep(0.01)
+    backend.stop()
+    assert reading is not None and reading.controller_id == "sdl:9"
+    assert started_on == ["ChannelOS controller"]

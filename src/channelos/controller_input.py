@@ -545,6 +545,12 @@ class SDLBackend:
                               for name, button in _SDL_BUTTONS)
         self._buttons = tuple((code, button) for code, button in self._buttons if code is not None)
 
+    @staticmethod
+    def available() -> bool:
+        """Cheap check that PySDL2 and its library can be found (no start-up)."""
+        import importlib.util
+        return importlib.util.find_spec("sdl2") is not None
+
     @classmethod
     def try_create(cls) -> "SDLBackend | None":
         try:
@@ -627,17 +633,69 @@ class SDLBackend:
         )
 
 
+class ThreadedBackend:
+    """Run a slow-to-start backend on its own thread.
+
+    SDL's controller start-up enumerates every HID device and took seconds on
+    Windows, which froze the window if done on the GUI thread. The thread
+    starts the backend, then samples it about 120 times a second while
+    ChannelOS is asking; ``read_first`` just returns the latest sample.
+    """
+
+    ACTIVE_INTERVAL = 0.008
+    IDLE_INTERVAL = 0.25
+
+    def __init__(self, factory: Callable[[], ControllerBackend | None]) -> None:
+        import threading
+        self._factory = factory
+        self._latest: ControllerReading | None = None
+        self._requested_at = time.monotonic()
+        self._stopping = threading.Event()
+        self.backend: ControllerBackend | None = None
+        self.started = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="ChannelOS controller", daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        try:
+            self.backend = self._factory()
+        except Exception:
+            self.backend = None
+        finally:
+            self.started.set()
+        backend = self.backend
+        while backend is not None and not self._stopping.is_set():
+            wanted = time.monotonic() - self._requested_at < 0.5
+            if wanted:
+                try:
+                    self._latest = backend.read_first()
+                except Exception:
+                    self._latest = None
+            interval = self.ACTIVE_INTERVAL if wanted and self._latest is not None else self.IDLE_INTERVAL
+            self._stopping.wait(interval)
+
+    def read_first(self) -> ControllerReading | None:
+        self._requested_at = time.monotonic()
+        return self._latest
+
+    def stop(self) -> None:
+        self._stopping.set()
+
+
+def _sdl_then_xinput() -> ControllerBackend | None:
+    return SDLBackend.try_create() or XInputBackend.try_create()
+
+
 def create_controller_backend() -> ControllerBackend | None:
     """Return the native backend for this platform without making it required.
 
-    SDL covers the most controllers; XInput is the dependency-free fallback.
+    SDL covers the most controllers and starts on its own thread; XInput is
+    the dependency-free fallback (and is used directly when SDL is missing).
     """
 
     disabled = os.environ.get("CHANNELOS_DISABLE_CONTROLLER", "").strip().lower()
     if disabled in {"1", "true", "yes", "on"}:
         return None
-    if os.environ.get("CHANNELOS_CONTROLLER_BACKEND", "").strip().lower() != "xinput":
-        backend = SDLBackend.try_create()
-        if backend is not None:
-            return backend
+    if os.environ.get("CHANNELOS_CONTROLLER_BACKEND", "").strip().lower() != "xinput" and SDLBackend.available():
+        return ThreadedBackend(_sdl_then_xinput)
     return XInputBackend.try_create()

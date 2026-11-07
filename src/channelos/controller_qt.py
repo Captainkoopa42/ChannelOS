@@ -93,6 +93,9 @@ class QtControllerInput(QObject):
 
     def stop(self) -> None:
         self._timer.stop()
+        stop_backend = getattr(self._backend, "stop", None)
+        if callable(stop_backend):
+            stop_backend()
 
     @staticmethod
     def _default_application_active() -> bool:

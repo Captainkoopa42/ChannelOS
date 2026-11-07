@@ -212,3 +212,101 @@ def test_theme_builder_qml_opens_and_edits_a_draft(tmp_path: Path) -> None:
         host.close()
         app.processEvents()
     assert [m for m in messages if "ThemeBuilder.qml" in m] == []
+
+
+def test_theme_builder_works_with_a_controller_and_keeps_sliders_in_sync(tmp_path: Path) -> None:
+    """Remote/controller directions walk the builder's controls; typing stays in text boxes."""
+    from PySide6.QtCore import QEvent, QObject, Qt, QUrl, qInstallMessageHandler
+    from PySide6.QtGui import QGuiApplication, QKeyEvent
+    from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlExpression
+    from channelos.control import ControlIntent
+    from channelos.couch_qt import CouchKeyFilter
+    from test_performance_operations import controller_fixture
+    messages: list[str] = []
+    previous = qInstallMessageHandler(lambda _m, _c, text: messages.append(text))
+    app, controller, _root = controller_fixture(tmp_path)
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("channelOS", controller)
+    engine.loadData(b'import QtQuick; import QtQuick.Controls; ApplicationWindow { width: 1400; height: 860; visible: true }')
+    host = engine.rootObjects()[0]
+    host.requestActivate()
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(QML / "ThemeBuilder.qml")))
+    builder = component.create()
+    assert builder is not None, [e.toString() for e in component.errors()]
+    builder.setProperty("parent", host.contentItem())
+    host._keep = (component, builder)
+    router = CouchKeyFilter.__new__(CouchKeyFilter)
+    QObject.__init__(router)
+    router._window = host
+
+    def evaluate(code):
+        expression = QQmlExpression(engine.contextForObject(builder), builder, code)
+        value, _ = expression.evaluate()
+        assert not expression.hasError(), expression.error().toString()
+        return value.toVariant() if hasattr(value, "toVariant") else value
+
+    def focused():
+        item = QGuiApplication.focusObject()
+        return (item.objectName() if item else "", item.metaObject().className() if item else "")
+
+    def press(intent):
+        router.navigate_focus(intent)
+        for _ in range(3):
+            app.processEvents()
+
+    try:
+        evaluate("openBuilder()")
+        for _ in range(10):
+            app.processEvents()
+        assert evaluate("selectedId") == "channelos"
+        start = focused()
+        # Down walks forward through the controls, Up walks back.
+        press(ControlIntent.DOWN)
+        after = focused()
+        assert after != start
+        press(ControlIntent.UP)
+        assert focused() == start
+
+        # Reach a role swatch and press Select: the colour picker opens on it.
+        for _ in range(80):
+            if focused()[0].startswith("themeRoleSwatch_"):
+                break
+            press(ControlIntent.DOWN)
+        role = focused()[0].removeprefix("themeRoleSwatch_")
+        assert role, "a colour swatch is reachable with the controller"
+        press(ControlIntent.SELECT)
+        assert evaluate("picker.visible") and evaluate("editingRole") == role
+        # The picker's first control is a slider: Right nudges it and edits the draft.
+        before = evaluate(f'draft.roles["{role}"]')
+        press(ControlIntent.RIGHT)
+        press(ControlIntent.RIGHT)
+        assert evaluate("dirty") and evaluate(f'draft.roles["{role}"]') != before
+        evaluate("picker.close()")
+        app.processEvents()
+
+        # Sliders keep following the draft after being moved (binding fix).
+        evaluate('set("panelOpacity", 60)')
+        evaluate('load("chromespace")')
+        app.processEvents()
+        assert round(evaluate("panelPercent.sliderValue")) == evaluate("draft.panelOpacity") == 85
+
+        # Typing into a text box is never taken as a remote command.
+        evaluate('set("panelOpacity", 50)')
+        app.processEvents()
+        assert round(evaluate("panelPercent.sliderValue")) == 50
+        name = builder.findChild(QObject, "themeBuilderName")
+        assert name is not None
+        name.forceActiveFocus()
+        app.processEvents()
+        assert CouchKeyFilter._text_entry_has_focus()
+        backspace = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Backspace, Qt.KeyboardModifier.NoModifier)
+        letter_h = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_H, Qt.KeyboardModifier.NoModifier, "h")
+        assert router.eventFilter(name, backspace) is False
+        assert router.eventFilter(name, letter_h) is False
+        assert CouchKeyFilter.command_for_key(Qt.Key.Key_Backspace) is None
+    finally:
+        qInstallMessageHandler(previous)
+        controller.stop()
+        host.close()
+        app.processEvents()
+    assert [m for m in messages if "ThemeBuilder.qml" in m] == []

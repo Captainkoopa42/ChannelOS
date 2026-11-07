@@ -11,8 +11,8 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt, SIGNAL
-from PySide6.QtGui import QDesktopServices, QGuiApplication, QWindow
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Property, QCoreApplication, QEvent, QTimer, QUrl, Signal, Slot, Qt, SIGNAL
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QKeyEvent, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
@@ -1844,6 +1844,10 @@ def connect_screen_changed(window, callback) -> None:
         changed.connect(callback)
 
 
+_FOCUS_NAVIGATION_INTENTS = frozenset({
+    ControlIntent.UP, ControlIntent.DOWN, ControlIntent.LEFT, ControlIntent.RIGHT, ControlIntent.SELECT})
+
+
 class CouchKeyFilter(QObject):
     """Translate couch/keyboard controls independently of QML focus ownership."""
 
@@ -2068,7 +2072,6 @@ class CouchKeyFilter(QObject):
             Qt.Key.Key_G: ControlIntent.GUIDE,
             Qt.Key.Key_H: ControlIntent.HOME,
             Qt.Key.Key_Escape: ControlIntent.BACK,
-            Qt.Key.Key_Backspace: ControlIntent.BACK,
             Qt.Key.Key_Back: ControlIntent.BACK,
             Qt.Key.Key_Up: ControlIntent.UP,
             Qt.Key.Key_Down: ControlIntent.DOWN,
@@ -2731,6 +2734,8 @@ class CouchKeyFilter(QObject):
             settings_item = getattr(self._window, "_channelos_settings_item", None)
             if settings_item is None:
                 return self._go_home() if intent is ControlIntent.BACK else False
+            if bool(settings_item.property("focusNavigation")) and intent in _FOCUS_NAVIGATION_INTENTS:
+                return self.navigate_focus(intent)
             if intent is ControlIntent.DIGIT:
                 # Digits type into the Settings PIN pad when it is open.
                 QMetaObject.invokeMethod(settings_item, "handleDigit", Qt.ConnectionType.DirectConnection,
@@ -3023,8 +3028,53 @@ class CouchKeyFilter(QObject):
             return True
         return False
 
+    def navigate_focus(self, intent: ControlIntent) -> bool:
+        """Drive Qt's own focus chain from a remote or controller.
+
+        Up/Down (and Left/Right on ordinary controls) move like Shift+Tab/Tab;
+        Left/Right adjust sliders, lists and spin boxes; Select presses the
+        focused control. The keys are synthesized, so every control keeps its
+        normal keyboard behavior and signals.
+        """
+        focus = QGuiApplication.focusObject()
+        adjustable = focus is not None and any(
+            focus.inherits(name) for name in ("QQuickSlider", "QQuickComboBox", "QQuickSpinBox", "QQuickRangeSlider"))
+        modifiers = Qt.KeyboardModifier.NoModifier
+        if intent is ControlIntent.SELECT:
+            key = Qt.Key.Key_Return if self._text_entry_has_focus() or (
+                focus is not None and focus.inherits("QQuickComboBox")) else Qt.Key.Key_Space
+        elif adjustable and intent in (ControlIntent.LEFT, ControlIntent.RIGHT):
+            key = Qt.Key.Key_Left if intent is ControlIntent.LEFT else Qt.Key.Key_Right
+        else:
+            key = Qt.Key.Key_Tab
+            if intent in (ControlIntent.UP, ControlIntent.LEFT):
+                modifiers = Qt.KeyboardModifier.ShiftModifier
+        target = QGuiApplication.focusWindow() or self._window
+        self._synthesizing = True
+        try:
+            QCoreApplication.sendEvent(target, QKeyEvent(QEvent.Type.KeyPress, key, modifiers))
+            QCoreApplication.sendEvent(target, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers))
+        finally:
+            self._synthesizing = False
+        return True
+
+    @staticmethod
+    def _text_entry_has_focus() -> bool:
+        """True while a text box (hex field, name, search…) is being typed in."""
+        focus = QGuiApplication.focusObject()
+        if focus is None:
+            return False
+        if any(focus.inherits(name) for name in ("QQuickTextInput", "QQuickTextEdit")):
+            return not bool(focus.property("readOnly"))
+        class_name = focus.metaObject().className().lower()
+        return any(marker in class_name for marker in ("textinput", "textfield", "textedit", "textarea"))
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if event.type() != QEvent.Type.KeyPress:
+        if event.type() != QEvent.Type.KeyPress or getattr(self, "_synthesizing", False):
+            return False
+        if self._text_entry_has_focus() and event.key() not in (Qt.Key.Key_Escape, Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            # Typing belongs to the text box: letters, digits, Backspace,
+            # arrows and Enter never become remote commands while editing.
             return False
         command = self.command_for_key(event.key())
         if command is None:

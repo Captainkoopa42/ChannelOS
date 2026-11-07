@@ -110,6 +110,18 @@ Popup {
         var current = channelOS && channelOS.settings ? String(channelOS.settings.theme || "channelos") : "channelos"
         open()
         load(themeById(current) ? current : "channelos")
+        Qt.callLater(focusSelectedTheme)
+    }
+    // Remote and controller: put focus on the theme being edited.
+    function focusSelectedTheme() {
+        for (var i = 0; i < themes.length; ++i) {
+            if (themes[i].id === selectedId) {
+                themeList.positionViewAtIndex(i, ListView.Contain)
+                var row = themeList.itemAtIndex(i)
+                if (row) { row.forceActiveFocus(); return }
+            }
+        }
+        saveUseButton.forceActiveFocus()
     }
     function closeBuilder() {
         picker.close()
@@ -145,6 +157,7 @@ Popup {
         property string label
         property int value
         property int from: 10
+        readonly property real sliderValue: slider.value
         signal moved(int value)
         Layout.fillWidth: true
         Caption { text: percent.label; Layout.preferredWidth: 120 }
@@ -152,7 +165,9 @@ Popup {
             id: slider
             Layout.fillWidth: true
             from: percent.from; to: 100; stepSize: 5
-            value: percent.value
+            // A Binding element keeps following the draft after a drag or key
+            // press (a plain `value:` binding is broken by the first move).
+            Binding on value { value: percent.value; restoreMode: Binding.RestoreNone }
             onMoved: percent.moved(Math.round(value))
             background: Rectangle {
                 x: slider.leftPadding; y: slider.topPadding + slider.availableHeight / 2 - 3
@@ -197,7 +212,7 @@ Popup {
                     Text { id: unsaved; anchors.centerIn: parent; text: "UNSAVED"; color: Theme.c("#ffb84a"); font.pixelSize: 11; font.weight: Font.Bold }
                 }
                 ChannelButton { text: "Save"; enabled: builder.dirty || !builder.draft.id; onClicked: builder.save(false) }
-                ChannelButton { objectName: "themeBuilderSaveUse"; text: "Save & Use"; highlighted: true; onClicked: builder.save(true) }
+                ChannelButton { id: saveUseButton; objectName: "themeBuilderSaveUse"; text: "Save & Use"; highlighted: true; onClicked: builder.save(true) }
                 ChannelButton { text: "Close"; onClicked: builder.closeBuilder() }
             }
         }
@@ -229,12 +244,17 @@ Popup {
                         delegate: Rectangle {
                             id: themeRow
                             required property var modelData
+                            required property int index
                             width: themeList.width
                             height: 62
                             radius: 8
+                            activeFocusOnTab: true
+                            Keys.onSpacePressed: builder.load(modelData.id)
+                            Keys.onReturnPressed: builder.load(modelData.id)
+                            onActiveFocusChanged: if (activeFocus) themeList.positionViewAtIndex(index, ListView.Contain)
                             color: modelData.id === builder.selectedId ? Theme.c("#12396a") : Theme.c("#0d2035")
-                            border.color: modelData.id === builder.selectedId ? Theme.c("#42adff") : Theme.c("#1a3550")
-                            border.width: modelData.id === builder.selectedId ? 2 : 1
+                            border.color: activeFocus ? Theme.c("#f4f7fb") : modelData.id === builder.selectedId ? Theme.c("#42adff") : Theme.c("#1a3550")
+                            border.width: activeFocus || modelData.id === builder.selectedId ? 2 : 1
                             ColumnLayout {
                                 anchors.fill: parent
                                 anchors.margins: 10
@@ -330,16 +350,22 @@ Popup {
                                     Layout.fillWidth: true
                                     spacing: 10
                                     Rectangle {
+                                        id: swatch
                                         objectName: "themeRoleSwatch_" + roleRow.modelData.key
                                         width: 44; height: 34; radius: 7
                                         color: roleRow.value
-                                        border.color: Theme.c("#42adff"); border.width: swatchArea.containsMouse ? 2 : 1
+                                        activeFocusOnTab: true
+                                        function pick() { builder.editingRole = roleRow.modelData.key; picker.openFor(roleRow.value, swatch) }
+                                        Keys.onSpacePressed: pick()
+                                        Keys.onReturnPressed: pick()
+                                        border.color: activeFocus ? Theme.c("#f4f7fb") : Theme.c("#42adff")
+                                        border.width: activeFocus ? 3 : swatchArea.containsMouse ? 2 : 1
                                         MouseArea {
                                             id: swatchArea
                                             anchors.fill: parent
                                             hoverEnabled: true
                                             cursorShape: Qt.PointingHandCursor
-                                            onClicked: { builder.editingRole = roleRow.modelData.key; picker.openFor(roleRow.value, parent) }
+                                            onClicked: swatch.pick()
                                         }
                                     }
                                     ColumnLayout {
@@ -353,7 +379,11 @@ Popup {
                                         text: roleRow.value
                                         font.family: "monospace"
                                         validator: RegularExpressionValidator { regularExpression: /^#[0-9a-fA-F]{6}$/ }
-                                        onEditingFinished: if (acceptableInput) builder.setRole(roleRow.modelData.key, text)
+                                        objectName: "themeRoleHex_" + roleRow.modelData.key
+                                        onEditingFinished: {
+                                            if (acceptableInput) builder.setRole(roleRow.modelData.key, text)
+                                            else text = Qt.binding(function() { return roleRow.value })
+                                        }
                                     }
                                 }
                             }
@@ -428,12 +458,12 @@ Popup {
                                         { value: "tile", label: "Tile" }, { value: "center", label: "Center" }]
                                 textRole: "label"
                                 valueRole: "value"
-                                currentIndex: ["fill", "fit", "tile", "center"].indexOf(builder.draft.wallpaperFit)
+                                Binding on currentIndex { value: ["fill", "fit", "tile", "center"].indexOf(builder.draft.wallpaperFit); restoreMode: Binding.RestoreNone }
                                 onActivated: builder.set("wallpaperFit", currentValue)
                             }
                         }
                         Percent { label: "Image opacity"; value: builder.draft.wallpaperOpacity; onMoved: function(v) { builder.set("wallpaperOpacity", v) } }
-                        Percent { label: "Panel opacity"; from: 40; value: builder.draft.panelOpacity; onMoved: function(v) { builder.set("panelOpacity", v) } }
+                        Percent { id: panelPercent; label: "Panel opacity"; from: 40; value: builder.draft.panelOpacity; onMoved: function(v) { builder.set("panelOpacity", v) } }
                         Caption { Layout.fillWidth: true; text: "Lower panel opacity lets the wallpaper show through, MySpace-style. Images are copied into your setup, so they travel with a portable drive." }
                     }
                 }
@@ -523,13 +553,20 @@ Popup {
         property real hue: 0
         property real saturation: 0
         property real lightness: 0
+        property Item returnFocus: null
         readonly property string current: builder.hexOf(hue, saturation, lightness)
+        onOpened: Qt.callLater(function() {
+            var first = picker.contentItem.nextItemInFocusChain(true)
+            if (first) first.forceActiveFocus()
+        })
+        onClosed: if (returnFocus) returnFocus.forceActiveFocus()
         function openFor(hex, anchorItem) {
+            returnFocus = anchorItem
             var value = builder.hsl(hex)
             hue = value.h; saturation = value.s; lightness = value.l
             var point = anchorItem.mapToItem(builder.contentItem, 0, anchorItem.height + 6)
             x = Math.min(point.x, builder.width - width - 10)
-            y = Math.min(point.y, builder.height - 380)
+            y = Math.max(10, Math.min(point.y, builder.height - 400))
             open()
         }
         function apply(hex) {
@@ -559,7 +596,8 @@ Popup {
                         id: track
                         Layout.fillWidth: true
                         from: 0; to: 1
-                        value: picker[channel.modelData.key]
+                        stepSize: 0.01
+                        Binding on value { value: picker[channel.modelData.key]; restoreMode: Binding.RestoreNone }
                         onMoved: { picker[channel.modelData.key] = value; picker.changed() }
                         background: Rectangle {
                             x: track.leftPadding; y: track.topPadding + track.availableHeight / 2 - 7
@@ -594,7 +632,11 @@ Popup {
                         required property string modelData
                         width: 30; height: 24; radius: 4
                         color: modelData
-                        border.color: Theme.c("#1a3550")
+                        activeFocusOnTab: true
+                        Keys.onSpacePressed: picker.apply(modelData)
+                        Keys.onReturnPressed: picker.apply(modelData)
+                        border.color: activeFocus ? Theme.c("#f4f7fb") : Theme.c("#1a3550")
+                        border.width: activeFocus ? 3 : 1
                         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: picker.apply(parent.modelData) }
                     }
                 }

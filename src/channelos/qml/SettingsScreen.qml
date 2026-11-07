@@ -76,6 +76,9 @@ Item {
     property int currentTab: 0
     readonly property var settingsRows: allRows.filter(function(row) { return row.tab === tabs[currentTab].key })
     readonly property bool themeBuilderOpen: themeBuilder.visible
+    // While true, directions and Select move through on-screen controls
+    // (CouchKeyFilter turns them into Tab / arrow / Space keys).
+    readonly property bool focusNavigation: themeBuilder.visible
 
     function openThemeBuilder() { themeBuilder.openBuilder() }
     // Profiles tab: the profile Left/Right points at before Select switches.

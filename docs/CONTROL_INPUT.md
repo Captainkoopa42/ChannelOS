@@ -124,7 +124,7 @@ Existing keyboard behavior remains available:
 
 - arrow keys -> `UP`, `DOWN`, `LEFT`, `RIGHT`,
 - Enter/Return/Space -> `SELECT`,
-- Escape/Backspace/consumer Back -> `BACK`,
+- Escape/consumer Back -> `BACK` (Backspace only edits text, so typing never leaves a screen),
 - digits -> `DIGIT 0` through `DIGIT 9`,
 - `G` or a consumer Guide key -> `GUIDE` (inside the Guide: back to now),
 - Home -> `GUIDE_NOW`,

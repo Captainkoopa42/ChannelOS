@@ -2334,6 +2334,10 @@ ApplicationWindow {
                 width: guideList.width
                 height: 76
                 property var rowData: modelData
+                // The delegate's `index` is a context value, not a property of
+                // this Item: nested delegates must read it through rowIndex
+                // (channelRow.index is always undefined in Qt 6).
+                readonly property int rowIndex: index
 
                 Rectangle {
                     id: channelCell
@@ -2399,9 +2403,9 @@ ApplicationWindow {
                         model: channelRow.rowData.displaySegments || []
 
                         delegate: Rectangle {
+                            objectName: "guideProgramSegment"
                             property bool rowSelected:
-                                channelRow.ListView.view
-                                && channelRow.ListView.view.currentIndex === channelRow.index
+                                channelRow.rowIndex === root.selectedRow
 
                             property bool containsSelection:
                                 root.selectedProgram >= modelData.firstProgramIndex

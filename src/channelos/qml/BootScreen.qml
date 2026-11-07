@@ -22,34 +22,49 @@ Item {
         color: Theme.c("#050c15")
     }
 
-    // TV static, like an empty channel.
-    Canvas {
+    // TV static, like an empty channel. Four noise frames are painted once
+    // and then flipped and shuffled: cheap on the GUI thread, even with
+    // software rendering, and it still reads as live snow.
+    Item {
         id: noise
-        // Drawn at a quarter size and scaled up unsmoothed: chunky TV static.
-        width: Math.ceil(parent.width / 4)
-        height: Math.ceil(parent.height / 4)
-        scale: 4
-        transformOrigin: Item.TopLeft
-        smooth: false
+        anchors.fill: parent
         visible: boot.showStatic
-        onPaint: {
-            var ctx = getContext("2d")
-            ctx.fillStyle = Theme.v("#30353c")
-            ctx.fillRect(0, 0, width, height)
-            var count = Math.floor(width * height / 2.2)
-            for (var i = 0; i < count; ++i) {
-                var g = Math.floor(Math.random() * 235)
-                ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")"
-                ctx.fillRect(Math.floor(Math.random() * width), Math.floor(Math.random() * height), 1, 1)
+        clip: true
+        property int frame: 0
+        Repeater {
+            model: 4
+            delegate: Canvas {
+                id: snow
+                required property int index
+                // Quarter size scaled up unsmoothed: chunky TV static.
+                width: 320
+                height: 180
+                scale: Math.max(noise.width / width, noise.height / height) * 1.1
+                transformOrigin: Item.TopLeft
+                x: noise.frame % 2 === 0 ? 0 : -noise.width * 0.04
+                y: noise.frame % 3 === 0 ? 0 : -noise.height * 0.04
+                smooth: false
+                visible: noise.frame % 4 === index
+                renderStrategy: Canvas.Cooperative
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.fillStyle = Theme.v("#30353c")
+                    ctx.fillRect(0, 0, width, height)
+                    var count = Math.floor(width * height / 2.2)
+                    for (var i = 0; i < count; ++i) {
+                        var g = Math.floor(Math.random() * 235)
+                        ctx.fillStyle = "rgb(" + g + "," + g + "," + g + ")"
+                        ctx.fillRect(Math.floor(Math.random() * width), Math.floor(Math.random() * height), 1, 1)
+                    }
+                }
+                Component.onCompleted: requestPaint()
             }
         }
-        onWidthChanged: requestPaint()
-        onHeightChanged: requestPaint()
         Timer {
-            interval: boot.reducedMotion ? 400 : 90
+            interval: boot.reducedMotion ? 400 : 70
             repeat: true
             running: boot.running && boot.showStatic
-            onTriggered: noise.requestPaint()
+            onTriggered: noise.frame = (noise.frame + 1 + Math.floor(Math.random() * 3)) % 12
         }
     }
     Rectangle {

@@ -9,6 +9,7 @@ from .playback import (
     LibVLCBackend,
     NativeVideoSurface,
     PlaybackBackend,
+    VideoSettings,
 )
 from .runtime import TelevisionRuntime, TuneDecision, require_aware_utc, utc_now
 from .television import TelevisionSession
@@ -82,6 +83,16 @@ class CouchActions:
         if self._backend is not None:
             self._backend.attach_video_surface(surface)
 
+    def set_video_settings(self, settings: VideoSettings) -> None:
+        self._video_settings = settings
+        if self._backend is not None:
+            self._backend.set_video_settings(settings)
+
+    def set_surface_size(self, width: int, height: int) -> None:
+        self._surface_size = (int(width), int(height))
+        if self._backend is not None:
+            self._backend.set_surface_size(*self._surface_size)
+
     def _ensure_session(self) -> TelevisionSession:
         if self._session is not None:
             return self._session
@@ -91,6 +102,10 @@ class CouchActions:
             backend.attach_video_surface(self._surface)
         if self._audio_output_device_id is not None:
             backend.set_audio_output_device(self._audio_output_device_id)
+        if getattr(self, "_surface_size", None):
+            backend.set_surface_size(*self._surface_size)
+        if getattr(self, "_video_settings", None) is not None:
+            backend.set_video_settings(self._video_settings)
 
         session = TelevisionSession(self.runtime, backend)
         self._backend = backend

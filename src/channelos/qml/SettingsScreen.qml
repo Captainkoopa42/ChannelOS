@@ -40,11 +40,27 @@ Item {
         { title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
         { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
         { title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
+        { title: "Aspect Ratio", detail: "Auto uses each video's own shape. Force 4:3, 16:9, widescreen film ratios and more for mislabeled recordings." },
+        { title: "Picture Fit", detail: "Fit shows the whole picture with bars, Fill crops the edges to fill the screen, Stretch fills it by distorting." },
+        { title: "Overscan Trim", detail: "Trim the noisy edges found on VHS and broadcast captures, like a real TV did." },
+        { title: "Deinterlace", detail: "Smooth combing on interlaced recordings. Auto lets VLC decide. Applies from the next program." },
+        { title: "Hardware Decoding", detail: "Use the graphics card to decode video. Turn off if a driver shows green frames or artifacts. Applies from the next program." },
+        { title: "Brightness", detail: "Picture brightness for every program." },
+        { title: "Contrast", detail: "Picture contrast for every program." },
+        { title: "Color Saturation", detail: "Picture color intensity for every program." },
+        { title: "Theme", detail: "Change the look of ChannelOS." },
         { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
         { title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
-        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, and 30 seconds forward." },
+        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, 30 seconds forward, the default picture and theme." },
         { title: "Portable Setup", detail: "Copy channels, the existing media index, ad configuration and history to a drive, or open a prior setup and save changes there." }
     ]
+
+    // Rows before firstAction change a value; the rest run an action.
+    readonly property int firstAction: 21
+    readonly property var videoNames: ({
+        12: "videoAspectRatio", 13: "videoFit", 14: "videoOverscan", 15: "videoDeinterlace",
+        16: "videoHardwareDecoding", 17: "videoBrightness", 18: "videoContrast", 19: "videoSaturation"
+    })
 
     anchors.fill: parent
     visible: hostWindow !== null && hostWindow.screen === "settings"
@@ -128,7 +144,11 @@ Item {
             return preferences.reducedMotion ? "On" : "Off"
         if (index === 11)
             return preferences.controllerEnabled ? "On" : "Off"
-        if (index === 12)
+        if (videoNames[index] !== undefined)
+            return String(preferences[videoNames[index]] || "Auto")
+        if (index === 20)
+            return String(preferences.themeName || "ChannelOS")
+        if (index === 21)
             return cacheUsageLabel()
         return "Standard"
     }
@@ -145,9 +165,10 @@ Item {
             8: "artworkCacheLimit",
             9: "backgroundArtworkDuringPlayback",
             10: "reducedMotion",
-            11: "controllerEnabled"
+            11: "controllerEnabled",
+            20: "theme"
         })
-        return names[index]
+        return names[index] !== undefined ? names[index] : videoNames[index]
     }
 
     function showResult(result) {
@@ -163,7 +184,7 @@ Item {
     }
 
     function adjust(index, direction) {
-        if (index < 0 || index > 11)
+        if (index < 0 || index >= firstAction)
             return
         if (index === 1) {
             changeDisplayMode(direction)
@@ -176,15 +197,15 @@ Item {
     }
 
     function activateAction(index) {
-        if (index === 12) {
+        if (index === 21) {
             showResult(typeof channelOS.beginArtworkCacheClear === "function"
                        ? channelOS.beginArtworkCacheClear() : channelOS.clearArtworkCache())
-        } else if (index === 13) {
+        } else if (index === 22) {
             showResult(channelOS.openDiagnosticLogs())
-        } else if (index === 14) {
+        } else if (index === 23) {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
-        } else if (index === 15) {
+        } else if (index === 24) {
             portableSetupDialog.open()
         }
     }
@@ -220,7 +241,7 @@ Item {
             return
         }
         if (intent === "SELECT") {
-            if (hostWindow.settingsSelection < 12)
+            if (hostWindow.settingsSelection < firstAction)
                 adjust(hostWindow.settingsSelection, 1)
             else
                 activateAction(hostWindow.settingsSelection)
@@ -436,7 +457,7 @@ Item {
                     anchors.rightMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
-                    visible: settingRow.index < 12
+                    visible: settingRow.index < settingsRoot.firstAction
 
                     Rectangle {
                         width: 38
@@ -458,7 +479,7 @@ Item {
                     }
 
                     Text {
-                        width: 156
+                        width: 196
                         anchors.verticalCenter: parent.verticalCenter
                         horizontalAlignment: Text.AlignHCenter
                         text: settingsRoot.valueFor(settingRow.index)
@@ -495,16 +516,16 @@ Item {
                     width: 236
                     height: 42
                     radius: 6
-                    visible: settingRow.index >= 12
+                    visible: settingRow.index >= settingsRoot.firstAction
                     color: actionMouse.containsMouse ? "#1a4d82" : "#10283f"
                     border.color: "#1a91ff"
                     Text {
                         anchors.centerIn: parent
-                        text: settingRow.index === 12
+                        text: settingRow.index === 21
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
-                              : settingRow.index === 13
+                              : settingRow.index === 22
                               ? "Open Log Folder"
-                              : settingRow.index === 14
+                              : settingRow.index === 23
                               ? "Restore Standard Defaults"
                               : "Copy / Open Setup"
                         color: "#f4f7fb"

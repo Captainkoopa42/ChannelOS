@@ -45,6 +45,8 @@ from .settings import (
     PERFORMANCE_PROFILES,
     SKIP_BACK_CHOICES,
     SKIP_FORWARD_CHOICES,
+    THEME_CHOICES,
+    VIDEO_SETTING_CHOICES,
     CouchSettings,
     SettingsStore,
 )
@@ -52,6 +54,37 @@ from .television import TelevisionSession
 from .window_startup import NativeWindowSnapshot, NativeWindowStartupGate
 
 logger = logging.getLogger(__name__)
+
+# Settings-screen name -> (CouchSettings field, readable label).
+VIDEO_SETTING_NAMES = {
+    "videoAspectRatio": ("video_aspect_ratio", "Aspect ratio"),
+    "videoFit": ("video_fit", "Picture fit"),
+    "videoOverscan": ("video_overscan_percent", "Overscan trim"),
+    "videoDeinterlace": ("video_deinterlace", "Deinterlace"),
+    "videoHardwareDecoding": ("video_hardware_decoding", "Hardware decoding"),
+    "videoBrightness": ("video_brightness", "Brightness"),
+    "videoContrast": ("video_contrast", "Contrast"),
+    "videoSaturation": ("video_saturation", "Saturation"),
+}
+VIDEO_VALUE_LABELS = {
+    "auto": "Auto", "fit": "Fit (letterbox)", "fill": "Fill (crop edges)", "stretch": "Stretch",
+    "off": "Off", "yadif": "Yadif", "yadif2x": "Yadif 2x", "bob": "Bob", "blend": "Blend", "linear": "Linear",
+}
+THEME_LABELS = {"channelos": "ChannelOS", "chromespace": "ChromeSpace"}
+# Settings screen rows (mirrors SettingsScreen.qml): values 0-20, actions 21-24.
+SETTINGS_VIDEO_ROWS = {12 + index: name for index, name in enumerate(VIDEO_SETTING_NAMES)}
+SETTINGS_FIRST_ACTION = 21
+SETTINGS_ROW_COUNT = 25
+
+
+def video_value_label(field: str, value: object) -> str:
+    if field == "video_overscan_percent":
+        return "Off" if not value else f"{value}%"
+    if field in {"video_brightness", "video_contrast", "video_saturation"}:
+        return f"{value}%"
+    if field == "video_hardware_decoding":
+        return "Auto (GPU)" if value == "auto" else "Off (CPU)"
+    return VIDEO_VALUE_LABELS.get(str(value), str(value))
 
 
 def _resolved_audio_output_rows(
@@ -180,6 +213,8 @@ class CouchController(QObject):
             )
         self._actions.set_audio_output_device(selected_audio_device or None)
         self._on_demand.set_audio_output_device(selected_audio_device or None)
+        self._actions.set_video_settings(self._settings.video)
+        self._on_demand.set_video_settings(self._settings.video)
         cache_stats = None if getattr(self, '_defer_initial_views', False) else self._artwork_cache.stats()
         self._artwork_cache_bytes = 0 if cache_stats is None else cache_stats.size_bytes
         self._artwork_cache_files = 0 if cache_stats is None else cache_stats.file_count
@@ -252,6 +287,12 @@ class CouchController(QObject):
             "ffmpegThreads": self._settings.ffmpeg_threads,
             "artworkCacheBytes": self._artwork_cache_bytes,
             "artworkCacheFiles": self._artwork_cache_files,
+            **{
+                name: video_value_label(field, getattr(self._settings, field))
+                for name, (field, _label) in VIDEO_SETTING_NAMES.items()
+            },
+            "theme": self._settings.theme,
+            "themeName": THEME_LABELS.get(self._settings.theme, self._settings.theme),
         }
 
     def _audio_output_device_name(self) -> str:
@@ -1151,6 +1192,9 @@ class CouchController(QObject):
         self._muted = settings.muted
         if (previous.generate_video_thumbnails, previous.thumbnail_width, previous.background_artwork_during_playback) != (settings.generate_video_thumbnails, settings.thumbnail_width, settings.background_artwork_during_playback):
             self._artwork_unavailable.clear()
+        if previous.video != settings.video:
+            self._actions.set_video_settings(settings.video)
+            self._on_demand.set_video_settings(settings.video)
         if previous.artwork_cache_limit_mb != settings.artwork_cache_limit_mb:
             # Cache maintenance belongs to the existing serial artwork worker.
             self._artwork_queue.put(('', Path(), settings.artwork_cache_limit_mb))
@@ -1221,6 +1265,20 @@ class CouchController(QObject):
             return self.toggleMute()
 
         try:
+            if name in VIDEO_SETTING_NAMES:
+                field, label = VIDEO_SETTING_NAMES[name]
+                choices, _default = VIDEO_SETTING_CHOICES[field]
+                value = self._cycle_choice(getattr(self._settings, field), choices, step)
+                settings = replace(self._settings, **{field: value})
+                message = f"{label}: {video_value_label(field, value)}"
+                if field in {"video_deinterlace", "video_hardware_decoding"}:
+                    message += " (from the next program)"
+                self._save_settings(settings)
+                return {"ok": True, "message": message, "settings": self.settings}
+            if name == "theme":
+                value = self._cycle_choice(self._settings.theme, THEME_CHOICES, step)
+                self._save_settings(replace(self._settings, theme=value))
+                return {"ok": True, "message": f"Theme: {THEME_LABELS.get(value, value)}", "settings": self.settings}
             if name == "performanceProfile":
                 value = self._cycle_choice(
                     self._settings.performance_profile,
@@ -1381,6 +1439,14 @@ class CouchController(QObject):
         self._artwork_queue.put(('__clear__', Path(), 0))
         self._start_artwork_worker()
         return {'ok': True, 'pending': True, 'message': 'Clearing generated thumbnails…'}
+
+    @Slot(int, int)
+    def setVideoSurfaceSize(self, width: int, height: int) -> None:
+        """The native video window resized: fill/stretch follow its shape."""
+        if int(width) <= 0 or int(height) <= 0:
+            return
+        self._actions.set_surface_size(int(width), int(height))
+        self._on_demand.set_surface_size(int(width), int(height))
 
     @Slot(result="QVariantMap")
     def resetSettings(self) -> dict[str, object]:
@@ -2067,6 +2133,8 @@ class CouchKeyFilter(QObject):
                 9: "backgroundArtworkDuringPlayback",
                 10: "reducedMotion",
                 11: "controllerEnabled",
+                **SETTINGS_VIDEO_ROWS,
+                20: "theme",
             }
             name = names.get(selection)
             if name is None:
@@ -2244,7 +2312,7 @@ class CouchKeyFilter(QObject):
                 current = int(self._window.property("settingsSelection"))
                 self._window.setProperty(
                     "settingsSelection",
-                    min(14, current + 1),
+                    min(SETTINGS_ROW_COUNT - 1, current + 1),
                 )
                 return True
             if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
@@ -2252,15 +2320,15 @@ class CouchKeyFilter(QObject):
                 return self._adjust_selected_setting(direction)
             if intent is ControlIntent.SELECT:
                 selection = int(self._window.property("settingsSelection"))
-                if selection == 12:
+                if selection == SETTINGS_FIRST_ACTION:
                     result = self._controller.clearArtworkCache()
                     self._notify(result)
                     return True
-                if selection == 13:
+                if selection == SETTINGS_FIRST_ACTION + 1:
                     result = self._controller.openDiagnosticLogs()
                     self._notify(result)
                     return True
-                if selection == 14:
+                if selection == SETTINGS_FIRST_ACTION + 2:
                     result = self._controller.resetSettings()
                     self._notify(result)
                     self._window.setProperty(
@@ -2698,6 +2766,11 @@ def run_qt(
     window.installEventFilter(key_filter)
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
     window.guideLiveActivated.connect(key_filter.activateGuideLive)
+    # Fill and stretch follow the video surface's shape.
+    def report_video_size(*_args) -> None:
+        controller.setVideoSurfaceSize(video_window.width(), video_window.height())
+    video_window.widthChanged.connect(report_video_size)
+    video_window.heightChanged.connect(report_video_size)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
 
     # Keep Python-owned Qt wrappers alive for the duration of the QML window.

@@ -266,3 +266,87 @@ def test_libvlc_selects_explicit_or_system_default_audio_output() -> None:
         (None, "headphones-id"),
         (None, None),
     ]
+
+
+def test_video_crop_geometry_fills_trims_and_respects_forced_ratios() -> None:
+    crop = playback.video_crop_geometry
+    # Fit with no overscan: no crop at all.
+    assert crop(1920, 1080, 16 / 9, None, 0) is None
+    # 4:3 source filling a 16:9 screen loses top and bottom.
+    assert crop(640, 480, 4 / 3, 16 / 9, 0) == "640x360+0+60"
+    # 16:9 source filling a 4:3 screen loses the sides.
+    assert crop(1920, 1080, 16 / 9, 4 / 3, 0) == "1440x1080+240+0"
+    # Overscan trims every edge.
+    assert crop(720, 480, 4 / 3, None, 4) == "662x442+29+19"
+    # Anamorphic 720x480 forced to 16:9 fills a 16:9 screen without cropping.
+    assert crop(720, 480, 16 / 9, 16 / 9, 0) is None
+
+
+class _VideoPlayer(_FakePlayer):
+    def __init__(self, size=(640, 480)) -> None:
+        super().__init__()
+        self.size = size
+
+    def video_get_size(self, _index):
+        return self.size
+
+    def video_set_adjust_int(self, option, value) -> None:
+        self.calls.append(("adjust", (option, value)))
+
+    def video_set_adjust_float(self, option, value) -> None:
+        self.calls.append(("level", (option, round(value, 3))))
+
+    def video_set_deinterlace(self, mode) -> None:
+        self.calls.append(("deinterlace", mode))
+
+
+def _video_backend(player):
+    from types import SimpleNamespace
+    backend = object.__new__(playback.LibVLCBackend)
+    backend._player = player
+    backend._vlc = SimpleNamespace(VideoAdjustOption=SimpleNamespace(Enable=0, Contrast=1, Brightness=2, Saturation=4))
+    backend._transition_level = 1.0
+    return backend
+
+
+def test_libvlc_applies_aspect_fill_stretch_and_picture_levels() -> None:
+    player = _VideoPlayer((640, 480))
+    backend = _video_backend(player)
+    backend.set_surface_size(1920, 1080)
+    backend.set_video_settings(playback.VideoSettings(aspect_ratio="4:3", fit="fill", brightness=120,
+                                                     deinterlace="yadif"))
+    calls = dict(player.calls)
+    assert calls["aspect"] == "4:3" and calls["crop"] == "640x360+0+60" and calls["scale"] == 0.0
+    assert ("adjust", (0, 1)) in player.calls and ("level", (2, 1.2)) in player.calls
+    assert calls["deinterlace"] == "yadif"
+    player.calls.clear()
+    backend.set_video_settings(playback.VideoSettings(fit="stretch"))
+    calls = dict(player.calls)
+    assert calls["aspect"] == "1920:1080" and calls["crop"] is None
+    assert ("adjust", (0, 0)) in player.calls
+    # Defaults clear every override, exactly like before video settings existed.
+    player.calls.clear()
+    backend.set_video_settings(playback.VideoSettings())
+    assert [c for c in player.calls if c[0] in {"aspect", "crop", "scale"}] == [
+        ("aspect", None), ("crop", None), ("scale", 0.0)]
+
+
+def test_libvlc_waits_for_source_size_before_cropping() -> None:
+    player = _VideoPlayer((0, 0))
+    backend = _video_backend(player)
+    backend._vlc.State = type("State", (), {"Error": "error"})
+    backend._loaded_path = None
+    backend.set_video_settings(playback.VideoSettings(overscan_percent=4))
+    assert dict(player.calls)["crop"] is None
+    player.size = (720, 480)
+    player.calls.clear()
+    backend.playback_error()  # periodic poll
+    assert dict(player.calls)["crop"] == "662x442+29+19"
+
+
+def test_libvlc_media_options_cover_deinterlace_and_hardware_decoding() -> None:
+    backend = object.__new__(playback.LibVLCBackend)
+    backend._video_settings = playback.VideoSettings(deinterlace="bob", hardware_decoding="off")
+    assert backend._media_options() == (":deinterlace=1", ":deinterlace-mode=bob", ":avcodec-hw=none")
+    backend._video_settings = playback.VideoSettings()
+    assert backend._media_options() == ()

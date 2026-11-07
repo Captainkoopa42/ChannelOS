@@ -253,7 +253,7 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
     assert "preferences.volumePercent" in text
     assert "preferences.muted" in text
     assert "preferences.audioOutputDeviceName" in text
-    assert '2: "audioOutput"' in text
+    assert 'key: "audioOutput"' in text
     assert "Audio Output" in text
     assert "preferences.skipBackSeconds" in text
     assert "preferences.skipForwardSeconds" in text
@@ -265,7 +265,7 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
     assert "Diagnostic Logs" in text
     assert "channelOS.openDiagnosticLogs()" in text
     assert "preferences.controllerEnabled" in text
-    assert '11: "controllerEnabled"' in text
+    assert 'key: "controllerEnabled"' in text
     assert "Controller Input" in text
     assert "preferences.artworkCacheBytes" in text
     assert "channelOS.displayMode" in text
@@ -273,3 +273,60 @@ def test_settings_qml_exposes_all_persistent_controls() -> None:
     assert 'sequence: "F11"' in text
     assert "channelOS.clearArtworkCache()" in text
     assert "channelOS.resetSettings()" in text
+
+
+def test_settings_tabs_group_rows_and_switch_with_controls() -> None:
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QGuiApplication
+    from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlExpression
+    from PySide6.QtQuick import QQuickWindow
+
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller = FakeSettingsController()
+    host = FakeSettingsHost()
+    window = QQuickWindow()
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("channelOS", controller)
+    component = QQmlComponent(engine, QUrl.fromLocalFile(str(Path(channelos.__file__).resolve().parent / "qml" / "SettingsScreen.qml")))
+    item = component.create(engine.rootContext())
+    assert item is not None, [e.toString() for e in component.errors()]
+    item.setProperty("hostWindow", host)
+    item.setParentItem(window.contentItem())
+
+    def evaluate(code):
+        expression = QQmlExpression(engine.contextForObject(item), item, code)
+        value, _ = expression.evaluate()
+        assert not expression.hasError(), expression.error().toString()
+        return value.toVariant() if hasattr(value, "toVariant") else value
+
+    try:
+        tabs = evaluate("tabs.map(function(t) { return t.title })")
+        assert tabs == ["General", "Video & Audio", "Extras"]
+        keys = lambda: evaluate("settingsRows.map(function(r) { return r.key })")
+        general = keys()
+        assert general[0] == "displayMode" and "controllerEnabled" in general and "audioOutput" not in general
+        # Every setting appears on exactly one tab.
+        everything = evaluate("allRows.map(function(r) { return r.key })")
+        assert len(everything) == len(set(everything)) == 26
+
+        host.settingsSelection = 3
+        evaluate('handleControllerIntent("CHANNEL_UP")')
+        assert evaluate("currentTab") == 1 and host.settingsSelection == 0
+        media = keys()
+        assert media[:3] == ["audioOutput", "volume", "muted"] and "videoAspectRatio" in media
+        evaluate('handleControllerIntent("DOWN")')
+        evaluate('handleControllerIntent("RIGHT")')
+        assert host.statusMessage == "adjusted volume 1"
+
+        evaluate('handleControllerIntent("FAST_FORWARD")')
+        assert keys() == ["theme", "themeBuilder", "portable"]
+        evaluate('handleControllerIntent("DOWN")')
+        evaluate('handleControllerIntent("SELECT")')
+        assert evaluate("themeBuilderOpen")
+        evaluate('handleControllerIntent("BACK")')
+        assert not evaluate("themeBuilderOpen") and host.screen == "settings"
+        evaluate('handleControllerIntent("CHANNEL_UP")')
+        assert evaluate("currentTab") == 0, "tabs wrap around"
+    finally:
+        window.close()
+        app.processEvents()

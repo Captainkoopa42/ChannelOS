@@ -264,15 +264,20 @@ Popup {
                             }
                         }
                     }
+                    Caption {
+                        Layout.fillWidth: true
+                        text: "Click a theme to edit it. Built-in themes stay as they are: saving one makes your own copy."
+                    }
                     ChannelButton {
                         Layout.fillWidth: true
-                        text: "Use Selected"
+                        text: "Switch to This Theme"
                         enabled: builder.selectedId !== "" && !builder.dirty
+                                 && !(channelOS && channelOS.settings && channelOS.settings.theme === builder.selectedId)
                         onClicked: builder.useSelected()
                     }
                     ChannelButton {
                         Layout.fillWidth: true
-                        text: "Delete Theme"
+                        text: builder.selectedId.indexOf("custom-") === 0 ? "Delete This Theme" : "Built-in (can't delete)"
                         destructive: true
                         enabled: builder.selectedId.indexOf("custom-") === 0
                         onClicked: {
@@ -337,7 +342,12 @@ Popup {
                                             onClicked: { builder.editingRole = roleRow.modelData.key; picker.openFor(roleRow.value, parent) }
                                         }
                                     }
-                                    Text { text: roleRow.modelData.label; color: Theme.c("#f4f7fb"); font.pixelSize: 13; Layout.fillWidth: true; elide: Text.ElideRight }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 1
+                                        Text { text: roleRow.modelData.label; color: Theme.c("#f4f7fb"); font.pixelSize: 13; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        Text { text: roleRow.modelData.hint || ""; color: Theme.c("#9fb0c2"); font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight }
+                                    }
                                     ChannelTextField {
                                         Layout.preferredWidth: 96
                                         text: roleRow.value
@@ -348,7 +358,8 @@ Popup {
                                 }
                             }
                         }
-                        Heading { text: "Start from" }
+                        Heading { text: "Reset colors" }
+                        Caption { Layout.fillWidth: true; text: "Replace all twelve colors with a built-in set to start over. The name and wallpaper stay as they are." }
                         Flow {
                             Layout.fillWidth: true
                             spacing: 8
@@ -356,7 +367,7 @@ Popup {
                                 model: builder.themes.filter(function(t) { return t.builtin })
                                 delegate: ChannelButton {
                                     required property var modelData
-                                    text: modelData.name + " colors"
+                                    text: "Use " + modelData.name + " colors"
                                     onClicked: builder.set("roles", JSON.parse(JSON.stringify(modelData.roles)))
                                 }
                             }
@@ -384,7 +395,7 @@ Popup {
                         Heading { text: "Wallpaper" }
                         Rectangle {
                             Layout.fillWidth: true
-                            Layout.preferredHeight: 120
+                            Layout.preferredHeight: 96
                             radius: 8
                             clip: true
                             color: Theme.c("#050c15")
@@ -429,12 +440,17 @@ Popup {
                 Card {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    ScrollView {
+                    anchors.fill: parent
+                    anchors.margins: 14
+                    clip: true
+                    contentWidth: availableWidth
                     ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 14
-                        spacing: 10
+                        width: parent.width
+                        spacing: 8
                         Heading { text: "Preview" }
-                        Caption { text: "The whole app is already showing your draft." }
+                        Caption { Layout.fillWidth: true; text: "Examples of each color in use. The whole app is already showing your draft, so you can also look around behind this window." }
+                        Caption { Layout.fillWidth: true; text: "A program card with its LIVE badge (Panels, Text, Live & alerts)" }
                         Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: 64
@@ -449,6 +465,7 @@ Popup {
                             }
                             Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; anchors.rightMargin: 12; text: "● LIVE"; color: Theme.c("#ff4a4a"); font.pixelSize: 13; font.weight: Font.Bold }
                         }
+                        Caption { Layout.fillWidth: true; text: "The selected program in the Guide (Highlight)" }
                         Rectangle {
                             Layout.fillWidth: true
                             implicitHeight: 40
@@ -457,14 +474,16 @@ Popup {
                             border.color: Theme.c("#42adff"); border.width: 2
                             Text { anchors.centerIn: parent; text: "Selected program"; color: Theme.c("#f4f7fb"); font.pixelSize: 13 }
                         }
+                        Caption { Layout.fillWidth: true; text: "Buttons: everyday, main action (Accent), and turned on (Selection)" }
                         Flow {
                             Layout.fillWidth: true
                             spacing: 8
-                            ChannelButton { text: "Button" }
-                            ChannelButton { text: "Primary"; highlighted: true }
-                            ChannelButton { text: "Selected"; checked: true; checkable: true }
+                            // Samples only: they show colors and do nothing.
+                            ChannelButton { text: "Everyday"; focusPolicy: Qt.NoFocus }
+                            ChannelButton { text: "Apply"; highlighted: true; focusPolicy: Qt.NoFocus }
+                            ChannelButton { text: "Turned On"; checked: true; focusPolicy: Qt.NoFocus }
                         }
-                        Item { Layout.fillHeight: true }
+                    }
                     }
                 }
             }
@@ -479,7 +498,7 @@ Popup {
             Text {
                 objectName: "themeBuilderStatus"
                 anchors.left: parent.left; anchors.leftMargin: 24; anchors.verticalCenter: parent.verticalCenter
-                text: builder.status || "Changes preview live. Save keeps them; Close without saving puts your theme back."
+                text: builder.status || "Save keeps this theme for later  •  Save & Use also switches the app to it  •  Close throws away unsaved changes"
                 color: builder.statusError ? Theme.c("#ff6666") : Theme.c("#9fb0c2")
                 font.pixelSize: 13
             }

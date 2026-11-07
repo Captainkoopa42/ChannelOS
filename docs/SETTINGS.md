@@ -126,6 +126,19 @@ Library, Broadcaster and Settings. Physical speaker/headphone and controller
 checks are recorded separately in [Windows acceptance](releases/WINDOWS_0.0.6_ACCEPTANCE.md).
 
 
+## Tabs
+
+Settings has three tabs, chosen in the sidebar or with Page Up / Page Down,
+the controller shoulder buttons or triggers (they wrap around):
+
+- **General**: display mode, performance profile, reduced motion, controller
+  input, skip distances, artwork generation and cache, diagnostic logs, reset.
+- **Video & Audio**: audio output, volume, mute, and every picture setting.
+- **Extras**: theme, Theme Builder, and Portable Setup & Backup.
+
+Rows are keyed by name in `SettingsScreen.qml`, which also owns keyboard and
+controller navigation for this screen.
+
 ## Video
 
 Picture settings apply to Live TV, On Demand and the Home preview, and save with

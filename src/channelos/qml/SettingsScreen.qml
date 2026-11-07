@@ -27,45 +27,56 @@ Item {
         })
     readonly property string displayMode:
         channelOS ? String(channelOS.displayMode || "fullscreen") : "fullscreen"
-    readonly property var settingsRows: [
-        { title: "Performance Profile", detail: "Standard preserves full artwork behavior. Lightweight reduces optional background work." },
-        { title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
-        { title: "Audio Output", detail: "Choose System Default, speakers, headphones, or another destination exposed by VLC." },
-        { title: "Volume", detail: "The volume ChannelOS uses now and on its next launch." },
-        { title: "Muted", detail: "Remember whether ChannelOS should start muted." },
-        { title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
-        { title: "Skip Forward", detail: "How far Right/Fast Forward jumps during Live TV and On Demand." },
-        { title: "Generate Video Thumbnails", detail: "Use FFmpeg when no local sidecar image or cached thumbnail exists." },
-        { title: "Generated Artwork Cache", detail: "Limit only ChannelOS-generated thumbnails. Zero means unlimited." },
-        { title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
-        { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
-        { title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
-        { title: "Aspect Ratio", detail: "Auto uses each video's own shape. Force 4:3, 16:9, widescreen film ratios and more for mislabeled recordings." },
-        { title: "Picture Fit", detail: "Fit shows the whole picture with bars, Fill crops the edges to fill the screen, Stretch fills it by distorting." },
-        { title: "Overscan Trim", detail: "Trim the noisy edges found on VHS and broadcast captures, like a real TV did." },
-        { title: "Deinterlace", detail: "Smooth combing on interlaced recordings. Auto lets VLC decide. Applies from the next program." },
-        { title: "Hardware Decoding", detail: "Use the graphics card to decode video. Turn off if a driver shows green frames or artifacts. Applies from the next program." },
-        { title: "Brightness", detail: "Picture brightness for every program." },
-        { title: "Contrast", detail: "Picture contrast for every program." },
-        { title: "Color Saturation", detail: "Picture color intensity for every program." },
-        { title: "Theme", detail: "Change the look of ChannelOS. Your own themes from the Theme Builder appear here too." },
-        { title: "Theme Builder", detail: "Make your own theme: pick every color, add a wallpaper image, and preview it live." },
-        { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
-        { title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
-        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, 30 seconds forward, the default picture and theme." },
-        { title: "Portable Setup", detail: "Copy channels, the existing media index, ad configuration and history to a drive, or open a prior setup and save changes there." }
+    // Settings are grouped into tabs. Each row has a key; "action" rows run
+    // something, every other row cycles a value with Left/Right or - / +.
+    readonly property var tabs: [
+        { key: "general", title: "General", detail: "Display, controls, performance and artwork" },
+        { key: "media", title: "Video & Audio", detail: "Picture, sound and output device" },
+        { key: "extras", title: "Extras", detail: "Themes, Theme Builder and portable setups" }
     ]
-
-    // Rows before firstAction change a value; the rest run an action.
-    readonly property int firstAction: 21
+    readonly property var allRows: [
+        { tab: "general", key: "displayMode", title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
+        { tab: "general", key: "performanceProfile", title: "Performance Profile", detail: "Standard preserves full artwork behavior. Lightweight reduces optional background work." },
+        { tab: "general", key: "reducedMotion", title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
+        { tab: "general", key: "controllerEnabled", title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
+        { tab: "general", key: "skipBack", title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
+        { tab: "general", key: "skipForward", title: "Skip Forward", detail: "How far Right/Fast Forward jumps during Live TV and On Demand." },
+        { tab: "general", key: "generateVideoThumbnails", title: "Generate Video Thumbnails", detail: "Use FFmpeg when no local sidecar image or cached thumbnail exists." },
+        { tab: "general", key: "artworkCacheLimit", title: "Generated Artwork Cache", detail: "Limit only ChannelOS-generated thumbnails. Zero means unlimited." },
+        { tab: "general", key: "backgroundArtworkDuringPlayback", title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
+        { tab: "general", key: "clearArtwork", action: "clear", title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
+        { tab: "general", key: "logs", action: "Open Log Folder", title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
+        { tab: "general", key: "reset", action: "Restore Defaults", title: "Reset Defaults", detail: "Restore every setting on every tab to its default: audio, display, controls, picture and theme." },
+        { tab: "media", key: "audioOutput", title: "Audio Output", detail: "Choose System Default, speakers, headphones, or another destination exposed by VLC." },
+        { tab: "media", key: "volume", title: "Volume", detail: "The volume ChannelOS uses now and on its next launch." },
+        { tab: "media", key: "muted", title: "Muted", detail: "Remember whether ChannelOS should start muted." },
+        { tab: "media", key: "videoAspectRatio", title: "Aspect Ratio", detail: "Auto uses each video's own shape. Force 4:3, 16:9, widescreen film ratios and more for mislabeled recordings." },
+        { tab: "media", key: "videoFit", title: "Picture Fit", detail: "Fit shows the whole picture with bars, Fill crops the edges to fill the screen, Stretch fills it by distorting." },
+        { tab: "media", key: "videoOverscan", title: "Overscan Trim", detail: "Trim the noisy edges found on VHS and broadcast captures, like a real TV did." },
+        { tab: "media", key: "videoDeinterlace", title: "Deinterlace", detail: "Smooth combing on interlaced recordings. Auto lets VLC decide. Applies from the next program." },
+        { tab: "media", key: "videoHardwareDecoding", title: "Hardware Decoding", detail: "Use the graphics card to decode video. Turn off if a driver shows green frames or artifacts. Applies from the next program." },
+        { tab: "media", key: "videoBrightness", title: "Brightness", detail: "Picture brightness for every program." },
+        { tab: "media", key: "videoContrast", title: "Contrast", detail: "Picture contrast for every program." },
+        { tab: "media", key: "videoSaturation", title: "Color Saturation", detail: "Picture color intensity for every program." },
+        { tab: "extras", key: "theme", title: "Theme", detail: "Change the look of ChannelOS. Themes you make in the Theme Builder appear here too." },
+        { tab: "extras", key: "themeBuilder", action: "Open Theme Builder", title: "Theme Builder", detail: "Make your own theme: pick every color, add a wallpaper image, and preview it live." },
+        { tab: "extras", key: "portable", action: "Copy / Open Setup", title: "Portable Setup & Backup", detail: "Copy channels, the media index, ad configuration and history to a drive as a backup or to take with you, or open a setup you copied earlier." }
+    ]
+    property int currentTab: 0
+    readonly property var settingsRows: allRows.filter(function(row) { return row.tab === tabs[currentTab].key })
     readonly property bool themeBuilderOpen: themeBuilder.visible
 
     function openThemeBuilder() { themeBuilder.openBuilder() }
     function handleThemeBuilderIntent(intent) { themeBuilder.handleIntent(String(intent)) }
-    readonly property var videoNames: ({
-        12: "videoAspectRatio", 13: "videoFit", 14: "videoOverscan", 15: "videoDeinterlace",
-        16: "videoHardwareDecoding", 17: "videoBrightness", 18: "videoContrast", 19: "videoSaturation"
-    })
+    function selectTab(index) {
+        currentTab = (index + tabs.length) % tabs.length
+        if (hostWindow)
+            hostWindow.settingsSelection = 0
+    }
+    function selectedRow() {
+        var index = hostWindow ? hostWindow.settingsSelection : 0
+        return settingsRows[Math.max(0, Math.min(settingsRows.length - 1, index))]
+    }
 
     anchors.fill: parent
     visible: hostWindow !== null && hostWindow.screen === "settings"
@@ -124,56 +135,27 @@ Item {
         applyDisplayMode()
     }
 
-    function valueFor(index) {
-        if (index === 0)
-            return profileLabel()
-        if (index === 1)
-            return displayModeLabel()
-        if (index === 2)
-            return String(preferences.audioOutputDeviceName || "System Default")
-        if (index === 3)
-            return (preferences.volumePercent || 0) + "%"
-        if (index === 4)
-            return preferences.muted ? "On" : "Off"
-        if (index === 5)
-            return (preferences.skipBackSeconds || 10) + " seconds"
-        if (index === 6)
-            return (preferences.skipForwardSeconds || 30) + " seconds"
-        if (index === 7)
-            return preferences.generateVideoThumbnails ? "On" : "Off"
-        if (index === 8)
-            return cacheLimitLabel()
-        if (index === 9)
-            return preferences.backgroundArtworkDuringPlayback ? "On" : "Off"
-        if (index === 10)
-            return preferences.reducedMotion ? "On" : "Off"
-        if (index === 11)
-            return preferences.controllerEnabled ? "On" : "Off"
-        if (videoNames[index] !== undefined)
-            return String(preferences[videoNames[index]] || "Auto")
-        if (index === 20)
-            return String(preferences.themeName || "ChannelOS")
-        if (index === 22)
-            return cacheUsageLabel()
-        return "Standard"
-    }
+    function onOff(value) { return value ? "On" : "Off" }
 
-    function settingName(index) {
-        var names = ({
-            0: "performanceProfile",
-            2: "audioOutput",
-            3: "volume",
-            4: "muted",
-            5: "skipBack",
-            6: "skipForward",
-            7: "generateVideoThumbnails",
-            8: "artworkCacheLimit",
-            9: "backgroundArtworkDuringPlayback",
-            10: "reducedMotion",
-            11: "controllerEnabled",
-            20: "theme"
-        })
-        return names[index] !== undefined ? names[index] : videoNames[index]
+    function valueFor(key) {
+        switch (key) {
+        case "performanceProfile": return profileLabel()
+        case "displayMode": return displayModeLabel()
+        case "audioOutput": return String(preferences.audioOutputDeviceName || "System Default")
+        case "volume": return (preferences.volumePercent || 0) + "%"
+        case "muted": return onOff(preferences.muted)
+        case "skipBack": return (preferences.skipBackSeconds || 10) + " seconds"
+        case "skipForward": return (preferences.skipForwardSeconds || 30) + " seconds"
+        case "generateVideoThumbnails": return onOff(preferences.generateVideoThumbnails)
+        case "artworkCacheLimit": return cacheLimitLabel()
+        case "backgroundArtworkDuringPlayback": return onOff(preferences.backgroundArtworkDuringPlayback)
+        case "reducedMotion": return onOff(preferences.reducedMotion)
+        case "controllerEnabled": return onOff(preferences.controllerEnabled)
+        case "theme": return String(preferences.themeName || "ChannelOS")
+        }
+        if (String(key).indexOf("video") === 0)
+            return String(preferences[key] || "Auto")
+        return ""
     }
 
     function showResult(result) {
@@ -188,36 +170,36 @@ Item {
         statusClearTimer.restart()
     }
 
-    function adjust(index, direction) {
-        if (index < 0 || index >= firstAction)
+    function adjust(row, direction) {
+        if (!row || row.action)
             return
-        if (index === 1) {
+        if (row.key === "displayMode") {
             changeDisplayMode(direction)
             return
         }
-        var name = settingName(index)
-        if (typeof name === "undefined")
-            return
-        showResult(channelOS.adjustSetting(name, direction))
+        showResult(channelOS.adjustSetting(row.key, direction))
     }
 
-    function activateAction(index) {
-        if (index === 21) {
+    function activateAction(row) {
+        if (!row || !row.action)
+            return
+        if (row.key === "themeBuilder") {
             openThemeBuilder()
-        } else if (index === 22) {
+        } else if (row.key === "clearArtwork") {
             showResult(typeof channelOS.beginArtworkCacheClear === "function"
                        ? channelOS.beginArtworkCacheClear() : channelOS.clearArtworkCache())
-        } else if (index === 23) {
+        } else if (row.key === "logs") {
             showResult(channelOS.openDiagnosticLogs())
-        } else if (index === 24) {
+        } else if (row.key === "reset") {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
-        } else if (index === 25) {
+        } else if (row.key === "portable") {
             portableSetupDialog.open()
         }
     }
 
-    function handleControllerIntent(intent: string): void {
+    function handleControllerIntent(intent) {
+        intent = String(intent)
         if (themeBuilder.visible) {
             themeBuilder.handleIntent(intent)
             return
@@ -232,30 +214,33 @@ Item {
             hostWindow.screen = "home"
             return
         }
+        // Shoulders, triggers, Page Up/Down and media keys switch tabs.
+        if (["CHANNEL_DOWN", "SKIP_BACK", "REWIND", "PREVIOUS"].indexOf(intent) >= 0) {
+            selectTab(currentTab - 1)
+            return
+        }
+        if (["CHANNEL_UP", "SKIP_FORWARD", "FAST_FORWARD", "NEXT"].indexOf(intent) >= 0) {
+            selectTab(currentTab + 1)
+            return
+        }
         if (intent === "UP") {
-            hostWindow.settingsSelection = Math.max(
-                        0, hostWindow.settingsSelection - 1)
+            hostWindow.settingsSelection = Math.max(0, hostWindow.settingsSelection - 1)
             return
         }
         if (intent === "DOWN") {
-            hostWindow.settingsSelection = Math.min(
-                        settingsRows.length - 1,
-                        hostWindow.settingsSelection + 1)
+            hostWindow.settingsSelection = Math.min(settingsRows.length - 1, hostWindow.settingsSelection + 1)
             return
         }
-        if (intent === "LEFT") {
-            adjust(hostWindow.settingsSelection, -1)
-            return
-        }
-        if (intent === "RIGHT") {
-            adjust(hostWindow.settingsSelection, 1)
+        var row = selectedRow()
+        if (intent === "LEFT" || intent === "RIGHT") {
+            adjust(row, intent === "LEFT" ? -1 : 1)
             return
         }
         if (intent === "SELECT") {
-            if (hostWindow.settingsSelection < firstAction)
-                adjust(hostWindow.settingsSelection, 1)
+            if (row && row.action)
+                activateAction(row)
             else
-                activateAction(hostWindow.settingsSelection)
+                adjust(row, 1)
         }
     }
 
@@ -298,23 +283,52 @@ Item {
 
             Item { width: 1; height: 18 }
 
-            Rectangle {
-                width: parent.width
-                height: 56
-                radius: 7
-                color: Theme.c("#12396a")
-                border.color: Theme.c("#42adff")
-                border.width: 2
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 18
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Settings"
-                    color: Theme.c("#f4f7fb")
-                    font.pixelSize: 20
-                    font.weight: Font.DemiBold
+            Repeater {
+                model: settingsRoot.tabs
+                delegate: Rectangle {
+                    id: tabButton
+                    required property int index
+                    required property var modelData
+                    readonly property bool current: index === settingsRoot.currentTab
+                    objectName: "settingsTab_" + modelData.key
+                    width: parent.width
+                    height: 68
+                    radius: 7
+                    color: current ? Theme.c("#12396a") : tabMouse.containsMouse ? Theme.c("#10283f") : "transparent"
+                    border.color: current ? Theme.c("#42adff") : "transparent"
+                    border.width: current ? 2 : 0
+                    Column {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: 18
+                        anchors.rightMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 3
+                        Text {
+                            text: tabButton.modelData.title
+                            color: Theme.c("#f4f7fb")
+                            font.pixelSize: 19
+                            font.weight: tabButton.current ? Font.DemiBold : Font.Normal
+                        }
+                        Text {
+                            width: parent.width
+                            text: tabButton.modelData.detail
+                            color: Theme.c("#9fb0c2")
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                    }
+                    MouseArea {
+                        id: tabMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: settingsRoot.selectTab(tabButton.index)
+                    }
                 }
             }
+
+            Item { width: 1; height: 6 }
 
             Rectangle {
                 width: parent.width
@@ -383,7 +397,7 @@ Item {
             anchors.leftMargin: 44
             anchors.rightMargin: 44
             anchors.topMargin: 32
-            text: "Settings"
+            text: settingsRoot.tabs[settingsRoot.currentTab].title
             color: Theme.c("#f4f7fb")
             font.pixelSize: 34
             font.weight: Font.DemiBold
@@ -395,7 +409,11 @@ Item {
             anchors.right: settingsTitle.right
             anchors.top: settingsTitle.bottom
             anchors.topMargin: 4
-            text: "Choose a ready-made profile or tune individual controls. Changes save automatically."
+            text: settingsRoot.currentTab === 1
+                  ? "Picture and sound for Live TV, On Demand and the Home preview. Changes save automatically."
+                  : settingsRoot.currentTab === 2
+                  ? "Make ChannelOS look your way, and back up or carry your whole setup. Changes save automatically."
+                  : "How ChannelOS looks on screen, responds to controls and handles artwork. Changes save automatically."
             color: Theme.c("#9fb0c2")
             font.pixelSize: 16
             elide: Text.ElideRight
@@ -467,7 +485,7 @@ Item {
                     anchors.rightMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
-                    visible: settingRow.index < settingsRoot.firstAction
+                    visible: !settingRow.modelData.action
 
                     Rectangle {
                         width: 38
@@ -483,7 +501,7 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 settingsRoot.hostWindow.settingsSelection = settingRow.index
-                                settingsRoot.adjust(settingRow.index, -1)
+                                settingsRoot.adjust(settingRow.modelData, -1)
                             }
                         }
                     }
@@ -492,7 +510,7 @@ Item {
                         width: 196
                         anchors.verticalCenter: parent.verticalCenter
                         horizontalAlignment: Text.AlignHCenter
-                        text: settingsRoot.valueFor(settingRow.index)
+                        text: settingsRoot.valueFor(settingRow.modelData.key)
                         color: Theme.c("#42adff")
                         font.pixelSize: 16
                         font.weight: Font.DemiBold
@@ -513,7 +531,7 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 settingsRoot.hostWindow.settingsSelection = settingRow.index
-                                settingsRoot.adjust(settingRow.index, 1)
+                                settingsRoot.adjust(settingRow.modelData, 1)
                             }
                         }
                     }
@@ -526,20 +544,14 @@ Item {
                     width: 236
                     height: 42
                     radius: 6
-                    visible: settingRow.index >= settingsRoot.firstAction
+                    visible: Boolean(settingRow.modelData.action)
                     color: actionMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
                     border.color: Theme.c("#1a91ff")
                     Text {
                         anchors.centerIn: parent
-                        text: settingRow.index === 21
-                              ? "Open Theme Builder"
-                              : settingRow.index === 22
+                        text: settingRow.modelData.key === "clearArtwork"
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
-                              : settingRow.index === 23
-                              ? "Open Log Folder"
-                              : settingRow.index === 24
-                              ? "Restore Standard Defaults"
-                              : "Copy / Open Setup"
+                              : String(settingRow.modelData.action || "")
                         color: Theme.c("#f4f7fb")
                         font.pixelSize: 14
                         font.weight: Font.DemiBold
@@ -554,7 +566,7 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             settingsRoot.hostWindow.settingsSelection = settingRow.index
-                            settingsRoot.activateAction(settingRow.index)
+                            settingsRoot.activateAction(settingRow.modelData)
                         }
                     }
                 }
@@ -593,7 +605,7 @@ Item {
             anchors.left: parent.left
             anchors.leftMargin: 30
             anchors.verticalCenter: parent.verticalCenter
-            text: "ARROWS  Navigate / Change     ENTER  Select     F11  Display Mode     ESC / H  Home"
+            text: "ARROWS  Navigate / Change     ENTER  Select     PG UP / PG DN  or  LB / RB  Tabs     F11  Display Mode     ESC  Home"
             color: Theme.c("#9fb0c2")
             font.pixelSize: 13
         }

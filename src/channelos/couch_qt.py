@@ -55,6 +55,7 @@ from .television import TelevisionSession
 from .themes import (
     CUSTOM_PREFIX,
     PRESETS,
+    ROLE_HINTS,
     ROLE_LABELS,
     ROLE_NAMES,
     CustomTheme,
@@ -81,11 +82,6 @@ VIDEO_VALUE_LABELS = {
     "off": "Off", "yadif": "Yadif", "yadif2x": "Yadif 2x", "bob": "Bob", "blend": "Blend", "linear": "Linear",
 }
 THEME_LABELS = {"channelos": "ChannelOS", "chromespace": "ChromeSpace"}
-# Settings screen rows (mirrors SettingsScreen.qml): values 0-20, then actions.
-SETTINGS_VIDEO_ROWS = {12 + index: name for index, name in enumerate(VIDEO_SETTING_NAMES)}
-SETTINGS_THEME_BUILDER = 21
-SETTINGS_FIRST_ACTION = 22  # Clear artwork; then logs, reset, portable setup
-SETTINGS_ROW_COUNT = 26
 
 
 def video_value_label(field: str, value: object) -> str:
@@ -1510,7 +1506,7 @@ class CouchController(QObject):
 
     @Property("QVariantList", constant=True)
     def themeRoles(self) -> list[dict[str, str]]:
-        return [{"key": name, "label": ROLE_LABELS[name]} for name in ROLE_NAMES]
+        return [{"key": name, "label": ROLE_LABELS[name], "hint": ROLE_HINTS[name]} for name in ROLE_NAMES]
 
     @Slot(str, result="QVariantMap")
     def previewTheme(self, draft_json: str) -> dict[str, object]:
@@ -2267,45 +2263,6 @@ class CouchKeyFilter(QObject):
         else:
             self.dispatch_command(ControlCommand(ControlIntent.CHANNELS))
 
-    def _adjust_selected_setting(self, direction: int) -> bool:
-        selection = int(self._window.property("settingsSelection"))
-        if selection == 1:
-            result = self._controller.changeDisplayMode(direction)
-        else:
-            names = {
-                0: "performanceProfile",
-                2: "audioOutput",
-                3: "volume",
-                4: "muted",
-                5: "skipBack",
-                6: "skipForward",
-                7: "generateVideoThumbnails",
-                8: "artworkCacheLimit",
-                9: "backgroundArtworkDuringPlayback",
-                10: "reducedMotion",
-                11: "controllerEnabled",
-                **SETTINGS_VIDEO_ROWS,
-                20: "theme",
-            }
-            name = names.get(selection)
-            if name is None:
-                return False
-            result = self._controller.adjustSetting(name, direction)
-        if not bool(result.get("ok", False)):
-            self._notify(result)
-            return False
-        self._notify(result)
-        if "volume" in result:
-            self._window.setProperty(
-                "volumePercent",
-                int(result.get("volume", 100)),
-            )
-            self._window.setProperty(
-                "muted",
-                bool(result.get("muted", False)),
-            )
-        return True
-
     def _go_home(self) -> bool:
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
@@ -2450,61 +2407,14 @@ class CouchKeyFilter(QObject):
             return False
 
         if screen == "settings":
+            # SettingsScreen.qml owns its tabs, rows and the Theme Builder.
             settings_item = getattr(self._window, "_channelos_settings_item", None)
-            if settings_item is not None and bool(settings_item.property("themeBuilderOpen")):
-                # The Theme Builder owns navigation while it is open.
-                QMetaObject.invokeMethod(settings_item, "handleThemeBuilderIntent",
-                                         Qt.ConnectionType.DirectConnection,
-                                         Q_ARG("QVariant", intent.value))
-                return True
-            if intent is ControlIntent.BACK:
-                return self._go_home()
-            if intent is ControlIntent.UP:
-                current = int(self._window.property("settingsSelection"))
-                self._window.setProperty(
-                    "settingsSelection",
-                    max(0, current - 1),
-                )
-                return True
-            if intent is ControlIntent.DOWN:
-                current = int(self._window.property("settingsSelection"))
-                self._window.setProperty(
-                    "settingsSelection",
-                    min(SETTINGS_ROW_COUNT - 1, current + 1),
-                )
-                return True
-            if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
-                direction = -1 if intent is ControlIntent.LEFT else 1
-                return self._adjust_selected_setting(direction)
-            if intent is ControlIntent.SELECT:
-                selection = int(self._window.property("settingsSelection"))
-                if selection == SETTINGS_THEME_BUILDER:
-                    if settings_item is not None:
-                        QMetaObject.invokeMethod(settings_item, "openThemeBuilder",
-                                                 Qt.ConnectionType.DirectConnection)
-                    return True
-                if selection == SETTINGS_FIRST_ACTION:
-                    result = self._controller.clearArtworkCache()
-                    self._notify(result)
-                    return True
-                if selection == SETTINGS_FIRST_ACTION + 1:
-                    result = self._controller.openDiagnosticLogs()
-                    self._notify(result)
-                    return True
-                if selection == SETTINGS_FIRST_ACTION + 2:
-                    result = self._controller.resetSettings()
-                    self._notify(result)
-                    self._window.setProperty(
-                        "volumePercent",
-                        int(result.get("volume", 100)),
-                    )
-                    self._window.setProperty(
-                        "muted",
-                        bool(result.get("muted", False)),
-                    )
-                    return True
-                return self._adjust_selected_setting(1)
-            return False
+            if settings_item is None:
+                return self._go_home() if intent is ControlIntent.BACK else False
+            QMetaObject.invokeMethod(settings_item, "handleControllerIntent",
+                                     Qt.ConnectionType.DirectConnection,
+                                     Q_ARG("QVariant", intent.value))
+            return True
 
         if screen == "library":
             if intent is ControlIntent.BACK:

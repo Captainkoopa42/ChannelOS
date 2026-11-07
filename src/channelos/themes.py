@@ -39,6 +39,20 @@ CHROMESPACE_ROLES = {
     "text": "#1b2540", "mutedText": "#5b6678", "accent": "#1d4fa8", "highlight": "#ec6a12",
     "selection": "#d6e4f5", "live": "#d93025", "success": "#1e8e3e", "warning": "#c26401",
 }
+ROLE_HINTS = {
+    "background": "Behind everything, around the panels",
+    "surface": "Sidebars, cards and list rows",
+    "raised": "Buttons, fields and Guide program blocks",
+    "line": "Outlines and dividers",
+    "text": "Titles and most writing",
+    "mutedText": "Descriptions and hints",
+    "accent": "Main buttons such as Apply and Save",
+    "highlight": "What is selected now: focus rings, values",
+    "selection": "Fill behind selected rows and on/off buttons",
+    "live": "LIVE badges, errors and delete buttons",
+    "success": "Ready, on air and in-use badges",
+    "warning": "Unsaved changes and cautions",
+}
 PRESETS = {"channelos": CHANNELOS_ROLES, "chromespace": CHROMESPACE_ROLES}
 WALLPAPER_FITS = ("fill", "fit", "tile", "center")
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}

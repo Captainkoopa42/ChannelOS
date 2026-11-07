@@ -605,19 +605,31 @@ def test_studio_keeps_week_days_and_ad_actions_inside_supported_window(size):
     try:
         names = ['studioWeekDay' + str(index) for index in range(7)]
         names += ['studioAdBreaksButton', 'studioAdvancedAdsButton']
-        pending = [item]
-        controls = {}
-        while pending:
-            control = pending.pop()
-            controls[control.objectName()] = control
-            pending.extend(control.childItems())
+        # Measure in QML. Walking every child item from Python wraps each
+        # QML-defined type; with several engines created and destroyed in one
+        # test process, PySide 6.12 can reuse a stale wrapper type and crash.
+        expression = QQmlExpression(engine.contextForObject(item) or engine.rootContext(), item, """(function(names) {
+            var found = {}, pending = [this]
+            while (pending.length) {
+                var control = pending.pop()
+                if (names.indexOf(control.objectName) >= 0) {
+                    var p = control.mapToItem(null, 0, 0)
+                    found[control.objectName] = [p.x, p.y, control.width, control.height]
+                }
+                for (var i = 0; i < control.children.length; ++i)
+                    if (control.children[i].mapToItem) pending.push(control.children[i])
+            }
+            return JSON.stringify(found)
+        }).call(this, """ + json.dumps(names) + ")")
+        value, _ = expression.evaluate()
+        assert not expression.hasError(), expression.error().toString()
+        controls = json.loads(value)
         for name in names:
-            control = controls.get(name)
-            assert control is not None, name
-            position = control.mapToScene(QPointF(0, 0))
-            assert position.x() >= -1 and position.y() >= -1, name
-            assert position.x() + control.width() <= size[0] + 1, name
-            assert position.y() + control.height() <= size[1] + 1, name
+            assert name in controls, name
+            x, y, width, height = controls[name]
+            assert x >= -1 and y >= -1, name
+            assert x + width <= size[0] + 1, name
+            assert y + height <= size[1] + 1, name
         assert not any('Binding loop' in warning for warning in warnings), warnings
     finally:
         window.close()

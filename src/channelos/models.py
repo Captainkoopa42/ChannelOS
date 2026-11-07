@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3", "0.4", "0.5", "0.6"}
-SUPPORTED_PROGRAMMING_MODES = {"sequential", "shuffle", "calendar"}
+SUPPORTED_SCHEMA_VERSIONS = {"0.1", "0.2", "0.3", "0.4", "0.5", "0.6", "0.7"}
+SUPPORTED_PROGRAMMING_MODES = {"sequential", "shuffle", "calendar", "planner"}
 TOP_LEVEL_KEYS = {
     "schema_version",
     "channel",
@@ -53,6 +53,7 @@ class ProgrammingDefinition:
     avoid_repeat_days: int = 0
     filler_mode: str = "sequential"
     calendar: tuple[CalendarBlockDefinition, ...] = ()
+    planner: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +181,7 @@ class ChannelDefinition:
             sources.append(SourceDefinition(path=Path(path_value)))
 
         raw_advertising = raw.get("advertising", {})
-        if version not in {"0.4", "0.5", "0.6"} and "advertising" in raw:
+        if version not in {"0.4", "0.5", "0.6", "0.7"} and "advertising" in raw:
             raise ChannelValidationError(
                 "advertising settings require schema_version '0.4'"
             )
@@ -197,9 +198,9 @@ class ChannelDefinition:
             "transition_seconds", "slot_seconds", "schedule_priority", "expand_source", "placements",
             "collection_membership", "excluded_asset_ids",
         }
-        if version in {"0.5", "0.6"}:
+        if version in {"0.5", "0.6", "0.7"}:
             allowed_advertising.update(new_ad_keys)
-        if version == "0.6":
+        if version in {"0.6", "0.7"}:
             allowed_advertising.update({"setup_mode", "play_order", "clock_interval_seconds", "clock_offset_seconds"})
         if set(raw_advertising) - allowed_advertising:
             names = ", ".join(sorted(set(raw_advertising) - allowed_advertising))
@@ -379,8 +380,10 @@ class ChannelDefinition:
             "preserve_episode_order",
             "avoid_repeat_days",
         }
-        if version in {"0.2", "0.3", "0.4", "0.5", "0.6"}:
+        if version in {"0.2", "0.3", "0.4", "0.5", "0.6", "0.7"}:
             allowed_programming.update({"filler_mode", "calendar"})
+        if version == "0.7":
+            allowed_programming.add("planner")
         unknown_programming = set(raw_programming) - allowed_programming
         if unknown_programming:
             names = ", ".join(sorted(unknown_programming))
@@ -395,6 +398,18 @@ class ChannelDefinition:
             raise ChannelValidationError(
                 "calendar programming requires schema_version '0.2'"
             )
+
+        planner = None
+        if mode == "planner":
+            if version != "0.7":
+                raise ChannelValidationError("Broadcast Planner requires schema_version '0.7'")
+            from .broadcast_planner.contracts import PlannerDefinition, PlannerValidationError
+            try:
+                planner = PlannerDefinition.from_mapping(raw_programming.get("planner"))
+            except PlannerValidationError as exc:
+                raise ChannelValidationError(str(exc)) from exc
+        elif raw_programming.get("planner") is not None:
+            raise ChannelValidationError("planner intent requires mode 'planner'")
 
         preserve = raw_programming.get("preserve_episode_order", False)
         if not isinstance(preserve, bool):
@@ -417,7 +432,7 @@ class ChannelDefinition:
         raw_calendar = raw_programming.get("calendar", [])
         if not isinstance(raw_calendar, list):
             raise ChannelValidationError("programming.calendar must be a list")
-        if mode != "calendar" and raw_calendar:
+        if mode not in {"calendar", "planner"} and raw_calendar:
             raise ChannelValidationError(
                 "programming.calendar is only valid when mode is 'calendar'"
             )
@@ -434,9 +449,9 @@ class ChannelDefinition:
         seen_starts: set[datetime] = set()
         for index, item in enumerate(raw_calendar):
             allowed_block = {"start_utc", "asset_id"}
-            if version == "0.6":
+            if version in {"0.6", "0.7"}:
                 allowed_block.add("ad_plan")
-            if version in {"0.3", "0.4", "0.5", "0.6"}:
+            if version in {"0.3", "0.4", "0.5", "0.6", "0.7"}:
                 allowed_block.add("filler")
             if (
                 not isinstance(item, dict)
@@ -476,7 +491,7 @@ class ChannelDefinition:
             filler: CalendarFillerDefinition | None = None
             raw_filler = item.get("filler")
             if raw_filler is not None:
-                if version not in {"0.3", "0.4", "0.5", "0.6"}:
+                if version not in {"0.3", "0.4", "0.5", "0.6", "0.7"}:
                     raise ChannelValidationError(
                         "show-specific filler requires schema_version '0.3' or '0.4'"
                     )
@@ -568,6 +583,7 @@ class ChannelDefinition:
                 avoid_repeat_days=avoid_repeat_days,
                 filler_mode=filler_mode,
                 calendar=tuple(calendar),
+                planner=planner,
             ),
             presentation=PresentationDefinition(number_width=number_width),
             advertising=AdvertisingDefinition(

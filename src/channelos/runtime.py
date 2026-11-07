@@ -25,7 +25,7 @@ from .storage import (
     prepare_database,
 )
 
-RUNTIME_SCHEMA_VERSION = 3
+RUNTIME_SCHEMA_VERSION = 4
 SECONDS_PER_DAY = 86400.0
 DEFAULT_VIEWER_ID = "default"
 
@@ -118,7 +118,7 @@ class BroadcastSelection:
 
     @property
     def event(self) -> BroadcastEvent:
-        event_type = self.origin if self.origin in {"advertisement", "transition"} else (
+        event_type = self.origin if self.origin in {"advertisement", "transition", "offair"} else (
             "filler" if self.origin in {"filler", "show-filler"} else "program"
         )
         identity = hashlib.sha256("|".join((
@@ -816,6 +816,9 @@ def schedule_signature(channel: ResolvedChannel) -> str:
     """Return a deterministic fingerprint of the inputs that define a channel timeline."""
 
     programming = channel.definition.programming
+    if programming.mode == "planner":
+        return hashlib.sha256(json.dumps({"planner":programming.planner.to_mapping(),
+            "calendar":[_calendar_signature_block(b) for b in programming.calendar]},sort_keys=True).encode()).hexdigest()
     signature_media = channel.media
     if programming.mode == "shuffle":
         signature_media = tuple(sorted(channel.media, key=lambda item: item.asset.asset_id))
@@ -1042,18 +1045,32 @@ class RuntimeStore:
         )
         self._initialize()
 
+    @classmethod
+    def read_only(cls,database_path):
+        """Open existing planner facts without migration or authoring writes."""
+        result = cls.__new__(cls)
+        result.database_path = Path(database_path)
+        result.portable = find_setup(result.database_path)
+        result._read_only = True
+        return result
+
     def connect(self) -> sqlite3.Connection:
         portable = self.portable
         if portable:
             portable.check_available()
+        read_only = getattr(self,'_read_only',False)
         connection = sqlite3.connect(
-            self.database_path,
+            self.database_path.resolve().as_uri()+'?mode=ro' if read_only else self.database_path,
+            uri=read_only,
             timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000,
             factory=_ClosingSQLiteConnection,
         )
         connection.portable = portable
         connection.row_factory = sqlite3.Row
-        configure_sqlite_connection(connection, self.database_path)
+        if read_only:
+            connection.execute('PRAGMA query_only=ON')
+        else:
+            configure_sqlite_connection(connection, self.database_path)
         return connection
 
     def _initialize(self) -> None:
@@ -1102,6 +1119,8 @@ class RuntimeStore:
                     ON on_demand_watch(viewer_id, last_watched_at DESC);
                 """
             )
+            from .broadcast_planner.runtime import initialize as initialize_planner
+            initialize_planner(connection)
             connection.execute(
                 """
                 INSERT INTO runtime_meta(key, value)
@@ -1245,7 +1264,8 @@ class RuntimeStore:
             payload = {}
             order = ("channel_runtime", "viewer_runtime", "ad_break_plans", "ad_plan_metadata",
                      "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans", "ad_history_review",
-                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans")
+                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans",
+                     "planner_revisions", "planner_checkpoints", "planner_occurrences", "planner_completions", "planner_cycles", "planner_legacy", "planner_manual_releases", "planner_failures")
             for table in order:
                 if table not in tables:
                     continue
@@ -1274,7 +1294,8 @@ class RuntimeStore:
             payload = json.loads(archive["payload"])
             order = ("channel_runtime", "viewer_runtime", "ad_break_plans", "ad_plan_metadata",
                      "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans", "ad_history_review",
-                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans", "runtime_meta")
+                     "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans",
+                     "planner_revisions", "planner_checkpoints", "planner_occurrences", "planner_completions", "planner_cycles", "planner_legacy", "planner_manual_releases", "planner_failures", "runtime_meta")
             for table in order:
                 for row in payload.get(table, ()):
                     columns = ','.join(row)
@@ -1459,6 +1480,9 @@ class ChannelRuntime:
         transient: bool = False,
     ) -> "ChannelRuntime":
         programming = channel.definition.programming
+        if programming.mode == "planner":
+            from .broadcast_planner.runtime import open_runtime
+            return open_runtime(channel, store, require_aware_utc(now or utc_now()), transient)
         if channel.definition.advertising.enabled and any(
             item.asset.duration_seconds is None or not math.isfinite(float(item.asset.duration_seconds))
             or item.asset.duration_seconds <= 0 for item in channel.ad_media
@@ -1634,6 +1658,13 @@ class ChannelRuntime:
         return plan.duration_seconds
 
     def validate_schedule(self) -> None:
+        if self.channel.definition.programming.mode == "planner":
+            compiler = self.timeline._new_compiler()
+            for _ in range(370):
+                compiler.day()
+                if compiler.blocked:
+                    raise ChannelRuntimeError("; ".join(i['message'] for i in compiler.issues.values() if i['blocking']))
+            return
         if (isinstance(self.timeline, CalendarTimeline) and self.channel.definition.advertising.enabled
                 and self.channel.definition.advertising.setup_mode != "advanced"):
             for index in range(len(self.timeline.programs)):
@@ -1875,6 +1906,10 @@ class ChannelRuntime:
 
     def _selection_at(self, at: datetime, *, record_airings: bool = True) -> BroadcastSelection:
         instant = require_aware_utc(at)
+        if self.channel.definition.programming.mode == "planner":
+            if record_airings:
+                self.timeline.reconcile(instant)
+            return self.timeline.selection_at(self.epoch_utc, instant)
         if self.break_store is None:
             return self.timeline.selection_at(self.epoch_utc, instant)
         if isinstance(self.timeline, CalendarTimeline):
@@ -1972,6 +2007,9 @@ class ChannelRuntime:
         Advertisement selections carry their parent program identity, allowing
         the Guide to display one parent occurrence with break markers.
         """
+        if self.channel.definition.programming.mode == "planner":
+            return self.timeline.plans_for_selection(selection) or (
+                self.break_store.plans_for_occurrence(selection.program_occurrence_id) if self.break_store and selection.program_occurrence_id else ())
         if self.break_store is None:
             return ()
         event = selection.event

@@ -87,6 +87,8 @@ def _explanation(runtime: ChannelRuntime, selection: BroadcastSelection) -> tupl
             "committed ad event from the ChannelRuntime broadcast timeline",
             f"asset {selection.media.asset.asset_id}",
         )
+    if programming.mode == "planner":
+        return (f"Channel {runtime.channel_number}", "Broadcast Planner canonical timeline", selection.origin)
     if programming.mode == "calendar":
         if selection.origin == "calendar":
             return (

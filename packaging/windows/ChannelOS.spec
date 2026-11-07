@@ -13,7 +13,7 @@ analysis = Analysis(
     [str(PROJECT_ROOT / "packaging" / "windows" / "entrypoint.py")],
     pathex=[str(SOURCE_ROOT)],
     binaries=[],
-    datas=collect_data_files("channelos"),
+    datas=collect_data_files("channelos") + collect_data_files("tzdata"),
     hiddenimports=[
         "PySide6.QtOpenGL",
         "PySide6.QtQml",
@@ -21,6 +21,7 @@ analysis = Analysis(
         "PySide6.QtQuickControls2",
         "PySide6.QtSvg",
         "vlc",
+        "tzdata.zoneinfo",
     ],
     hookspath=[str(PROJECT_ROOT / "packaging" / "windows" / "hooks")],
     hooksconfig={},

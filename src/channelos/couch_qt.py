@@ -2478,7 +2478,7 @@ def run_qt(
     settings_item = _attach_settings_overlay(engine, window)
 
     key_filter = CouchKeyFilter(controller, window)
-    app.installEventFilter(key_filter)
+    window.installEventFilter(key_filter)
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
 

@@ -138,6 +138,15 @@ class TelevisionSession:
 
         program_started_at = decision.viewer_selection.program_started_at
         event = decision.viewer_selection.event
+        if event.event_type == "offair":
+            self._finish_ad_viewing(decision.observed_at_utc or utc_now())
+            self.backend.stop()
+            self.loaded_asset_id = asset_id
+            self.loaded_program_started_at = program_started_at
+            self._loaded_segment_id = event.segment_id
+            self._clear_transition()
+            self.paused = not play
+            return path
         if self._ad_viewing is not None and self._ad_viewing.event_id != event.event_id:
             self._finish_ad_viewing(decision.observed_at_utc or utc_now())
         if (

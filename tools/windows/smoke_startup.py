@@ -14,6 +14,7 @@ def run(*, skip_video=False, vlc_dir=None):
     if vlc_dir is not None:
         os.environ['CHANNELOS_VLC_DIR'] = str(vlc_dir.resolve())
     from PySide6.QtCore import QTimer
+    from PySide6.QtQml import QQmlExpression
     from PySide6.QtWidgets import QApplication
     from channelos.broadcaster import BroadcasterService
     from channelos.couch import run_couch, _open_runtimes
@@ -55,9 +56,9 @@ def run(*, skip_video=False, vlc_dir=None):
         def check():
             nonlocal stage
             ticks.append(time.perf_counter())
+            window = getattr(app, '_channelos_window', None)
             try:
                 assert time.perf_counter() - start < 45, 'Startup smoke timed out'
-                window = getattr(app, '_channelos_window', None)
                 if window is None:
                     return
                 controller = window._channelos_controller
@@ -68,7 +69,7 @@ def run(*, skip_video=False, vlc_dir=None):
                     assert set(controller._actions.runtime.channels) == {1, 7, 8}
                     assert controller.librarySnapshot['count'] == 1
                     assert all(getattr(window, '_channelos_' + name + '_item') is None
-                               for name in ('library', 'broadcaster', 'studio', 'settings'))
+                               for name in ('library', 'broadcaster', 'studio', 'planner', 'settings'))
                     assert not controller._guide_cache, 'Home projected the Guide eagerly'
                     results['dataReadyMs'] = (time.perf_counter() - start) * 1000
                     window.setProperty('screen', 'guide')
@@ -86,9 +87,32 @@ def run(*, skip_video=False, vlc_dir=None):
                     assert window._channelos_studio_item is not None
                     window.setProperty('screen', 'settings')
                     assert window._channelos_settings_item is not None
+                    window.setProperty('plannerChannelNumber',7)
+                    window.setProperty('screen','planner')
+                    assert window._channelos_planner_item is not None
+                    stage = 2
+                elif stage == 2:
+                    item=window._channelos_planner_item
+                    if not item.property('loaded') or controller._planner_thread is not None:
+                        return
+                    expression=QQmlExpression(window._channelos_component_engine.contextForObject(item),item,
+                        'mutate(function(r) { Draft.addWindow(r,"primary") })')
+                    expression.evaluate()
+                    assert not expression.hasError(),expression.error().toString()
+                    stage = 3
+                elif stage == 3:
+                    item=window._channelos_planner_item
+                    if not item.property('previewCurrent') or controller._planner_thread is not None:
+                        return
+                    expression=QQmlExpression(window._channelos_component_engine.contextForObject(item),item,'forecast.confidence')
+                    value,_=expression.evaluate()
+                    value=value.toVariant() if hasattr(value,'toVariant') else value
+                    assert value=='Exact',value
+                    assert controller._broadcaster._records[7].definition.programming.mode=='sequential'
+                    results['plannerDraftVerified']=True
                     window.setProperty('screen', 'home')
                     results['lazyScreens'] = True
-                    stage = 2
+                    stage = 4
                 elif skip_video or controller.playback.get('active'):
                     results['playbackActive'] = bool(controller.playback.get('active'))
                     assert skip_video or controller.playback['channelNumber'] == 7
@@ -96,7 +120,14 @@ def run(*, skip_video=False, vlc_dir=None):
                     timer.stop()
                     app.quit()
             except Exception as exc:
-                errors.append(str(exc))
+                item=getattr(window,'_channelos_planner_item',None) if window else None
+                detail={'stage':stage,'plannerFeedback':item.property('feedback') if item else None,
+                        'plannerLoaded':item.property('loaded') if item else None,
+                        'plannerWorker':controller._planner_state if window else None,
+                        'plannerSerial':item.property('serial') if item else None,
+                        'plannerPreviewPending':item.property('pendingPreview') if item else None,
+                        'plannerPreviewCurrent':item.property('previewCurrent') if item else None}
+                errors.append(str(exc)+' '+json.dumps(detail))
                 timer.stop()
                 app.quit()
         timer.timeout.connect(check)

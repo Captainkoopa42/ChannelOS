@@ -121,6 +121,17 @@ class ChannelMutationWorker(QObject):
                         self.result = self.service.delete(self.number)
                     elif self.kind == 'add_library_item':
                         self.result = self.service.add_library_item(self.number, str(self.editor['assetId']), str(self.editor['path']))
+                    elif self.kind == 'release_cycle':
+                        from .broadcaster import ChannelSaveResult
+                        from .broadcast_planner.runtime import PlannerTimeline
+                        from .resolve import resolve_channel
+                        from .runtime import utc_now
+                        record = self.service._records[self.number]
+                        self._before_commit(None)
+                        resolved = resolve_channel(record.definition,self.service.library,allow_offline_ads=True)
+                        timeline = PlannerTimeline(resolved,RuntimeStore(self.service.runtime_database_path),now=utc_now(),transient=True)
+                        timeline.release_manual_cycle(utc_now())
+                        self.result = ChannelSaveResult(record)
                     else:
                         raise BroadcasterError('Unknown channel operation')
                     self.committed = True
@@ -191,7 +202,7 @@ def install_channel_operations_support(module):
                 return {'ok': False, 'message': 'Wait for the current channel operation to finish.'}
             if getattr(self, '_recovery_thread', None) is not None or getattr(self, '_recovery_adopting', False):
                 return {'ok': False, 'message': 'Wait for media recovery to finish before changing a channel.'}
-            if kind not in {'create', 'update', 'delete', 'add_library_item'}:
+            if kind not in {'create', 'update', 'delete', 'add_library_item', 'release_cycle'}:
                 return {'ok': False, 'message': 'Unknown channel operation'}
             if self.libraryScan.get('active') or self.studioAutoFill.get('active'):
                 return {'ok': False, 'message': 'Finish or cancel the current Library scan or Auto Fill first.'}

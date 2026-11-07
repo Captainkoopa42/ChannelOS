@@ -21,10 +21,11 @@ class RecoveryWorker(QObject):
     failed = Signal(str)
     finished = Signal()
 
-    def __init__(self, library, broadcaster, store, previous, roots, cancellation):
+    def __init__(self, library, broadcaster, store, previous, roots, cancellation, force_channels=()):
         super().__init__()
         self.library, self.broadcaster, self.store = library, copy.copy(broadcaster), store
         self.previous, self.roots, self.cancellation = previous, roots, cancellation
+        self.force_channels=set(force_channels)
 
     @Slot()
     def run(self):
@@ -38,10 +39,11 @@ class RecoveryWorker(QObject):
                 try:
                     resolved = _usable_channel(record.definition, self.library, verify_files=True,
                         index=index, availability=availability, root_availability=root_availability)
-                    if resolved == self.previous.get(record.channel_number):
+                    if resolved == self.previous.get(record.channel_number) and record.channel_number not in self.force_channels:
                         continue
                     runtime = None if resolved is None else _resolved_runtime(record.definition,
-                        self.library, self.store, prepared_channel=resolved, index=index)
+                        self.library, self.store, prepared_channel=resolved, index=index,
+                        persistent_when_complete=record.definition.programming.mode=='planner')
                 except ChannelRuntimeError:
                     logger.exception('Channel %s has no usable recovery timeline', record.channel_number)
                     runtime = None
@@ -70,6 +72,8 @@ class RecoveryJobs:
         self._recovery_restore = False
         self._recovery_adopting = False
         self._recovery_stopping = False
+        self._recovery_force_channels=set()
+        self._recovery_inflight_forces=set()
 
     def _recovery_revision(self):
         return self._library.revision(), tuple((record.channel_number, record.definition)
@@ -79,8 +83,12 @@ class RecoveryJobs:
         if self._recovery_stopping:
             return
         self._recovery_restore |= restore_if_active
+        unavailable=set(self._temporarily_unavailable_roots)
+        self._recovery_force_channels.update(number for number,runtime in self._actions.runtime.channels.items()
+            if getattr(runtime.timeline,'actual_source_roots',frozenset()) & unavailable)
         if self._recovery_thread is not None or self._recovery_adopting:
-            self._recovery_retry |= self._recovery_input_revision != self._recovery_revision()
+            self._recovery_retry |= (self._recovery_input_revision != self._recovery_revision()
+                or bool(self._recovery_force_channels-self._recovery_inflight_forces))
             return
         if getattr(self, 'startupState', {}).get('active') or getattr(self, 'channelMutation', {}).get('active'):
             QTimer.singleShot(200, lambda: self._request_media_recovery(restore_if_active=restore_if_active))
@@ -89,9 +97,11 @@ class RecoveryJobs:
         self._recovery_prior = (self._actions.runtime.current_channel, bool(self._actions.paused))
         self._recovery_cancel = threading.Event()
         self._recovery_result = None
+        self._recovery_inflight_forces=set(self._recovery_force_channels)
+        self._recovery_force_channels.clear()
         worker = RecoveryWorker(self._library, self._broadcaster, self._runtime_store,
             {number: runtime.channel for number, runtime in self._actions.runtime.channels.items()},
-            set(self._temporarily_unavailable_roots), self._recovery_cancel)
+            set(self._temporarily_unavailable_roots), self._recovery_cancel,self._recovery_inflight_forces)
         thread = QThread(self)
         thread.setObjectName('ChannelOS media recovery')
         worker.moveToThread(thread)

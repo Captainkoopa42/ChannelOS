@@ -41,6 +41,9 @@ jobs:
       - name: Verify native Qt and bundled VLC ad playback
         run: python tools/windows/smoke_ad_playback.py
 
+      - name: Verify native Broadcast Planner playback and cycle closure
+        run: python tools/windows/smoke_broadcast_planner.py
+
       - name: Verify staged startup, saved playback, and lazy screens
         run: python tools/windows/smoke_startup.py
 
@@ -51,6 +54,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ChannelOS-Windows-x64
-          path: dist/windows/ChannelOS-0.0.6-windows-x64.zip
+          path: dist/windows/ChannelOS-0.0.7-windows-x64.zip
           if-no-files-found: error
           compression-level: 0

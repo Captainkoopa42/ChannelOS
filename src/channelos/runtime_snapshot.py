@@ -14,6 +14,7 @@ CHANNEL_TABLES = (
     'ad_break_history', 'ad_view_history', 'ad_view_progress', 'ad_retired_plans',
     'ad_history_review', 'ad_program_clock', 'ad_break_policy_state',
     'ad_break_catchup_state', 'ad_calendar_state', 'ad_superseded_plans',
+    'planner_revisions', 'planner_checkpoints', 'planner_occurrences', 'planner_completions', 'planner_cycles', 'planner_legacy', 'planner_manual_releases', 'planner_failures',
 )
 
 

@@ -1,4 +1,11 @@
-ChannelOS 0.0.6 Windows x64 release candidate
+ChannelOS 0.0.7 Windows x64 release candidate
+
+Broadcast Planner: open Broadcaster, then New Planner or Open Planner. Add owned
+collections, choose shared airing windows or independent reruns, inspect Forecast
+and Channel Cycle, and Apply. Classic Builder and Manual Studio remain available.
+Advanced rules are available in the Rules editor. Profile changes remain pinned
+per channel until explicitly reapplied. Original-airing data must be supplied by
+the user; era recreation is labelled approximate. Keep a setup backup for testing.
 ===========================
 
 START
@@ -111,6 +118,6 @@ Copyright (c) 2026 William Robert Adams.
 
 RELEASE-CANDIDATE CHECKS
 ------------------------
-Use docs/releases/WINDOWS_0.0.6_ACCEPTANCE.md for the test route. Physical audio,
+Use docs/releases/WINDOWS_0.0.7_ACCEPTANCE.md for the test route. Physical audio,
 controller and USB acceptance results are separate from automated smoke checks.
 Keep a copy of an existing setup before testing runtime schema-3 migration.

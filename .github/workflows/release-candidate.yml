@@ -2,13 +2,13 @@ name: release-candidate
 
 on:
   push:
-    branches: ["perf/windows-background-work"]
+    branches: ["feature/unified-broadcast-planner"]
 
 permissions:
   contents: read
 
 concurrency:
-  group: channelos-windows-0.0.6-candidate
+  group: channelos-windows-0.0.7-candidate
   cancel-in-progress: true
 
 jobs:
@@ -23,7 +23,7 @@ jobs:
     permissions:
       contents: write
     env:
-      CANDIDATE_TAG: v0.0.6-rc.4
+      CANDIDATE_TAG: v0.0.7-rc.1
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -36,14 +36,14 @@ jobs:
         run: |
           python - <<'PYCODE'
           import hashlib, json, os, pathlib, zipfile
-          path = pathlib.Path('release-output/ChannelOS-0.0.6-windows-x64.zip')
+          path = pathlib.Path('release-output/ChannelOS-0.0.7-windows-x64.zip')
           with zipfile.ZipFile(path) as archive:
               bom = json.loads(archive.read('ChannelOS/PACKAGE-BOM.json'))
-          assert bom['product']['version'] == '0.0.6', bom['product']
+          assert bom['product']['version'] == '0.0.7', bom['product']
           assert bom['product']['git_commit'] == os.environ['GITHUB_SHA'], bom['product']
           digest = hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
           pathlib.Path('release-output/SHA256SUMS.txt').write_text(f'{digest}  {path.name}\n')
-          notes = pathlib.Path('docs/releases/v0.0.6-rc.4.md').read_text()
+          notes = pathlib.Path('docs/releases/v0.0.7-rc.1.md').read_text()
           notes += '\nVerified source commit: `' + os.environ['GITHUB_SHA'] + '`\n'
           notes += '\nBuild and smoke checks: https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '\n'
           pathlib.Path('release-output/RELEASE-NOTES.md').write_text(notes)
@@ -56,5 +56,5 @@ jobs:
             test "$published" = "$GITHUB_SHA" || { echo "Existing candidate tag names another commit; retained its files."; exit 1; }
             gh release view "$CANDIDATE_TAG"
           else
-            gh release create "$CANDIDATE_TAG"               release-output/ChannelOS-0.0.6-windows-x64.zip               release-output/SHA256SUMS.txt               --target "$GITHUB_SHA" --prerelease               --title "ChannelOS 0.0.6 — Windows performance candidate 4"               --notes-file release-output/RELEASE-NOTES.md
+            gh release create "$CANDIDATE_TAG"               release-output/ChannelOS-0.0.7-windows-x64.zip               release-output/SHA256SUMS.txt               --target "$GITHUB_SHA" --prerelease               --title "ChannelOS 0.0.7 — Broadcast Planner Windows candidate 1"               --notes-file release-output/RELEASE-NOTES.md
           fi

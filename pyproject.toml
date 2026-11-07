@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "channelos"
-version = "0.0.6"
+version = "0.0.7"
 description = "A personal broadcasting system for user-owned media."
 readme = "README.md"
 license = "MPL-2.0"
@@ -12,6 +12,7 @@ license-files = ["LICENSE.md", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.11"
 dependencies = [
     "PyYAML>=6.0,<7",
+    "tzdata==2026.6",
 ]
 
 [project.optional-dependencies]

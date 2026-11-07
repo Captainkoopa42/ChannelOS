@@ -6,6 +6,7 @@ import QtQuick.Layouts
 
 Item {
     id: studioRoot
+    property var plannerIntent: null
     anchors.fill: parent
     z: 92
 
@@ -274,7 +275,8 @@ Item {
             channel: channelNumberField.text,
             name: channelNameField.text,
             description: descriptionField.text,
-            mode: "calendar",
+            mode: plannerIntent ? "planner" : "calendar",
+            planner: plannerIntent,
             fillerMode: fillerModeBox.currentText.toLowerCase(),
             preserveEpisodeOrder: false,
             avoidRepeatDays: repeatDays.value,
@@ -486,6 +488,7 @@ Item {
                 ? Number(hostWindow.studioChannelNumber || 0)
                 : 0
         var result = channelOS.loadChannelStudio(target)
+        plannerIntent = result && result.draft ? result.draft.planner || null : null
         if (!result || !result.ok) {
             loading = false
             feedbackMessage = result && result.message

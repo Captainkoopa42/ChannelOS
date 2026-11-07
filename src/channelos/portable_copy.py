@@ -432,7 +432,7 @@ def prepare_snapshot(captured: CapturedSetup, *, should_cancel=None) -> SetupSna
             old_revision = advertising_signature(resolved)
             for block in encoded.get('programming', {}).get('calendar', []):
                 reserved = block.get('ad_plan')
-                if reserved and reserved.get('revision') == old_revision:
+                if definition.programming.mode!='planner' and reserved and reserved.get('revision') == old_revision:
                     reserved['revision'] = revisions[definition.channel]
                     for item in reserved['breaks']:
                         if item.get('policy_revision') == old_revision:
@@ -521,11 +521,20 @@ def _convert_runtime(database: Path, plan: CopyPlan, revisions: dict[int, str]):
         return
     with _database(database) as db:
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for table, keys in [('planner_revisions',('channel_number','revision')),('planner_legacy',('channel_number',))]:
+            if table in tables:
+                for row in db.execute(f"SELECT {','.join(keys)},payload FROM {table}").fetchall():
+                    value = path_tree(json.loads(row[-1]),plan.encode)
+                    where = ' AND '.join(key+'=?' for key in keys)
+                    db.execute(f'UPDATE {table} SET payload=? WHERE {where}',(json.dumps(value),*row[:-1]))
         if 'ad_break_plans' in tables:
             for identity, payload in db.execute('SELECT plan_id,payload FROM ad_break_plans').fetchall():
                 value = path_tree(json.loads(payload), plan.encode)
                 db.execute('UPDATE ad_break_plans SET payload=? WHERE plan_id=?', (json.dumps(value), identity))
         for number, revision in revisions.items():
+            if ('planner_revisions' in tables and db.execute('SELECT 1 FROM planner_revisions WHERE channel_number=? LIMIT 1',(number,)).fetchone()
+                or 'planner_legacy' in tables and db.execute('SELECT 1 FROM planner_legacy WHERE channel_number=? LIMIT 1',(number,)).fetchone()):
+                continue
             previous_revision = None
             if 'ad_break_policy_state' in tables:
                 row = db.execute('SELECT policy_revision FROM ad_break_policy_state WHERE channel_number=?', (number,)).fetchone()

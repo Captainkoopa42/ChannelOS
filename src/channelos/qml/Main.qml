@@ -29,6 +29,7 @@ ApplicationWindow {
     property int homeCardSelection: 0
     property int settingsSelection: 0
     property int studioChannelNumber: 0
+    property int plannerChannelNumber: 0
     property int selectedRow: 0
     property int selectedProgram: 0
     property int guideSelectionChannel: 0
@@ -741,9 +742,24 @@ ApplicationWindow {
         // Keep the native child alive while an error is shown. Destroying or
         // hiding the target in response to a presentation warning prevents
         // libVLC from recovering on its existing surface.
-        visible: fullPresentation || showHomePreview || showGuidePreview
+        visible: (fullPresentation || showHomePreview || showGuidePreview)
+                 && root.playback.eventType !== "offair"
         window: channelOSVideoWindow
         z: 50
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        z: 49
+        visible: root.screen === "live" && root.playback.eventType === "offair"
+        color: "#071321"
+        Column {
+            anchors.centerIn: parent
+            spacing: 14
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: root.playback.channelName || "ChannelOS"; color: "#91b9e1"; font.pixelSize: 22 }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Off air"; color: "#f0f6ff"; font.pixelSize: 48; font.weight: Font.DemiBold }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "No scheduled program at this broadcast time"; color: "#a3b6ca"; font.pixelSize: 16 }
+        }
     }
 
     Window {

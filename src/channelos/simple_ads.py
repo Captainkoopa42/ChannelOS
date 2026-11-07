@@ -84,7 +84,7 @@ def next_clock(at, settings):
 
 
 def plan_program(program, starts_at, settings, revision, channel_number, occurrence_id,
-                 rotation, *, next_start=None, activation=None, filler_media=()):
+                 rotation, *, next_start=None, activation=None, filler_media=(),after_program=True):
     """Plan a complete show, its clock interruptions and its following ad window."""
     remaining = float(program.asset.duration_seconds)
     cursor = starts_at
@@ -146,7 +146,7 @@ def plan_program(program, starts_at, settings, revision, channel_number, occurre
     else:
         raise ValueError("A show exceeds the 10000-break limit. Use a longer clock interval.")
 
-    if activation is None or cursor >= activation:
+    if after_program and (activation is None or cursor >= activation):
         if settings.setup_mode == "aligned" and rotation.media:
             # At least the first whole ad must fit before the next grid start.
             item = rotation.by_id[rotation.remaining[0]] if rotation.remaining else None

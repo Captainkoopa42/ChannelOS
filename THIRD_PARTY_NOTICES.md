@@ -22,6 +22,7 @@ and release gate.
 | Project | Declared requirement | ChannelOS use | Declared license | Project/license information |
 |---|---|---|---|---|
 | PyYAML | `>=6.0,<7` | Required YAML parsing | MIT | <https://pypi.org/project/PyYAML/> |
+| tzdata | `==2026.6` | Pinned IANA time-zone data shared by Windows and Unix planner calculations | Apache-2.0; bundled IANA data also carries its upstream notices | <https://pypi.org/project/tzdata/2026.6/> |
 | python-vlc | `>=3.0.0` | Optional Python binding for playback | LGPL-2.1-or-later for the generated module | <https://pypi.org/project/python-vlc/> |
 | PySide6 / Qt for Python | `>=6.8,<7` | Optional Qt Quick couch interface | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or a commercial Qt license | <https://pypi.org/project/PySide6/> |
 | pytest | `>=8,<9` | Development and test dependency; not required at runtime | MIT | <https://pypi.org/project/pytest/> |

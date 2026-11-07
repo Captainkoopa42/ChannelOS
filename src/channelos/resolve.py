@@ -189,7 +189,8 @@ def _resolve_preserved_sequence(
 def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
                     allow_offline_ads: bool = False,
                     include_offline_programs: bool = False,
-                    index: MediaResolutionIndex | None = None) -> ResolvedChannel:
+                    index: MediaResolutionIndex | None = None,
+                    verify_ad_files: bool = True) -> ResolvedChannel:
     def source_media(path):
         if index is not None:
             return index.for_source(path, include_offline=include_offline_programs)
@@ -212,7 +213,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
         seen_ad_assets: set[str] = set()
         for source in (source for policy in active_policies for source in policy.sources):
             for item in online_media(source.path):
-                if allow_offline_ads and not item.location.path.is_file():
+                if allow_offline_ads and verify_ad_files and not item.location.path.is_file():
                     continue
                 if item.asset.asset_id in seen_ad_assets:
                     continue
@@ -236,7 +237,7 @@ def resolve_channel(channel: ChannelDefinition, library: MediaLibrary, *,
                     + ", ".join(missing)
                 )
             for asset_id in requested_ids:
-                if asset_id not in indexed_ads or (allow_offline_ads and not indexed_ads[asset_id].location.path.is_file()):
+                if asset_id not in indexed_ads or (allow_offline_ads and verify_ad_files and not indexed_ads[asset_id].location.path.is_file()):
                     continue
                 if asset_id not in seen_ad_assets:
                     seen_ad_assets.add(asset_id)

@@ -175,7 +175,7 @@ def _usable_channel(definition, library, *, verify_files=False, index=None,
                 usable[path] = _path_is_usable(path)
             return usable[path]
         available = tuple(item for item in available if check(item.location.path))
-    if not available:
+    if not available and definition.programming.mode != "planner":
         return None
     return _degrade_calendar_for_available_media(replace(resolved, media=available))
 
@@ -207,7 +207,7 @@ def _resolved_runtime(
 
     try:
         return ChannelRuntime.open(resolved, store, transient=not (
-            persistent_when_complete and complete))
+            persistent_when_complete and (complete or definition.programming.mode=='planner')))
     except ChannelRuntimeError:
         # A temporarily smaller shuffle pool can invalidate a repeat-avoidance
         # promise even though the remaining media is perfectly playable. Relax
@@ -265,6 +265,8 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
             try:
                 decision = self._actions.runtime.status()
             except (ChannelRuntimeError, ValueError):
+                return None
+            if decision.viewer_selection.origin == "offair":
                 return None
             media = decision.viewer_selection.media
             if not _path_is_usable(media.location.path):
@@ -332,6 +334,9 @@ def install_media_resilience_support(broadcaster_qt_module: Any) -> None:
 
         def _recover_television_media(self, media):
             message = self._retire_missing_media(media)
+            number=self._actions.runtime.current_channel
+            if number is not None:
+                self._recovery_force_channels.add(number)
             result = self._publish_temporary_unavailable(f"{message}. Checking available programming…")
             self._request_media_recovery(restore_if_active=True)
             return {**result, 'pending': True}

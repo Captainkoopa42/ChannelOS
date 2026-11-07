@@ -37,6 +37,7 @@ PYTHON_COMPONENTS = (
     "PySide6_Addons",
     "shiboken6",
     "PyYAML",
+    "tzdata",
     "python-vlc",
 )
 EFFECTIVE_LICENSES = {
@@ -47,6 +48,7 @@ EFFECTIVE_LICENSES = {
     "pyside6_addons": "LGPL-3.0-only",
     "shiboken6": "LGPL-3.0-only",
     "pyyaml": "MIT",
+    "tzdata": "Apache-2.0",
     "python-vlc": "LGPL-2.1-or-later",
 }
 PROJECT_URLS = {
@@ -57,6 +59,7 @@ PROJECT_URLS = {
     "pyside6_addons": "https://www.qt.io/qt-for-python",
     "shiboken6": "https://www.qt.io/qt-for-python",
     "pyyaml": "https://pyyaml.org/",
+    "tzdata": "https://github.com/python/tzdata",
     "python-vlc": "https://wiki.videolan.org/PythonBinding",
 }
 
@@ -114,7 +117,7 @@ def download_locked_runtime(lock: dict[str, Any], cache_directory: Path) -> Path
         try:
             request = urllib.request.Request(
                 lock["download_url"],
-                headers={"User-Agent": "ChannelOS-Windows-Packager/0.0.6"},
+                headers={"User-Agent": "ChannelOS-Windows-Packager/0.0.7"},
             )
             with urllib.request.urlopen(request, timeout=120) as response:
                 with temporary.open("wb") as output:
@@ -276,7 +279,7 @@ def copy_release_documents(package_root: Path) -> None:
         output = licenses / Path(relative).name
         shutil.copy2(source, output)
 
-    for relative in ("docs/releases/v0.0.6-rc.4.md", "docs/releases/WINDOWS_0.0.6_ACCEPTANCE.md"):
+    for relative in ("docs/releases/v0.0.7-rc.1.md", "docs/releases/WINDOWS_0.0.7_ACCEPTANCE.md"):
         target = package_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(PROJECT_ROOT / relative, target)
@@ -382,6 +385,9 @@ def validate_package_root(package_root: Path) -> None:
         package_root / "_internal" / "channelos" / "qml" / "AdSettingsEditor.qml",
         package_root / "_internal" / "channelos" / "qml" / "AdMediaBin.qml",
         package_root / "_internal" / "channelos" / "qml" / "AdSources.js",
+        package_root / "_internal" / "channelos" / "qml" / "BroadcastPlannerScreen.qml",
+        package_root / "_internal" / "channelos" / "qml" / "PlannerDraft.js",
+        package_root / "_internal" / "tzdata" / "zoneinfo" / "America" / "Los_Angeles",
     )
     missing = [str(path.relative_to(package_root)) for path in required if not path.exists()]
     if missing:
@@ -501,7 +507,7 @@ def build_package(output_directory: Path, supplied_nupkg: Path | None = None) ->
     write_bom(package_root, lock, nupkg, vlc_inventory)
     validate_package_root(package_root)
 
-    archive_base = output_directory / "ChannelOS-0.0.6-windows-x64"
+    archive_base = output_directory / "ChannelOS-0.0.7-windows-x64"
     archive = Path(shutil.make_archive(str(archive_base), "zip", output_directory, "ChannelOS"))
     return archive
 

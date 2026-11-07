@@ -12,6 +12,7 @@ from PySide6.QtCore import (
     QObject,
     Property,
     Q_ARG,
+    QCoreApplication,
     QEvent,
     QMetaObject,
     QThread,
@@ -21,7 +22,7 @@ from PySide6.QtCore import (
     Slot,
     Qt,
 )
-from PySide6.QtGui import QColor, QGuiApplication, QIcon, QPalette, QWindow
+from PySide6.QtGui import QColor, QGuiApplication, QIcon, QKeyEvent, QPalette, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtQuickControls2 import QQuickStyle
@@ -1241,16 +1242,45 @@ class BroadcasterKeyFilter(CouchKeyFilter):
     def _invoke_overlay(item: QQuickItem | None, intent: ControlIntent) -> bool:
         if item is None:
             return False
+        argument_type='QString' if item.metaObject().indexOfMethod('handleControllerIntent(QString)')>=0 else 'QVariant'
         return bool(
             QMetaObject.invokeMethod(
                 item,
                 "handleControllerIntent",
                 Qt.ConnectionType.DirectConnection,
-                Q_ARG(str, intent.value),
+                Q_ARG(argument_type, intent.value),
             )
         )
 
     def dispatch_command(self, command: ControlCommand) -> bool:
+        notice = getattr(self._window, '_channelos_portable_notice', None)
+        if notice is not None and notice.isVisible():
+            self._invoke_overlay(notice, command.intent)
+            return True
+        if str(self._window.property('screen'))=='planner':
+            item = getattr(self._window,'_channelos_planner_item',None)
+            destinations = {ControlIntent.HOME:'home',ControlIntent.GUIDE:'guide',ControlIntent.SETTINGS:'settings',ControlIntent.LIBRARY:'library',ControlIntent.CHANNELS:'broadcaster'}
+            if item is not None and command.intent in destinations:
+                QMetaObject.invokeMethod(item,'requestExit',Qt.ConnectionType.DirectConnection,Q_ARG('QVariant',destinations[command.intent]))
+                return True
+            if command.intent in {ControlIntent.UP,ControlIntent.DOWN,ControlIntent.LEFT,ControlIntent.RIGHT,ControlIntent.SELECT}:
+                focus = QGuiApplication.focusObject()
+                name = focus.metaObject().className().lower() if focus else ''
+                direct = any(value in name for value in ('combobox','spinbox','listview')) or bool(focus and any(
+                    focus.inherits(value) for value in ('QQuickComboBox','QQuickSpinBox','QQuickListView')))
+                arrows = {ControlIntent.UP:Qt.Key.Key_Up,ControlIntent.DOWN:Qt.Key.Key_Down,ControlIntent.LEFT:Qt.Key.Key_Left,ControlIntent.RIGHT:Qt.Key.Key_Right}
+                modifiers = Qt.KeyboardModifier.NoModifier
+                if command.intent is ControlIntent.SELECT:
+                    key = Qt.Key.Key_Return if self._text_entry_has_focus() or direct else Qt.Key.Key_Space
+                elif direct:
+                    key = arrows[command.intent]
+                else:
+                    key = Qt.Key.Key_Tab
+                    if command.intent in {ControlIntent.UP,ControlIntent.LEFT}:
+                        modifiers = Qt.KeyboardModifier.ShiftModifier
+                QCoreApplication.sendEvent(self._window,QKeyEvent(QEvent.Type.KeyPress,key,modifiers))
+                QCoreApplication.sendEvent(self._window,QKeyEvent(QEvent.Type.KeyRelease,key,modifiers))
+                return True
         notice = getattr(self._window, '_channelos_portable_notice', None)
         if notice is not None and notice.isVisible():
             self._invoke_overlay(notice, command.intent)
@@ -1278,6 +1308,9 @@ class BroadcasterKeyFilter(CouchKeyFilter):
             return self._invoke_overlay(self._library_item, command.intent)
         if screen == "broadcaster" and command.intent in overlay_intents:
             return self._invoke_overlay(self._broadcaster_item, command.intent)
+        if screen == "planner" and command.intent in overlay_intents:
+            item = getattr(self._window, '_channelos_planner_item', None)
+            return self._invoke_overlay(item, command.intent)
         if screen == "studio" and command.intent in overlay_intents:
             return self._invoke_overlay(self._studio_item, command.intent)
         return super().dispatch_command(command)
@@ -1288,7 +1321,7 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         if focus is None:
             return False
         class_name = focus.metaObject().className().lower()
-        return any(
+        return any(focus.inherits(value) for value in ('QQuickTextInput','QQuickTextEdit','QQuickComboBox','QQuickSpinBox')) or any(
             marker in class_name
             for marker in (
                 "textinput",
@@ -1310,7 +1343,7 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         if (
             event.type() == QEvent.Type.KeyPress
             and str(self._window.property("screen"))
-            in {"broadcaster", "library", "studio"}
+            in {"broadcaster", "library", "studio", "planner"}
         ):
             command = self.command_for_key(event.key())
             if (
@@ -1434,6 +1467,7 @@ def run_qt(
         'library': ('LibraryScreen.qml', 85),
         'broadcaster': ('BroadcasterScreen.qml', 90),
         'studio': ('ChannelStudioScreen.qml', 92),
+        'planner': ('BroadcastPlannerScreen.qml', 93),
         'settings': ('SettingsScreen.qml', 95),
     }
     def ensure_management_screen():
@@ -1456,8 +1490,8 @@ def run_qt(
     from .couch_qt import connect_screen_changed
     connect_screen_changed(window, ensure_management_screen)
     ensure_management_screen()
-    app.installEventFilter(key_filter)
-    app.aboutToQuit.connect(lambda: app.removeEventFilter(key_filter))
+    window.installEventFilter(key_filter)
+    app.aboutToQuit.connect(lambda: window.removeEventFilter(key_filter))
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
     window._channelos_key_filter = key_filter

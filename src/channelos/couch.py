@@ -78,6 +78,7 @@ def run_couch(
         from .vlc_probe import install_packaged_media_scan_support
         from .portable_qt import install_portable_support
         from .channel_jobs import install_channel_operations_support
+        from .planner_qt import install_planner_support
         from .guide_projection import install_incremental_guide_support
         from .startup_qt import install_startup_support, launch
     except (ImportError, OSError) as exc:
@@ -91,6 +92,7 @@ def run_couch(
     install_media_resilience_support(broadcaster_qt)
     install_portable_support(broadcaster_qt)
     install_channel_operations_support(broadcaster_qt)
+    install_planner_support(broadcaster_qt)
     install_incremental_guide_support(broadcaster_qt)
     install_startup_support(broadcaster_qt)
     install_interaction_support(broadcaster_qt)

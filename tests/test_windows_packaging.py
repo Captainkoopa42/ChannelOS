@@ -157,6 +157,9 @@ def test_package_validation_compares_every_frozen_file(tmp_path: Path) -> None:
         "_internal/channelos/qml/AdSettingsEditor.qml",
         "_internal/channelos/qml/AdMediaBin.qml",
         "_internal/channelos/qml/AdSources.js",
+        "_internal/channelos/qml/BroadcastPlannerScreen.qml",
+        "_internal/channelos/qml/PlannerDraft.js",
+        "_internal/tzdata/zoneinfo/America/Los_Angeles",
     )
     for relative in required_files:
         path = tmp_path / relative

@@ -111,7 +111,7 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
         "preserve_episode_order": definition.programming.preserve_episode_order,
         "avoid_repeat_days": definition.programming.avoid_repeat_days,
     }
-    if definition.programming.mode == "calendar":
+    if definition.programming.mode in {"calendar", "planner"}:
         mapping["programming"]["filler_mode"] = (
             definition.programming.filler_mode
         )
@@ -119,8 +119,10 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
             _calendar_block_mapping(block)
             for block in definition.programming.calendar
         ]
+    if definition.programming.planner is not None:
+        mapping["programming"]["planner"] = definition.programming.planner.to_mapping()
     if (
-        definition.schema_version in {"0.4", "0.5", "0.6"}
+        definition.schema_version in {"0.4", "0.5", "0.6", "0.7"}
         and (definition.advertising.enabled
              or definition.advertising.sources
              or definition.advertising.asset_ids or definition.advertising.placements
@@ -138,7 +140,7 @@ def channel_to_mapping(definition: ChannelDefinition) -> dict[str, Any]:
             "break_duration_seconds": definition.advertising.break_duration_seconds,
             "priority": definition.advertising.priority,
         }
-        if definition.schema_version in {"0.5", "0.6"}:
+        if definition.schema_version in {"0.5", "0.6", "0.7"}:
             mapping["advertising"].update({
                 "asset_ids": list(definition.advertising.asset_ids),
                 "collection_id": definition.advertising.collection_id,
@@ -271,7 +273,7 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
     advanced_ads = bool(
         raw.get("adSetupMode", "advanced") != "advanced"
         or
-        raw.get("adConfigVersion") in {"0.5", "0.6"}
+        raw.get("adConfigVersion") in {"0.5", "0.6", "0.7"}
         or ad_asset_ids or ad_collection_id or ad_profile_id
         or raw.get("adBreakpointsSeconds")
         or raw.get("adIntervalSeconds")
@@ -283,7 +285,7 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
 
     mapping = {
         "schema_version": (
-            "0.6" if (any(block.get("adPlan") for block in calendar_raw)
+            "0.7" if mode == "planner" else "0.6" if (any(block.get("adPlan") for block in calendar_raw)
                        or has_advertising and raw.get("adSetupMode", "advanced") != "advanced") else "0.5"
             if has_advertising and advanced_ads
             else "0.4"
@@ -315,7 +317,9 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
             ),
         },
     }
-    if mode == "calendar":
+    if mode == "planner":
+        mapping["programming"]["planner"] = raw.get("planner")
+    if mode in {"calendar", "planner"}:
         mapping["programming"]["filler_mode"] = str(
             raw.get("fillerMode", "sequential")
         ).strip().lower()
@@ -366,7 +370,7 @@ def definition_from_editor(raw: dict[str, Any]) -> ChannelDefinition:
                 "collection_membership": raw.get("adCollectionMembership", "fixed"),
                 "excluded_asset_ids": raw.get("adExcludedAssetIds", []),
             })
-            if mapping["schema_version"] == "0.6":
+            if mapping["schema_version"] in {"0.6", "0.7"}:
                 settings.update(setup_mode=raw.get("adSetupMode", "after_show"),
                                 play_order=raw.get("adPlayOrder", "shuffle"),
                                 clock_interval_seconds=raw.get("adClockIntervalSeconds", 900),
@@ -549,11 +553,34 @@ class BroadcasterService:
             affected_by_root.setdefault(root_key, []).append(item)
             path_keys[location.path] = normalize_path(location.path)[1]
         channel_specs, assigned_collections = [], set()
+        active_planners={}
+        if any(r.definition.programming.planner for r in self.records) and self.runtime_database_path.is_file():
+            with closing(sqlite3.connect(self.runtime_database_path.resolve().as_uri()+'?mode=ro',uri=True)) as connection:
+                if connection.execute("SELECT 1 FROM sqlite_master WHERE name='planner_revisions'").fetchone():
+                    rows=connection.execute("SELECT channel_number,json_extract(payload,'$.sources'),json_extract(payload,'$.advertising') FROM planner_revisions WHERE status IN ('active','pending') AND activation_at<=? ORDER BY activation_at,applied_at",(datetime.now(timezone.utc).isoformat(),))
+                    for number,sources,advertising in rows:
+                        active_planners[number]=(decode_tree(json.loads(sources or '[]'),self.library.portable),
+                                                 decode_tree(json.loads(advertising or '{}'),self.library.portable))
+                    if connection.execute("SELECT 1 FROM sqlite_master WHERE name='planner_legacy'").fetchone():
+                        for number,sources,advertising in connection.execute("SELECT channel_number,json_extract(payload,'$.sources'),json_extract(payload,'$.advertising') FROM planner_legacy"):
+                            if number not in active_planners:
+                                active_planners[number]=(decode_tree(json.loads(sources or '[]'),self.library.portable),
+                                                         decode_tree(json.loads(advertising or '{}'),self.library.portable))
         for record in self.records:
             definition = record.definition
             policies = (definition.advertising,) + tuple(p.policy for p in definition.advertising.placements)
             groups = [tuple(s.path for s in definition.sources)] + [tuple(s.path for s in p.sources) for p in policies]
             explicit = {asset for policy in policies for asset in policy.asset_ids}
+            if definition.programming.planner:
+                explicit.update(asset for group in definition.programming.planner.groups for asset in group.asset_ids)
+                explicit.update(definition.programming.planner.filler_asset_ids)
+                if definition.channel in active_planners:
+                    previous_sources,previous_ads=active_planners[definition.channel]
+                    groups.append(tuple(Path(source['path']) for source in previous_sources))
+                    old_policies=[previous_ads]+[p.get('policy',{}) for p in previous_ads.get('placements',[])]
+                    for policy in old_policies:
+                        groups.append(tuple(Path(source['path']) for source in policy.get('sources',[])))
+                        explicit.update(policy.get('asset_ids',[]))
             for block in definition.programming.calendar:
                 explicit.add(block.asset_id)
                 if block.filler:
@@ -1236,13 +1263,14 @@ class BroadcasterService:
 
         return {
             "editingChannelNumber": definition.channel,
+            "planner": definition.programming.planner.to_mapping() if definition.programming.planner else None,
             "channel": definition.channel,
             "name": definition.name,
             "description": definition.description or "",
             "numberWidth": definition.presentation.number_width,
             "fillerMode": (
                 definition.programming.filler_mode
-                if definition.programming.mode == "calendar"
+                if definition.programming.mode in {"calendar","planner"}
                 else definition.programming.mode
             ),
             "avoidRepeatDays": definition.programming.avoid_repeat_days,
@@ -1592,7 +1620,7 @@ class BroadcasterService:
 
         if definition.programming.mode == "shuffle":
             ordered = deterministic_shuffle_order(resolved)
-        elif definition.programming.mode == "calendar":
+        elif definition.programming.mode in {"calendar", "planner"}:
             by_asset = {
                 media.asset.asset_id: media
                 for media in resolved.media
@@ -1615,7 +1643,7 @@ class BroadcasterService:
                     media.asset.duration_seconds or 0.0
                 ),
             }
-            if definition.programming.mode == "calendar":
+            if definition.programming.mode in {"calendar", "planner"}:
                 start = calendar_blocks[index].start_utc
                 item["startUtc"] = start.isoformat()
                 item["endUtc"] = (
@@ -1810,6 +1838,8 @@ class BroadcasterService:
 
     def _save_existing(self, existing: ChannelRecord, definition: ChannelDefinition,
                        assignment: ChannelAdAssignment | None = None) -> ChannelSaveResult:
+        if existing.definition.programming.planner and not definition.programming.planner:
+            raise ChannelValidationError('This is a Broadcast Planner channel. Edit it in Planner or Manual Studio so its progression, gates and pinned profiles are retained.')
         self._resolve_and_validate(definition)
         if not existing.path.exists():
             raise ChannelNotFoundError(
@@ -1827,6 +1857,14 @@ class BroadcasterService:
         previous_assignment = self.ad_catalog.get_assignment(definition.channel)
         try:
             self._atomic_write(existing.path, serialize_channel(definition, portable=self.library.portable))
+            if definition.programming.mode == 'planner' and existing.definition.programming.mode != 'planner':
+                from .runtime import RuntimeStore
+                legacy = channel_to_mapping(existing.definition)
+                if self.library.portable:
+                    legacy = path_tree(legacy,self.library.portable.encode)
+                with RuntimeStore(self.runtime_database_path).connect() as connection:
+                    connection.execute('INSERT OR REPLACE INTO planner_legacy VALUES(?,?,?)',
+                        (definition.channel,definition.programming.planner.start_at.isoformat(),json.dumps(legacy)))
             if assignment is not None and definition.advertising.setup_mode == "advanced":
                 self.ad_catalog.assign_channel(assignment)
             self.refresh()

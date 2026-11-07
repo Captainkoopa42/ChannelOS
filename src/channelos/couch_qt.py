@@ -330,6 +330,7 @@ class CouchController(QObject):
             "bootVideoSound": self._settings.boot_video_sound,
             "loadingStyle": self._settings.loading_style,
             "loadingStyleLabel": LOADING_STYLE_LABELS[self._settings.loading_style],
+            "bootSound": self._settings.boot_sound,
             "controllerLayout": self._settings.controller_layout,
             "controllerLayoutLabel": "Automatic" if self._settings.controller_layout == "auto"
                                      else family_by_id(self._settings.controller_layout)["name"],
@@ -1328,6 +1329,10 @@ class CouchController(QObject):
                 self._save_settings(replace(self._settings, boot_video=value))
                 hint = "" if self._boot_video_path() else " (choose a video to add My Video)"
                 return {"ok": True, "message": f"Boot video: {BOOT_VIDEO_LABELS[value]}{hint}", "settings": self.settings}
+            if name == "bootSound":
+                value = not self._settings.boot_sound
+                self._save_settings(replace(self._settings, boot_sound=value))
+                return {"ok": True, "message": f"Boot sound: {'On' if value else 'Off'}", "settings": self.settings}
             if name == "bootVideoSound":
                 value = not self._settings.boot_video_sound
                 self._save_settings(replace(self._settings, boot_video_sound=value))
@@ -1873,6 +1878,19 @@ class CouchController(QObject):
             return self._error(exc)
         self._apply_input_bindings()
         return {"ok": True, "message": "Keyboard keys are back to their defaults", "settings": self.settings}
+
+    @Slot(bool)
+    def bootSoundPreview(self, playing: bool) -> None:
+        """Settings → Preview Startup plays the boot jig too."""
+        from .boot_sound import BootSound
+        previous = getattr(self, "_boot_sound_preview", None)
+        if previous is not None:
+            previous.fade_out()
+            self._boot_sound_preview = None
+        if playing and self._settings.boot_sound and self._settings.boot_video != "custom":
+            volume = 0 if self._muted else self._volume
+            self._boot_sound_preview = BootSound(volume, False, parent=self)
+            self._boot_sound_preview.start()
 
     # --- Boot video -----------------------------------------------------------
 

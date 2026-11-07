@@ -98,6 +98,7 @@ class CouchSettings:
     boot_video_file: str = ""
     boot_video_sound: bool = True
     loading_style: str = "tv"
+    boot_sound: bool = True   # "Poppie" plays softly during start-up
     # Controller tab. Bindings hold only changes from the defaults, as sorted
     # (control, action) pairs so the settings object stays immutable.
     controller_layout: str = "auto"
@@ -278,6 +279,7 @@ class CouchSettings:
             boot_video=boot_video,
             boot_video_file=boot_video_file,
             boot_video_sound=bool(values.get("boot_video_sound", True)),
+            boot_sound=values.get("boot_sound", True) is not False,
             loading_style=loading_style,
             volume_percent=max(0, min(100, int(volume))),
             muted=muted,

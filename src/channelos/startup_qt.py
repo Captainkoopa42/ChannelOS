@@ -118,6 +118,8 @@ def boot_preferences(state_db) -> dict:
             logger.exception("Boot theme could not be prepared")
     return {"video": video, "videoPath": str(video_path) if video == "custom" else "",
             "sound": settings.boot_video_sound, "loadingStyle": settings.loading_style,
+            "bootSound": settings.boot_sound and video != "custom",
+            "volume": 0 if settings.muted else settings.volume_percent,
             "reducedMotion": settings.reduced_motion, "themeSpec": spec}
 
 
@@ -370,6 +372,27 @@ def install_startup_support(module):
     module.BroadcasterCouchController = StartupController
 
 
+def _finish_boot_sound_when_ready(app) -> None:
+    """End the boot jig (on its next "na") once the first channel is ready."""
+    sound = getattr(app, "_channelos_boot_sound", None)
+    if sound is None:
+        return
+    window = getattr(app, "_channelos_window", None)
+    controller = getattr(window, "_channelos_controller", None) if window is not None else None
+    state = getattr(controller, "startupState", None) if controller is not None else None
+    if not isinstance(state, dict) or not state.get("active") or state.get("firstReady") is not False:
+        sound.finish()
+        return
+
+    def changed():
+        current = controller.startupState
+        if not current.get("active") or current.get("firstReady") is not False:
+            controller.startupChanged.disconnect(changed)
+            sound.finish()
+
+    controller.startupChanged.connect(changed)
+
+
 def launch(module, paths, db, state_db, channels_dir, *, windowed=False):
     started = time.perf_counter()
     app = QApplication.instance()
@@ -503,6 +526,7 @@ def launch(module, paths, db, state_db, channels_dir, *, windowed=False):
             try:
                 service = GuideService((), definitions=tuple(record.definition for record in broadcaster.records))
                 module.run_qt(service, TelevisionRuntime((), store), library, broadcaster, store, windowed=windowed)
+                _finish_boot_sound_when_ready(app)
                 self.can_close = True
                 self.changed.emit()
                 window.close()
@@ -523,6 +547,14 @@ def launch(module, paths, db, state_db, channels_dir, *, windowed=False):
                 window.close()
 
     control = Bootstrap()
+    # The boot jig plays from the first frame until the first channel is ready.
+    boot_sound = None
+    if preferences.get("bootSound"):
+        from .boot_sound import BootSound
+        boot_sound = BootSound(int(preferences.get("volume", 0)), False, parent=app)
+        boot_sound.start()
+        app._channelos_boot_sound = boot_sound
+        app.aboutToQuit.connect(boot_sound.stop)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty('startupControl', control)
     boot_video_window = QWindow()

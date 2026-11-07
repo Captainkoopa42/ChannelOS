@@ -65,6 +65,7 @@ Item {
         { tab: "extras", key: "bootVideo", title: "Boot Video", detail: "What plays when ChannelOS starts: TV static, your own video, or nothing. Any button skips it." },
         { tab: "extras", key: "bootVideoFile", action: "Choose Video…", title: "My Boot Video", detail: "Pick a video to play at startup, like a console boot animation. It is copied into your setup." },
         { tab: "extras", key: "bootVideoSound", title: "Boot Video Sound", detail: "Play your boot video with sound, or silently." },
+        { tab: "extras", key: "bootSound", title: "Boot Sound", detail: "\u201cPoppie\u201d, a little jig that plays softly while ChannelOS starts and ends on its last note. Follows your volume and mute." },
         { tab: "extras", key: "loadingStyle", title: "Loading Style", detail: "Classic, a fill bar along the bottom, or the dancing ChannelOS TV. Reduced Motion uses the fill bar." },
         { tab: "extras", key: "bootPreview", action: "Preview", title: "Preview Startup", detail: "Watch the loading style without restarting." },
         { tab: "extras", key: "portable", action: "Copy / Open Setup", title: "Portable Setup & Backup", detail: "Copy channels, the media index, ad configuration and history to a drive as a backup or to take with you, or open a setup you copied earlier." },
@@ -183,7 +184,8 @@ Item {
         case "theme": return String(preferences.themeName || "ChannelOS")
         case "bootVideo": return String(preferences.bootVideoLabel || "TV Static")
         case "bootVideoSound": return onOff(preferences.bootVideoSound !== false)
-        case "loadingStyle": return String(preferences.loadingStyleLabel || "Classic")
+        case "loadingStyle": return String(preferences.loadingStyleLabel || "Dancing TV")
+        case "bootSound": return onOff(preferences.bootSound !== false)
         case "activeProfile":
             var chosen = chosenProfile()
             return profileTitles[chosen] + (chosen === String(profileInfo.id) ? "  (on)" : "  — Select to switch")
@@ -787,8 +789,15 @@ Item {
         modal: true
         closePolicy: Popup.CloseOnEscape
         property real fake: 0
-        onOpened: { fake = 0; previewRun.restart() }
-        onClosed: previewRun.stop()
+        onOpened: {
+            fake = 0
+            previewRun.restart()
+            if (channelOS && typeof channelOS.bootSoundPreview === "function") channelOS.bootSoundPreview(true)
+        }
+        onClosed: {
+            previewRun.stop()
+            if (channelOS && typeof channelOS.bootSoundPreview === "function") channelOS.bootSoundPreview(false)
+        }
         SequentialAnimation {
             id: previewRun
             NumberAnimation { target: bootPreview; property: "fake"; from: 0; to: 1; duration: 5200; easing.type: Easing.InOutQuad }

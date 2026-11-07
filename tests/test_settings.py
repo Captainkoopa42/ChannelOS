@@ -40,6 +40,7 @@ def test_settings_round_trip_to_separate_json_file(tmp_path) -> None:
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "artwork_cache_limit_mb": 0,
         "audio_output_device_id": "headphones-id",
+        "boot_sound": True,
         "boot_video": "static",
         "controller_bindings": {},
         "controller_layout": "auto",

@@ -172,7 +172,8 @@ Item {
         SequentialAnimation {
             loops: Animation.Infinite
             running: dance.visible && boot.running
-            NumberAnimation { target: dance; property: "beat"; from: 0; to: 1; duration: 620 }
+            // One hop every two beats of the boot jig (160 BPM).
+            NumberAnimation { target: dance; property: "beat"; from: 0; to: 1; duration: 750 }
             ScriptAction { script: dance.beats += 1 }
         }
         readonly property real hop: Math.sin(beat * Math.PI)                       // 0..1..0

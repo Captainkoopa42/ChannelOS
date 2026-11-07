@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Fusion")
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import QObject, QUrl
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent, QQmlExpression
 from PySide6.QtQuick import QQuickWindow
@@ -66,6 +66,15 @@ def test_shared_ad_editor_preserves_advanced_and_basic_modes_and_cancel():
         assert evaluate(engine, item, "editorObject()")["adPriority"] == 11
         assert evaluate(engine, item, "editorObject()")["adSetupMode"] == "advanced"
     finally:
+        # Destroy in a fixed order. A deleteLater() that never runs leaves the
+        # item parented to the window, and a later garbage collection then
+        # deletes it twice (seen as a segfault in a later Qt test).
         window.close()
+        item.setParentItem(None)
         item.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         app.processEvents()
+        del item, component
+        del window
+        engine.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)

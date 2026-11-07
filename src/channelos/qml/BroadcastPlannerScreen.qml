@@ -171,7 +171,10 @@ Item {
         Action { visible: buttons.showAccept; text: buttons.acceptText; highlighted: true; onClicked: buttons.accepted() }
     }
 
-    function ads() { return externalAds || adSettings }
+    // Standalone only: embedded, Studio's ad editor is used and this one is
+    // never created.
+    readonly property var ownAds: ownAdsLoader.item
+    function ads() { return externalAds || ownAds }
     function choiceLabel(choices, value) {
         var hit = choices.filter(function(c) { return c.value === value })[0]
         return hit ? hit.label : String(value)
@@ -356,7 +359,7 @@ Item {
         back()
     }
     function back() {
-        if(adSettings.dialogOpen) { adSettings.cancelActive(); return }
+        if(ownAds && ownAds.dialogOpen) { ownAds.cancelActive(); return }
         if(cycleDialog.visible) { cycleDialog.close(); return }
         if(sourcesDialog.visible) { sourcesDialog.close(); return }
         if(rulesDialog.visible) { rulesDialog.close(); return }
@@ -368,7 +371,7 @@ Item {
         else { channelOS.cancelPlannerTask(); if(hostWindow) hostWindow.screen=exitDestination }
     }
     function dialogOpen() {
-        return adSettings.dialogOpen || cycleDialog.visible || sourcesDialog.visible || rulesDialog.visible
+        return (ownAds ? ownAds.dialogOpen : false) || cycleDialog.visible || sourcesDialog.visible || rulesDialog.visible
                || pauseDialog.visible || layerDialog.visible || discardDialog.visible
     }
     function handleControllerIntent(intent) {
@@ -421,7 +424,7 @@ Item {
                 planner.profiles=result.profiles
                 planner.selectedTrack=planner.rules.tracks.length ? planner.rules.tracks[0].id : ""
                 planner.viewDate=planner.localParts(planner.rules.start_at, planner.rules.timezone).date || planner.viewDate
-                if (!planner.externalAds) adSettings.load(result.editor)
+                if (!planner.externalAds && planner.ownAds) planner.ownAds.load(result.editor)
                 planner.loaded=true
                 planner.dirty=false
                 planner.serial++
@@ -543,7 +546,7 @@ Item {
                     font.weight: Font.Bold
                 }
             }
-            Action { visible: !planner.embedded; text: "Ad Breaks"; onClicked: adSettings.openBasic() }
+            Action { visible: !planner.embedded; text: "Ad Breaks"; onClicked: if (planner.ownAds) planner.ownAds.openBasic() }
             Action { text: "Sources"; onClicked: sourcesDialog.open() }
             Action { text: "Channel Cycle"; onClicked: cycleDialog.open() }
             Action { text: "Rules"; onClicked: { rawRules.text=JSON.stringify(planner.rules,null,2); rulesDialog.open() } }
@@ -1001,7 +1004,18 @@ Item {
             elide: Text.ElideRight
         }
     }
-    AdSettingsEditor { id: adSettings; hostItem: planner; channelNumber: Number(planner.editor.channel || 1); channelName: String(planner.editor.name || "Channel"); mediaLibrary: planner.mediaRows; sourceOptions: planner.editor.sourceOptions || []; onSettingsApplied: planner.changed() }
+    Loader {
+        id: ownAdsLoader
+        active: !planner.embedded
+        sourceComponent: AdSettingsEditor {
+            hostItem: planner
+            channelNumber: Number(planner.editor.channel || 1)
+            channelName: String(planner.editor.name || "Channel")
+            mediaLibrary: planner.mediaRows
+            sourceOptions: planner.editor.sourceOptions || []
+            onSettingsApplied: planner.changed()
+        }
+    }
     PlannerDialog {
         id: discardDialog; title: "Leave this draft?"; width: 460
         ColumnLayout {

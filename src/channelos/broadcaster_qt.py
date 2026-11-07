@@ -625,7 +625,7 @@ class BroadcasterCouchController(CouchController):
         if not hasattr(self._actions, 'replace_lineup'):
             return self._reload_lineup_full(replacement_channel_number=replacement_channel_number)
         from .media_resilience import _resolved_runtime
-        previous = dict(self._actions.runtime.channels)
+        previous = getattr(self._actions, "full_channels", None) or self._actions.runtime.channels
         definitions = {record.channel_number: record.definition for record in self._broadcaster.records}
         changed = {number for number, definition in definitions.items()
                    if self._lineup_definitions.get(number) != definition}
@@ -652,7 +652,7 @@ class BroadcasterCouchController(CouchController):
             combined.update({number: runtime for number, runtime in replacements.items() if runtime is not None})
             service = GuideService(tuple(combined.values()), definitions=tuple(definitions.values()))
             self._actions.replace_lineup(service, tuple(combined.values()))
-            self._service = service
+            self._service = self._actions.service  # profile-filtered
             self._lineup_definitions = definitions
             self._lineup_library_revision = self._library.revision()
         except Exception:
@@ -738,11 +738,13 @@ class BroadcasterCouchController(CouchController):
         # object and presentation target above has been accepted.
         previous_actions = self._actions
         previous_actions.stop()
-        for runtime in previous_actions.runtime.channels.values():
+        for runtime in getattr(previous_actions, "full_channels", previous_actions.runtime.channels).values():
             if runtime.break_store is not None:
                 runtime.break_store.close()
 
-        self._service = service
+        if hasattr(actions, "set_channel_filter"):
+            actions.set_channel_filter(self._profile_channel_filter())
+        self._service = actions.service
         self._actions = actions
         self._snapshot = self._build_guide_snapshot()
         self._home_television = self._build_home_television_view()
@@ -1254,6 +1256,9 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         )
 
     def dispatch_command(self, command: ControlCommand) -> bool:
+        # Profile locks and the PIN pad come before any screen handling.
+        if self._profile_guard(command):
+            return True
         notice = getattr(self._window, '_channelos_portable_notice', None)
         if notice is not None and notice.isVisible():
             self._invoke_overlay(notice, command.intent)
@@ -1314,7 +1319,11 @@ class BroadcasterKeyFilter(CouchKeyFilter):
             return self._invoke_overlay(item, command.intent)
         if screen == "studio" and command.intent in overlay_intents:
             return self._invoke_overlay(self._studio_item, command.intent)
-        return super().dispatch_command(command)
+        self._profile_checked = True  # already guarded above
+        try:
+            return super().dispatch_command(command)
+        finally:
+            self._profile_checked = None
 
     @staticmethod
     def _text_entry_has_focus() -> bool:
@@ -1495,6 +1504,7 @@ def run_qt(
     app.aboutToQuit.connect(lambda: window.removeEventFilter(key_filter))
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
     window.guideLiveActivated.connect(key_filter.activateGuideLive)
+    window.pinSubmitted.connect(key_filter.submitPin)
     # Fill and stretch follow the video surface's shape.
     def report_video_size(*_args) -> None:
         controller.setVideoSurfaceSize(video_window.width(), video_window.height())

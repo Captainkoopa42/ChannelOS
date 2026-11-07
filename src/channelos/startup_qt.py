@@ -223,7 +223,7 @@ def install_startup_support(module):
             if not self._startup_first_ready:
                 self._actions.runtime = TelevisionRuntime(tuple(runtimes), self._runtime_store)
             self._actions.replace_lineup(service, tuple(runtimes))
-            self._service = service
+            self._service = self._actions.service  # profile-filtered
             self._lineup_definitions = {record.channel_number: record.definition for record in self._broadcaster.records}
             self._lineup_library_revision = self._library.revision()
             self.refresh()

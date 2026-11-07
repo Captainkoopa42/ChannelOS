@@ -53,8 +53,37 @@ class CouchActions:
             return None
         return self._last_decision
 
+    @property
+    def full_channels(self) -> dict:
+        """Every channel in the setup, including ones a profile hides."""
+        full = getattr(self, "_full_channels", None)
+        return dict(full) if full is not None else dict(self.runtime.channels)
+
+    def set_channel_filter(self, allowed) -> bool:
+        """Show only ``allowed`` channel numbers (None shows all).
+
+        Hidden channels keep running in the full lineup; the Guide, channel
+        up/down and tuning simply never see them.
+        """
+        if getattr(self, "_full_channels", None) is None:
+            self._full_service = self.service
+            self._full_channels = dict(self.runtime.channels)
+        self.channel_filter = None if allowed is None else frozenset(int(n) for n in allowed)
+        return self._install_lineup(self._full_service, tuple(self._full_channels.values()))
+
     def replace_lineup(self, service: GuideService, channels) -> bool:
         """Install a prepared delta without replacing an unaffected decoder."""
+        channels = tuple(channels)
+        self._full_service = service
+        self._full_channels = {channel.channel_number: channel for channel in channels}
+        return self._install_lineup(service, channels)
+
+    def _install_lineup(self, service: GuideService, channels) -> bool:
+        allowed = getattr(self, "channel_filter", None)
+        if allowed is not None:
+            channels = tuple(c for c in channels if c.channel_number in allowed)
+            service = GuideService(tuple(channels), definitions=tuple(
+                d for d in service.definitions if d.channel in allowed))
         by_number = {channel.channel_number: channel for channel in channels}
         current = self.runtime.current_channel
         active_changed = current is not None and by_number.get(current) is not self.runtime.channels.get(current)

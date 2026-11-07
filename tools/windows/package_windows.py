@@ -391,6 +391,8 @@ def validate_package_root(package_root: Path) -> None:
         package_root / "_internal" / "channelos" / "qml" / "PlannerMediaBin.qml",
         package_root / "_internal" / "channelos" / "qml" / "Theme.qml",
         package_root / "_internal" / "channelos" / "qml" / "BootScreen.qml",
+        package_root / "_internal" / "channelos" / "qml" / "ProfileEditor.qml",
+        package_root / "_internal" / "channelos" / "qml" / "PinPad.qml",
         package_root / "_internal" / "channelos" / "assets" / "mascot" / "body.png",
         package_root / "_internal" / "channelos" / "assets" / "mascot" / "antenna_left.png",
         package_root / "_internal" / "channelos" / "assets" / "mascot" / "antenna_right.png",

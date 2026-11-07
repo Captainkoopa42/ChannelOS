@@ -301,13 +301,13 @@ def test_settings_tabs_group_rows_and_switch_with_controls() -> None:
 
     try:
         tabs = evaluate("tabs.map(function(t) { return t.title })")
-        assert tabs == ["General", "Video & Audio", "Extras"]
+        assert tabs == ["General", "Video & Audio", "Extras", "Profiles"]
         keys = lambda: evaluate("settingsRows.map(function(r) { return r.key })")
         general = keys()
         assert general[0] == "displayMode" and "controllerEnabled" in general and "audioOutput" not in general
         # Every setting appears on exactly one tab.
         everything = evaluate("allRows.map(function(r) { return r.key })")
-        assert len(everything) == len(set(everything)) == 31
+        assert len(everything) == len(set(everything)) == 36
 
         host.settingsSelection = 3
         evaluate('handleControllerIntent("CHANNEL_UP")')
@@ -325,6 +325,9 @@ def test_settings_tabs_group_rows_and_switch_with_controls() -> None:
         assert evaluate("themeBuilderOpen")
         evaluate('handleControllerIntent("BACK")')
         assert not evaluate("themeBuilderOpen") and host.screen == "settings"
+        evaluate('handleControllerIntent("CHANNEL_UP")')
+        assert evaluate("currentTab") == 3
+        assert keys() == ["activeProfile", "profilePin", "editKids", "editDaycare", "editLobby"]
         evaluate('handleControllerIntent("CHANNEL_UP")')
         assert evaluate("currentTab") == 0, "tabs wrap around"
     finally:

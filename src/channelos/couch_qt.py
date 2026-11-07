@@ -54,6 +54,7 @@ from .settings import (
     SettingsStore,
 )
 from .television import TelevisionSession
+from .profiles import PROFILE_IDS, PROFILE_NAMES, VOLUME_LIMITS, ProfileStore, valid_pin
 from .themes import (
     CUSTOM_PREFIX,
     PRESETS,
@@ -147,6 +148,7 @@ class CouchController(QObject):
     settingsChanged = Signal()
     themeChanged = Signal()
     themesChanged = Signal()
+    profileChanged = Signal()
 
     def __init__(
         self,
@@ -210,6 +212,11 @@ class CouchController(QObject):
             )
         self._settings = self._settings_store.load()
         self._theme_store = ThemeStore(self._settings_store.path.parent / "themes")
+        self._profile_store = ProfileStore(self._settings_store.path.parent / "profiles.json")
+        self._profiles = self._profile_store.load()
+        if self._profile_channel_filter() is not None:
+            self._actions.set_channel_filter(self._profile_channel_filter())
+            self._service = self._actions.service
         self._theme_preview: dict[str, object] | None = None
         self._theme_palette_cache: dict[str, dict[str, str]] = {}
         if self._settings.theme.startswith("custom-") and self._theme_store.get(self._settings.theme) is None:
@@ -1238,9 +1245,10 @@ class CouchController(QObject):
     @Slot(int, result="QVariantMap")
     def changeVolume(self, delta: int) -> dict[str, object]:
         try:
+            limit = self._profiles.current.volume_limit
             volume = max(
                 0,
-                min(100, self._volume + int(delta)),
+                min(limit, self._volume + int(delta)),
             )
             self._save_settings(
                 replace(
@@ -1611,6 +1619,117 @@ class CouchController(QObject):
             return self._error(exc)
         return {"ok": True, "file": name, "url": self._image_url(name), "message": "Image added"}
 
+    # --- Profiles -------------------------------------------------------------
+
+    def _profile_channel_filter(self):
+        channels = self._profiles.current.channels
+        return None if channels is None else frozenset(channels)
+
+    def profile_allows_screen(self, screen: str) -> bool:
+        return self._profiles.current.allows_screen(screen)
+
+    @Property("QVariantMap", notify=profileChanged)
+    def profile(self) -> dict[str, object]:
+        current = self._profiles.current
+        return dict(current.to_mapping(), id=current.profile_id, name=current.name, hasPin=self._profiles.has_pin)
+
+    @Property("QVariantList", notify=profileChanged)
+    def profiles(self) -> list[dict[str, object]]:
+        return [dict(self._profiles.profiles[pid].to_mapping(), id=pid, name=PROFILE_NAMES[pid],
+                     active=pid == self._profiles.active) for pid in PROFILE_IDS]
+
+    @Property("QVariantList", notify=profileChanged)
+    def profileChannelChoices(self) -> list[dict[str, object]]:
+        """Every channel in the setup, for choosing what a profile shows."""
+        return [{"number": number, "name": record.definition.name}
+                for number, record in sorted((r.channel_number, r) for r in self._broadcaster_records())]
+
+    def _broadcaster_records(self):
+        broadcaster = getattr(self, "_broadcaster", None)
+        if broadcaster is not None:
+            return tuple(broadcaster.records)
+        return tuple(type("Record", (), {"channel_number": r.channel_number, "definition": r.channel.definition})
+                     for r in self._actions.full_channels.values())
+
+    def _apply_profile(self) -> None:
+        """Install the active profile: lineup, volume limit, then views."""
+        self._actions.set_channel_filter(self._profile_channel_filter())
+        self._service = self._actions.service
+        limit = self._profiles.current.volume_limit
+        if self._volume > limit:
+            self._save_settings(replace(self._settings, volume_percent=limit))
+            try:
+                self._apply_audio_state()
+            except (OSError, PlaybackError, ValueError):
+                logger.exception("Volume limit could not be applied")
+        self.refresh()
+        self.profileChanged.emit()
+
+    @Slot(str, result="QVariantMap")
+    def setProfilePin(self, pin: str) -> dict[str, object]:
+        if self._profiles.current.locked:
+            return {"ok": False, "message": "Leave this profile to change the PIN"}
+        try:
+            self._profiles = self._profile_store.save(ProfileStore.with_pin(self._profiles, str(pin)))
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+        self.profileChanged.emit()
+        return {"ok": True, "message": "PIN saved. Locked profiles now need it to leave."}
+
+    @Slot(str, result="QVariantMap")
+    def activateProfile(self, profile_id: str) -> dict[str, object]:
+        if profile_id not in PROFILE_IDS:
+            return {"ok": False, "message": "Unknown profile"}
+        if self._profiles.current.locked and profile_id != self._profiles.active:
+            return {"ok": False, "needPin": True, "message": "Enter the PIN to leave this profile"}
+        target = self._profiles.profiles[profile_id]
+        if target.locked and not self._profiles.has_pin:
+            return {"ok": False, "message": "Set a PIN first (Settings → Profiles), so you can leave again"}
+        if target.locked and target.channels == ():
+            return {"ok": False, "message": f"Choose channels for {target.name} first"}
+        from dataclasses import replace as dc_replace
+        try:
+            self._profiles = self._profile_store.save(dc_replace(self._profiles, active=profile_id))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_profile()
+        return {"ok": True, "message": f"{target.name} profile is on", "profile": self.profile}
+
+    @Slot(str, result="QVariantMap")
+    def unlockProfile(self, pin: str) -> dict[str, object]:
+        """The PIN pad: the right PIN leaves a locked profile for Home."""
+        if not self._profiles.current.locked:
+            return {"ok": True, "message": ""}
+        if not self._profiles.check_pin(str(pin)):
+            return {"ok": False, "message": "Wrong PIN"}
+        from dataclasses import replace as dc_replace
+        name = self._profiles.current.name
+        try:
+            self._profiles = self._profile_store.save(dc_replace(self._profiles, active="home"))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_profile()
+        return {"ok": True, "message": f"Left {name}. Home profile is on."}
+
+    @Slot(str, str, result="QVariantMap")
+    def updateProfile(self, profile_id: str, changes_json: str) -> dict[str, object]:
+        if self._profiles.current.locked:
+            return {"ok": False, "message": "Leave this profile to edit profiles"}
+        try:
+            changes = json.loads(changes_json)
+            if not isinstance(changes, dict):
+                raise ValueError("Profile changes must be an object")
+            self._profiles = self._profile_store.save(ProfileStore.updated(self._profiles, profile_id, changes))
+        except (OSError, TypeError, ValueError) as exc:
+            return self._error(exc)
+        self.profileChanged.emit()
+        return {"ok": True, "message": f"{PROFILE_NAMES.get(profile_id, profile_id)} profile saved",
+                "profile": dict(self._profiles.profiles[profile_id].to_mapping(), id=profile_id)}
+
+    @Property("QVariantList", constant=True)
+    def profileVolumeLimits(self) -> list[int]:
+        return list(VOLUME_LIMITS)
+
     # --- Boot video -----------------------------------------------------------
 
     def _boot_directory(self) -> Path:
@@ -1738,9 +1857,130 @@ class CouchKeyFilter(QObject):
         self._channel_digits = ""
         self._home_scan_dialog: QProgressDialog | None = None
         connect_screen_changed(window, self._channel_entry_screen_changed)
+        connect_screen_changed(window, self._guard_profile_screen)
+        self._allowed_screen = "home"
+        self._profile_checked = None
+        profile_changed = getattr(controller, "profileChanged", None)
+        if profile_changed is not None:
+            profile_changed.connect(self._profile_changed)
+            # A Lobby setup boots straight to its channel once video can play.
+            QTimer.singleShot(800, lambda: self._enter_profile_start(attempts=40))
         scan_changed = getattr(controller, "libraryScanChanged", None)
         if scan_changed is not None:
             scan_changed.connect(self._update_home_scan_dialog)
+
+    # --- Profiles -------------------------------------------------------------
+
+    def _current_profile(self):
+        profiles = getattr(self._controller, "_profiles", None)
+        return profiles.current if profiles is not None else None
+
+    def _show_pin_pad(self, reason: str = "") -> None:
+        profile = self._current_profile()
+        name = profile.name if profile is not None else "this profile"
+        self._window.setProperty("pinPadTitle", f"Enter PIN to leave {name}")
+        self._window.setProperty("pinPadReason", reason)
+        self._window.setProperty("pinPadVisible", True)
+
+    def _profile_guard(self, command: ControlCommand) -> bool:
+        """Locked profiles: ignore what they forbid, or ask for the PIN.
+
+        Returns True when the command was consumed here.
+        """
+        if self._profile_checked is True:
+            return False  # BroadcasterKeyFilter checked this command already
+        if bool(self._window.property("pinPadVisible")):
+            digit = command.value if command.intent is ControlIntent.DIGIT else -1
+            QMetaObject.invokeMethod(self._window, "handlePinIntent", Qt.ConnectionType.DirectConnection,
+                                     Q_ARG("QVariant", command.intent.value), Q_ARG("QVariant", digit))
+            return True
+        profile = self._current_profile()
+        if profile is None or not profile.locked:
+            return False
+        intent = command.intent
+        screen = str(self._window.property("screen"))
+        channel_intents = {ControlIntent.CHANNEL_UP, ControlIntent.CHANNEL_DOWN, ControlIntent.PREVIOUS_CHANNEL,
+                           ControlIntent.DIGIT, ControlIntent.TUNE}
+        seek_intents = {ControlIntent.SKIP_BACK, ControlIntent.SKIP_FORWARD, ControlIntent.REWIND,
+                        ControlIntent.FAST_FORWARD}
+        if intent is ControlIntent.SETTINGS or intent is ControlIntent.CHANNELS:
+            self._show_pin_pad()
+            return True
+        if intent is ControlIntent.POWER:
+            self._show_pin_pad("Closing ChannelOS needs the PIN")
+            return True
+        if intent is ControlIntent.HOME and not profile.home:
+            self._show_pin_pad()
+            return True
+        if intent is ControlIntent.BACK and screen in {"live", "ondemand"} and not profile.home:
+            return True  # Lobby stays on its channel
+        if intent is ControlIntent.GUIDE and not profile.guide:
+            self._notify({"message": f"The Guide is off in {profile.name}"})
+            return True
+        if intent is ControlIntent.LIBRARY and not profile.ondemand:
+            self._notify({"message": f"On Demand is off in {profile.name}"})
+            return True
+        if intent in channel_intents and not profile.change_channels:
+            self._notify({"message": f"Changing channels is off in {profile.name}"})
+            return True
+        if intent in seek_intents and not profile.seek and screen in {"live", "ondemand"}:
+            self._notify({"message": f"Skipping is off in {profile.name}"})
+            return True
+        return False
+
+    def _guard_profile_screen(self) -> None:
+        """Whatever opened a screen (key, click, QML), a locked profile
+        sends it back and asks for the PIN."""
+        screen = str(self._window.property("screen"))
+        profile = self._current_profile()
+        if profile is None or profile.allows_screen(screen):
+            self._allowed_screen = screen
+            return
+        fallback = self._allowed_screen if profile.allows_screen(self._allowed_screen) else (
+            "home" if profile.home else "live")
+        QTimer.singleShot(0, lambda: self._window.setProperty("screen", fallback))
+        self._show_pin_pad()
+
+    @Slot(str)
+    def submitPin(self, pin: str) -> None:
+        result = self._controller.unlockProfile(pin)
+        if bool(result.get("ok")):
+            self._window.setProperty("pinPadVisible", False)
+            self._notify(result)
+        else:
+            QMetaObject.invokeMethod(self._window, "pinRejected", Qt.ConnectionType.DirectConnection,
+                                     Q_ARG("QVariant", str(result.get("message", "Wrong PIN"))))
+
+    def _profile_changed(self) -> None:
+        self._controller.refresh()
+        profile = self._current_profile()
+        if profile is None:
+            return
+        screen = str(self._window.property("screen"))
+        if not profile.allows_screen(screen):
+            self._window.setProperty("screen", "home" if profile.home else "live")
+        self._enter_profile_start(attempts=10)
+
+    def _enter_profile_start(self, attempts: int) -> None:
+        """Profiles without Home (Lobby) play their channel full screen."""
+        profile = self._current_profile()
+        if profile is None or profile.home:
+            return
+        if not getattr(self._controller, "_surface_ready", False):
+            if attempts > 0:
+                QTimer.singleShot(1000, lambda: self._enter_profile_start(attempts - 1))
+            return
+        numbers = sorted(getattr(self._controller._actions.runtime, "channels", {}) or {})
+        if not numbers:
+            return
+        target = profile.boot_channel if profile.boot_channel in numbers else numbers[0]
+        playback = self._controller.playback if isinstance(self._controller.playback, dict) else {}
+        if bool(playback.get("active")) and int(playback.get("channelNumber", -1)) == target:
+            self._window.setProperty("screen", "live")
+            return
+        self._window.setProperty("screen", "live")
+        QApplication.processEvents()
+        self._notify(self._controller.tuneChannel(target))
 
     def _show_live_hud(self) -> None:
         # Show the Live information layer after tuning or transport/channel
@@ -2366,6 +2606,8 @@ class CouchKeyFilter(QObject):
     def dispatch_command(self, command: ControlCommand) -> bool:
         """Interpret a transport-neutral intent in the current UI context."""
 
+        if self._profile_guard(command):
+            return True
         intent = command.intent
         screen = str(self._window.property("screen"))
         if intent in {ControlIntent.TUNE, ControlIntent.CHANNEL_UP,
@@ -2489,6 +2731,11 @@ class CouchKeyFilter(QObject):
             settings_item = getattr(self._window, "_channelos_settings_item", None)
             if settings_item is None:
                 return self._go_home() if intent is ControlIntent.BACK else False
+            if intent is ControlIntent.DIGIT:
+                # Digits type into the Settings PIN pad when it is open.
+                QMetaObject.invokeMethod(settings_item, "handleDigit", Qt.ConnectionType.DirectConnection,
+                                         Q_ARG("QVariant", int(command.value or 0)))
+                return True
             QMetaObject.invokeMethod(settings_item, "handleControllerIntent",
                                      Qt.ConnectionType.DirectConnection,
                                      Q_ARG("QVariant", intent.value))
@@ -2917,6 +3164,7 @@ def run_qt(
     window.installEventFilter(key_filter)
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
     window.guideLiveActivated.connect(key_filter.activateGuideLive)
+    window.pinSubmitted.connect(key_filter.submitPin)
     # Fill and stretch follow the video surface's shape.
     def report_video_size(*_args) -> None:
         controller.setVideoSurfaceSize(video_window.width(), video_window.height())

@@ -128,13 +128,15 @@ checks are recorded separately in [Windows acceptance](releases/WINDOWS_0.0.6_AC
 
 ## Tabs
 
-Settings has three tabs, chosen in the sidebar or with Page Up / Page Down,
+Settings has four tabs, chosen in the sidebar or with Page Up / Page Down,
 the controller shoulder buttons or triggers (they wrap around):
 
 - **General**: display mode, performance profile, reduced motion, controller
   input, skip distances, artwork generation and cache, diagnostic logs, reset.
 - **Video & Audio**: audio output, volume, mute, and every picture setting.
-- **Extras**: theme, Theme Builder, and Portable Setup & Backup.
+- **Extras**: theme, Theme Builder, startup video and loading style, and
+  Portable Setup & Backup.
+- **Profiles**: switch profile, the PIN, and the Kids, Daycare and Lobby editors.
 
 Rows are keyed by name in `SettingsScreen.qml`, which also owns keyboard and
 controller navigation for this screen.
@@ -207,3 +209,35 @@ Settings → Extras controls what you see while ChannelOS starts.
 Progress is real: opening the setup, then the first channel, then the rest of
 the lineup. The loading screen stays up in the main window until the first
 channel is ready, then fades into Home.
+
+## Profiles
+
+The **Profiles** tab turns ChannelOS into a different set for a different
+room. Each profile chooses which channels exist, what the viewer can do, how
+loud it can go and, for Lobby, the channel it starts on.
+
+| Profile | Meant for | Defaults |
+| --- | --- | --- |
+| Home | You | Everything open. Never locked. |
+| Kids | Children at home | Only the channels you check. Guide and On Demand on. Volume limit 70%. |
+| Daycare | Groups of kids | Only the checked channels, no On Demand, no skipping: programs play as scheduled. Volume limit 60%. |
+| Lobby | Waiting rooms, shops, displays | Starts full screen on one channel. No Home, Guide, On Demand or channel changes. |
+
+- **PIN.** Set a 4 to 8 digit PIN first. Kids, Daycare and Lobby are locked:
+  leaving them, opening Settings or channel management, or closing ChannelOS
+  asks for it on an on-screen number pad that works with a remote, a
+  controller (arrows and Select), number keys or a mouse. The right PIN
+  returns to Home. The PIN is stored as a salted PBKDF2 hash in
+  `profiles.json` beside `settings.json`, so a portable setup keeps its
+  profiles.
+- **Edit.** Each locked profile has an editor: check its channels, switch the
+  Guide, On Demand, channel changing and skipping on or off, pick a volume
+  limit and (Lobby) the channel it starts on. Settings and channel management
+  always stay behind the PIN.
+- **Switch.** On *Switch Profile*, Left/Right chooses and Select switches. The
+  active profile is remembered across restarts, so a Lobby screen boots
+  straight back into its channel.
+- **On Demand** in Kids shows the whole library; turn it off for a profile
+  that should only see its channels.
+- The PIN locks ChannelOS itself. For a dedicated kiosk PC, pair Lobby with
+  Windows' assigned access so the computer also opens only ChannelOS.

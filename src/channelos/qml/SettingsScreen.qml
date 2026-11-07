@@ -32,7 +32,8 @@ Item {
     readonly property var tabs: [
         { key: "general", title: "General", detail: "Display, controls, performance and artwork" },
         { key: "media", title: "Video & Audio", detail: "Picture, sound and output device" },
-        { key: "extras", title: "Extras", detail: "Themes, startup and portable setups" }
+        { key: "extras", title: "Extras", detail: "Themes, startup and portable setups" },
+        { key: "profiles", title: "Profiles", detail: "Kids, Daycare and Lobby modes with a PIN lock" }
     ]
     readonly property var allRows: [
         { tab: "general", key: "displayMode", title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
@@ -65,13 +66,28 @@ Item {
         { tab: "extras", key: "bootVideoSound", title: "Boot Video Sound", detail: "Play your boot video with sound, or silently." },
         { tab: "extras", key: "loadingStyle", title: "Loading Style", detail: "Classic, a fill bar along the bottom, or the dancing ChannelOS TV. Reduced Motion uses the fill bar." },
         { tab: "extras", key: "bootPreview", action: "Preview", title: "Preview Startup", detail: "Watch the loading style without restarting." },
-        { tab: "extras", key: "portable", action: "Copy / Open Setup", title: "Portable Setup & Backup", detail: "Copy channels, the media index, ad configuration and history to a drive as a backup or to take with you, or open a setup you copied earlier." }
+        { tab: "extras", key: "portable", action: "Copy / Open Setup", title: "Portable Setup & Backup", detail: "Copy channels, the media index, ad configuration and history to a drive as a backup or to take with you, or open a setup you copied earlier." },
+        { tab: "profiles", key: "activeProfile", title: "Switch Profile", detail: "Left/Right to choose, Select to switch. Kids, Daycare and Lobby lock until the PIN is entered." },
+        { tab: "profiles", key: "profilePin", action: "Set PIN", title: "PIN", detail: "4 to 8 digits. Needed to leave a locked profile, open Settings or close ChannelOS from one." },
+        { tab: "profiles", key: "editKids", action: "Edit…", title: "Kids", detail: "The channels you choose for your kids, with a softer volume limit. Settings and channel tools stay locked." },
+        { tab: "profiles", key: "editDaycare", action: "Edit…", title: "Daycare", detail: "Like Kids, with no On Demand or skipping: programs play as scheduled." },
+        { tab: "profiles", key: "editLobby", action: "Edit…", title: "Lobby", detail: "Starts full screen on one channel with no menus, for waiting rooms, shops and displays." }
     ]
     property int currentTab: 0
     readonly property var settingsRows: allRows.filter(function(row) { return row.tab === tabs[currentTab].key })
     readonly property bool themeBuilderOpen: themeBuilder.visible
 
     function openThemeBuilder() { themeBuilder.openBuilder() }
+    // Profiles tab: the profile Left/Right points at before Select switches.
+    property string pendingProfile: ""
+    readonly property var profileInfo: channelOS && channelOS.profile ? channelOS.profile : ({ id: "home", name: "Home", hasPin: false })
+    readonly property var profileOrder: ["home", "kids", "daycare", "lobby"]
+    readonly property var profileTitles: ({ home: "Home", kids: "Kids", daycare: "Daycare", lobby: "Lobby" })
+    function chosenProfile() { return pendingProfile.length > 0 ? pendingProfile : String(profileInfo.id || "home") }
+    function handleDigit(digit) {
+        if (pinSetPopup.visible)
+            pinSetPad.handleIntent("DIGIT", Number(digit))
+    }
     function handleThemeBuilderIntent(intent) { themeBuilder.handleIntent(String(intent)) }
     function selectTab(index) {
         currentTab = (index + tabs.length) % tabs.length
@@ -160,6 +176,10 @@ Item {
         case "bootVideo": return String(preferences.bootVideoLabel || "TV Static")
         case "bootVideoSound": return onOff(preferences.bootVideoSound !== false)
         case "loadingStyle": return String(preferences.loadingStyleLabel || "Classic")
+        case "activeProfile":
+            var chosen = chosenProfile()
+            return profileTitles[chosen] + (chosen === String(profileInfo.id) ? "  (on)" : "  — Select to switch")
+        case "profilePin": return profileInfo.hasPin ? "Set" : "Not set"
         }
         if (String(key).indexOf("video") === 0)
             return String(preferences[key] || "Auto")
@@ -183,6 +203,11 @@ Item {
             return
         if (row.key === "displayMode") {
             changeDisplayMode(direction)
+            return
+        }
+        if (row.key === "activeProfile") {
+            var at = profileOrder.indexOf(chosenProfile())
+            pendingProfile = profileOrder[(at + direction + profileOrder.length) % profileOrder.length]
             return
         }
         showResult(channelOS.adjustSetting(row.key, direction))
@@ -210,7 +235,19 @@ Item {
             }
         } else if (row.key === "bootPreview") {
             bootPreview.open()
+        } else if (row.key === "profilePin") {
+            pinSetPad.firstPin = ""
+            pinSetPad.reset()
+            pinSetPopup.open()
+        } else if (row.key.indexOf("edit") === 0) {
+            profileEditor.openFor(row.key.slice(4).toLowerCase())
         }
+    }
+    function switchProfile() {
+        var target = chosenProfile()
+        var result = channelOS.activateProfile(target)
+        pendingProfile = ""
+        showResult(result)
     }
 
     function handleControllerIntent(intent) {
@@ -221,6 +258,14 @@ Item {
         }
         if (themeBuilder.visible) {
             themeBuilder.handleIntent(intent)
+            return
+        }
+        if (pinSetPopup.visible) {
+            pinSetPad.handleIntent(intent, -1)
+            return
+        }
+        if (profileEditor.visible) {
+            profileEditor.handleIntent(intent)
             return
         }
         if (portableSetupDialog.visible) {
@@ -256,7 +301,9 @@ Item {
             return
         }
         if (intent === "SELECT") {
-            if (row && row.action)
+            if (row && row.key === "activeProfile")
+                switchProfile()
+            else if (row && row.action)
                 activateAction(row)
             else
                 adjust(row, 1)
@@ -637,6 +684,53 @@ Item {
 
     ThemeBuilder {
         id: themeBuilder
+    }
+
+    ProfileEditor {
+        id: profileEditor
+        onSaved: function(result) { settingsRoot.showResult(result) }
+    }
+
+    // Set or change the PIN: enter it, then once more to confirm.
+    Popup {
+        id: pinSetPopup
+        objectName: "pinSetPopup"
+        parent: Overlay.overlay
+        x: 0
+        y: 0
+        width: parent ? parent.width : 1280
+        height: parent ? parent.height : 720
+        padding: 0
+        modal: true
+        closePolicy: Popup.CloseOnEscape
+        background: Item {}
+        contentItem: PinPad {
+            id: pinSetPad
+            property string firstPin: ""
+            title: firstPin.length > 0 ? "Enter the same PIN again" : (settingsRoot.profileInfo.hasPin ? "Choose a new PIN" : "Choose a PIN")
+            reason: firstPin.length > 0 ? "" : "4 to 8 digits. Keep it somewhere safe: it is the way out of Kids, Daycare and Lobby."
+            onSubmitted: function(pin) {
+                if (firstPin.length === 0) {
+                    firstPin = pin
+                    reset()
+                    return
+                }
+                if (pin !== firstPin) {
+                    firstPin = ""
+                    rejected("Those PINs did not match. Start again.")
+                    return
+                }
+                var result = channelOS.setProfilePin(pin)
+                firstPin = ""
+                if (result && result.ok) {
+                    pinSetPopup.close()
+                    settingsRoot.showResult(result)
+                } else {
+                    rejected(result ? result.message : "PIN not saved")
+                }
+            }
+            onCancelled: { firstPin = ""; pinSetPopup.close() }
+        }
     }
 
     // Startup preview: the chosen loading style running through a full boot.

@@ -42,6 +42,25 @@ ApplicationWindow {
     property int guidePublication: 0
     readonly property var startupState: channelOS && typeof channelOS.startupState !== "undefined"
                                        ? channelOS.startupState : ({active: false})
+    // Profiles: the PIN pad to leave a locked profile (CouchKeyFilter routes
+    // remote input here while it is open).
+    property bool pinPadVisible: false
+    property string pinPadTitle: "Enter PIN"
+    property string pinPadReason: ""
+    signal pinSubmitted(string pin)
+    onPinPadVisibleChanged: if (pinPadVisible) pinPad.reset()
+    function handlePinIntent(intent, digit) { return pinPad.handleIntent(intent, Number(digit)) }
+    function pinRejected(message) { pinPad.rejected(message) }
+    PinPad {
+        id: pinPad
+        anchors.fill: parent
+        z: 390
+        visible: root.pinPadVisible
+        title: root.pinPadTitle
+        reason: root.pinPadReason
+        onSubmitted: function(pin) { root.pinSubmitted(pin) }
+        onCancelled: root.pinPadVisible = false
+    }
     // Boot continues here until the first channel is ready, then fades away.
     BootScreen {
         id: mainBoot

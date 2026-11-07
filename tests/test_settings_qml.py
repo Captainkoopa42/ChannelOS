@@ -307,7 +307,7 @@ def test_settings_tabs_group_rows_and_switch_with_controls() -> None:
         assert general[0] == "displayMode" and "controllerEnabled" in general and "audioOutput" not in general
         # Every setting appears on exactly one tab.
         everything = evaluate("allRows.map(function(r) { return r.key })")
-        assert len(everything) == len(set(everything)) == 26
+        assert len(everything) == len(set(everything)) == 31
 
         host.settingsSelection = 3
         evaluate('handleControllerIntent("CHANNEL_UP")')
@@ -319,7 +319,7 @@ def test_settings_tabs_group_rows_and_switch_with_controls() -> None:
         assert host.statusMessage == "adjusted volume 1"
 
         evaluate('handleControllerIntent("FAST_FORWARD")')
-        assert keys() == ["theme", "themeBuilder", "portable"]
+        assert keys() == ["theme", "themeBuilder", "bootVideo", "bootVideoFile", "bootVideoSound", "loadingStyle", "bootPreview", "portable"]
         evaluate('handleControllerIntent("DOWN")')
         evaluate('handleControllerIntent("SELECT")')
         assert evaluate("themeBuilderOpen")

@@ -32,7 +32,7 @@ Item {
     readonly property var tabs: [
         { key: "general", title: "General", detail: "Display, controls, performance and artwork" },
         { key: "media", title: "Video & Audio", detail: "Picture, sound and output device" },
-        { key: "extras", title: "Extras", detail: "Themes, Theme Builder and portable setups" }
+        { key: "extras", title: "Extras", detail: "Themes, startup and portable setups" }
     ]
     readonly property var allRows: [
         { tab: "general", key: "displayMode", title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
@@ -60,6 +60,11 @@ Item {
         { tab: "media", key: "videoSaturation", title: "Color Saturation", detail: "Picture color intensity for every program." },
         { tab: "extras", key: "theme", title: "Theme", detail: "Change the look of ChannelOS. Themes you make in the Theme Builder appear here too." },
         { tab: "extras", key: "themeBuilder", action: "Open Theme Builder", title: "Theme Builder", detail: "Make your own theme: pick every color, add a wallpaper image, and preview it live." },
+        { tab: "extras", key: "bootVideo", title: "Boot Video", detail: "What plays when ChannelOS starts: TV static, your own video, or nothing. Any button skips it." },
+        { tab: "extras", key: "bootVideoFile", action: "Choose Video…", title: "My Boot Video", detail: "Pick a video to play at startup, like a console boot animation. It is copied into your setup." },
+        { tab: "extras", key: "bootVideoSound", title: "Boot Video Sound", detail: "Play your boot video with sound, or silently." },
+        { tab: "extras", key: "loadingStyle", title: "Loading Style", detail: "Classic, a fill bar along the bottom, or the dancing ChannelOS TV. Reduced Motion uses the fill bar." },
+        { tab: "extras", key: "bootPreview", action: "Preview", title: "Preview Startup", detail: "Watch the loading style without restarting." },
         { tab: "extras", key: "portable", action: "Copy / Open Setup", title: "Portable Setup & Backup", detail: "Copy channels, the media index, ad configuration and history to a drive as a backup or to take with you, or open a setup you copied earlier." }
     ]
     property int currentTab: 0
@@ -152,6 +157,9 @@ Item {
         case "reducedMotion": return onOff(preferences.reducedMotion)
         case "controllerEnabled": return onOff(preferences.controllerEnabled)
         case "theme": return String(preferences.themeName || "ChannelOS")
+        case "bootVideo": return String(preferences.bootVideoLabel || "TV Static")
+        case "bootVideoSound": return onOff(preferences.bootVideoSound !== false)
+        case "loadingStyle": return String(preferences.loadingStyleLabel || "Classic")
         }
         if (String(key).indexOf("video") === 0)
             return String(preferences[key] || "Auto")
@@ -195,11 +203,22 @@ Item {
             Qt.callLater(applyDisplayMode)
         } else if (row.key === "portable") {
             portableSetupDialog.open()
+        } else if (row.key === "bootVideoFile") {
+            if (typeof channelOS.chooseBootVideo === "function") {
+                var result = channelOS.chooseBootVideo()
+                if (!result.cancelled) showResult(result)
+            }
+        } else if (row.key === "bootPreview") {
+            bootPreview.open()
         }
     }
 
     function handleControllerIntent(intent) {
         intent = String(intent)
+        if (bootPreview.visible) {
+            bootPreview.close()
+            return
+        }
         if (themeBuilder.visible) {
             themeBuilder.handleIntent(intent)
             return
@@ -618,5 +637,54 @@ Item {
 
     ThemeBuilder {
         id: themeBuilder
+    }
+
+    // Startup preview: the chosen loading style running through a full boot.
+    Popup {
+        id: bootPreview
+        objectName: "bootPreview"
+        parent: Overlay.overlay
+        x: 0
+        y: 0
+        width: parent ? parent.width : 1280
+        height: parent ? parent.height : 720
+        padding: 0
+        modal: true
+        closePolicy: Popup.CloseOnEscape
+        property real fake: 0
+        onOpened: { fake = 0; previewRun.restart() }
+        onClosed: previewRun.stop()
+        SequentialAnimation {
+            id: previewRun
+            NumberAnimation { target: bootPreview; property: "fake"; from: 0; to: 1; duration: 5200; easing.type: Easing.InOutQuad }
+            PauseAnimation { duration: 900 }
+            ScriptAction { script: bootPreview.close() }
+        }
+        contentItem: BootScreen {
+            loadingStyle: String(settingsRoot.preferences.loadingStyle || "classic")
+            showStatic: String(settingsRoot.preferences.bootVideo || "static") !== "off"
+            reducedMotion: Boolean(settingsRoot.preferences.reducedMotion)
+            progress: bootPreview.fake
+            message: bootPreview.fake < 0.4 ? "Opening your ChannelOS setup…" : bootPreview.fake < 0.8 ? "Tuning in…" : "Loading the rest of your channels…"
+            running: bootPreview.visible
+            Text {
+                anchors.top: parent.top
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.topMargin: 28
+                visible: String(settingsRoot.preferences.bootVideo) === "custom"
+                text: "Your boot video plays first, then this"
+                color: Theme.v("#c8d4e2")
+                font.pixelSize: 16
+            }
+            Text {
+                anchors.bottom: parent.bottom
+                anchors.right: parent.right
+                anchors.margins: 24
+                text: "Preview  •  any button closes"
+                color: Theme.v("#9fb0c2")
+                font.pixelSize: 13
+            }
+            MouseArea { anchors.fill: parent; onClicked: bootPreview.close() }
+        }
     }
 }

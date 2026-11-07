@@ -43,6 +43,8 @@ from .runtime import (
 )
 from .settings import (
     ARTWORK_CACHE_LIMIT_CHOICES_MB,
+    BOOT_VIDEO_CHOICES,
+    LOADING_STYLE_CHOICES,
     PERFORMANCE_PROFILES,
     SKIP_BACK_CHOICES,
     SKIP_FORWARD_CHOICES,
@@ -82,6 +84,9 @@ VIDEO_VALUE_LABELS = {
     "off": "Off", "yadif": "Yadif", "yadif2x": "Yadif 2x", "bob": "Bob", "blend": "Blend", "linear": "Linear",
 }
 THEME_LABELS = {"channelos": "ChannelOS", "chromespace": "ChromeSpace"}
+BOOT_VIDEO_LABELS = {"static": "TV Static", "custom": "My Video", "off": "Off"}
+LOADING_STYLE_LABELS = {"classic": "Classic", "bar": "Fill Bar", "tv": "Dancing TV"}
+BOOT_VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".wmv", ".mpg", ".mpeg", ".gif"}
 
 
 def video_value_label(field: str, value: object) -> str:
@@ -307,6 +312,12 @@ class CouchController(QObject):
             },
             "theme": self._settings.theme,
             "themeName": self._theme_name(self._settings.theme),
+            "bootVideo": self._settings.boot_video,
+            "bootVideoLabel": BOOT_VIDEO_LABELS[self._settings.boot_video],
+            "bootVideoFile": self._settings.boot_video_file,
+            "bootVideoSound": self._settings.boot_video_sound,
+            "loadingStyle": self._settings.loading_style,
+            "loadingStyleLabel": LOADING_STYLE_LABELS[self._settings.loading_style],
         }
 
     def _audio_output_device_name(self) -> str:
@@ -1289,6 +1300,21 @@ class CouchController(QObject):
                     message += " (from the next program)"
                 self._save_settings(settings)
                 return {"ok": True, "message": message, "settings": self.settings}
+            if name == "bootVideo":
+                choices = tuple(c for c in BOOT_VIDEO_CHOICES if c != "custom" or self._boot_video_path())
+                current = self._settings.boot_video if self._settings.boot_video in choices else "static"
+                value = self._cycle_choice(current, choices, step)
+                self._save_settings(replace(self._settings, boot_video=value))
+                hint = "" if self._boot_video_path() else " (choose a video to add My Video)"
+                return {"ok": True, "message": f"Boot video: {BOOT_VIDEO_LABELS[value]}{hint}", "settings": self.settings}
+            if name == "bootVideoSound":
+                value = not self._settings.boot_video_sound
+                self._save_settings(replace(self._settings, boot_video_sound=value))
+                return {"ok": True, "message": f"Boot video sound: {'On' if value else 'Off'}", "settings": self.settings}
+            if name == "loadingStyle":
+                value = self._cycle_choice(self._settings.loading_style, LOADING_STYLE_CHOICES, step)
+                self._save_settings(replace(self._settings, loading_style=value))
+                return {"ok": True, "message": f"Loading style: {LOADING_STYLE_LABELS[value]}", "settings": self.settings}
             if name == "theme":
                 choices = tuple(THEME_CHOICES) + tuple(t.theme_id for t in self._theme_store.load())
                 current = self._settings.theme if self._settings.theme in choices else "channelos"
@@ -1584,6 +1610,58 @@ class CouchController(QObject):
         except (OSError, ValueError) as exc:
             return self._error(exc)
         return {"ok": True, "file": name, "url": self._image_url(name), "message": "Image added"}
+
+    # --- Boot video -----------------------------------------------------------
+
+    def _boot_directory(self) -> Path:
+        return self._settings_store.path.parent / "boot"
+
+    def _boot_video_path(self) -> Path | None:
+        name = self._settings.boot_video_file
+        path = self._boot_directory() / name if name else None
+        return path if path is not None and path.is_file() else None
+
+    @Slot(result="QVariantMap")
+    def chooseBootVideo(self) -> dict[str, object]:
+        """Pick a boot video; it is copied into the setup's boot folder."""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            None, "Choose a boot video", str(Path.home()),
+            "Videos (*.mp4 *.mkv *.webm *.mov *.avi *.m4v *.wmv *.mpg *.mpeg *.gif)")
+        if not path:
+            return {"ok": False, "cancelled": True, "message": ""}
+        return self.importBootVideo(path)
+
+    @Slot(str, result="QVariantMap")
+    def importBootVideo(self, path: str) -> dict[str, object]:
+        import shutil
+        import uuid
+        source = Path(path)
+        try:
+            if source.suffix.lower() not in BOOT_VIDEO_SUFFIXES:
+                raise ValueError("Choose a video file such as MP4, MKV, WebM or MOV")
+            if not source.is_file():
+                raise ValueError(f"Video not found: {source}")
+            if source.stat().st_size > 500 * 1024 * 1024:
+                raise ValueError("That video is over 500 MB. Choose a shorter boot video.")
+            directory = self._boot_directory()
+            directory.mkdir(parents=True, exist_ok=True)
+            name = f"boot-{uuid.uuid4().hex[:10]}{source.suffix.lower()}"
+            shutil.copyfile(source, directory / name)
+            previous = self._boot_video_path()
+            self._save_settings(replace(self._settings, boot_video="custom", boot_video_file=name))
+            if previous is not None and previous.name != name:
+                previous.unlink(missing_ok=True)
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+        return {"ok": True, "message": f"Boot video set: {source.name}", "settings": self.settings}
+
+    @Slot(result="QVariantMap")
+    def bootPreview(self) -> dict[str, object]:
+        """What the Settings preview plays: the boot video URL, if any."""
+        path = self._boot_video_path() if self._settings.boot_video == "custom" else None
+        return {"video": self._settings.boot_video, "url": QUrl.fromLocalFile(str(path)).toString() if path else "",
+                "loadingStyle": self._settings.loading_style}
 
     @Slot(int, int)
     def setVideoSurfaceSize(self, width: int, height: int) -> None:

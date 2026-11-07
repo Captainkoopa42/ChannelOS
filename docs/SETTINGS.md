@@ -182,3 +182,28 @@ theme you build.
 
 On-screen displays drawn over video keep the dark broadcast style in every
 theme, so they stay readable on any picture.
+
+## Startup
+
+Settings → Extras controls what you see while ChannelOS starts.
+
+- **Boot Video**: *TV Static* (the first-boot default), *My Video*, or *Off*.
+  The video plays on every launch while the setup opens behind it, so it never
+  adds waiting time. Any key, click or tap skips it. If the setup is ready first,
+  the video still plays to its end (or until skipped); if the video ends first,
+  the loading style takes over. Videos are capped at two minutes on screen.
+- **My Boot Video**: choose any video VLC plays (MP4, MKV, WebM, MOV, ...; up to
+  500 MB). It is copied into the setup's `boot` folder, so it travels with a
+  portable drive. A missing or unplayable file falls back to TV Static.
+- **Boot Video Sound**: play it with or without sound.
+- **Loading Style**: *Classic* (wordmark and progress line), *Fill Bar* (a
+  full-width bar along the bottom with a percentage), or *Dancing TV* (the app
+  icon hops to a beat, its antennas spring, the power light blinks, and the
+  guide rows on its screen light up as startup progresses). Reduced Motion
+  shows the fill bar instead of the dancing TV.
+- **Preview Startup** runs the chosen style through a full boot without
+  restarting.
+
+Progress is real: opening the setup, then the first channel, then the rest of
+the lineup. The loading screen stays up in the main window until the first
+channel is ready, then fades into Home.

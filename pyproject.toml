@@ -39,7 +39,7 @@ channelos-couch = "channelos.couch:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-channelos = ["qml/*.qml", "qml/*.js", "qml/qmldir"]
+channelos = ["qml/*.qml", "qml/*.js", "qml/qmldir", "assets/*.png", "assets/mascot/*.png"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

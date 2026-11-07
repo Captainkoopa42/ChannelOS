@@ -25,3 +25,4 @@ PortableSetupDialog 1.0 PortableSetupDialog.qml
 SettingsScreen 1.0 SettingsScreen.qml
 StartupWindow 1.0 StartupWindow.qml
 ThemeBuilder 1.0 ThemeBuilder.qml
+BootScreen 1.0 BootScreen.qml

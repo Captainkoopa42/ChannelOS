@@ -31,6 +31,8 @@ ARTWORK_CACHE_LIMIT_CHOICES_MB = (0, 128, 256, 512, 1024, 2048)
 THUMBNAIL_WIDTH_CHOICES = (320, 480, 640)
 FFMPEG_THREAD_CHOICES = (0, 1, 2)
 THEME_CHOICES = ("channelos", "chromespace")
+BOOT_VIDEO_CHOICES = ("static", "custom", "off")
+LOADING_STYLE_CHOICES = ("classic", "bar", "tv")
 
 # Persisted name -> (choices, default). Values outside the choices fall back
 # to the default, so an edited or older settings file can never break playback.
@@ -91,6 +93,11 @@ class CouchSettings:
     video_contrast: int = 100
     video_saturation: int = 100
     theme: str = "channelos"
+    # Boot: "static" TV noise (default), a "custom" video, or "off".
+    boot_video: str = "static"
+    boot_video_file: str = ""
+    boot_video_sound: bool = True
+    loading_style: str = "classic"
 
     @property
     def video(self) -> VideoSettings:
@@ -237,9 +244,21 @@ class CouchSettings:
         ):
             theme = "channelos"
 
+        boot_video = str(values.get("boot_video", "static"))
+        boot_video_file = Path(str(values.get("boot_video_file", "") or "")).name
+        if boot_video not in BOOT_VIDEO_CHOICES or (boot_video == "custom" and not boot_video_file):
+            boot_video = "static"
+        loading_style = str(values.get("loading_style", "classic"))
+        if loading_style not in LOADING_STYLE_CHOICES:
+            loading_style = "classic"
+
         return cls(
             **video,
             theme=theme,
+            boot_video=boot_video,
+            boot_video_file=boot_video_file,
+            boot_video_sound=bool(values.get("boot_video_sound", True)),
+            loading_style=loading_style,
             volume_percent=max(0, min(100, int(volume))),
             muted=muted,
             audio_output_device_id=audio_output_device_id,

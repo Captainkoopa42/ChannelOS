@@ -42,6 +42,22 @@ ApplicationWindow {
     property int guidePublication: 0
     readonly property var startupState: channelOS && typeof channelOS.startupState !== "undefined"
                                        ? channelOS.startupState : ({active: false})
+    // Boot continues here until the first channel is ready, then fades away.
+    BootScreen {
+        id: mainBoot
+        objectName: "mainBootScreen"
+        anchors.fill: parent
+        z: 400
+        readonly property bool wanted: Boolean(root.startupState.active) && root.startupState.firstReady === false
+        visible: opacity > 0
+        opacity: wanted ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 420 } }
+        loadingStyle: String(root.settingsSnapshot.loadingStyle || "classic")
+        showStatic: String(root.settingsSnapshot.bootVideo || "static") !== "off"
+        reducedMotion: Boolean(root.settingsSnapshot.reducedMotion)
+        progress: Number(root.startupState.progress || 0)
+        message: String(root.startupState.message || "Tuning in…")
+    }
     Rectangle {
         z: 350
         anchors.horizontalCenter: parent.horizontalCenter

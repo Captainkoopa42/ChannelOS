@@ -256,7 +256,10 @@ def install_startup_support(module):
             thread.finished.connect(self._startup_finished)
             thread.finished.connect(thread.deleteLater)
             self._startup_thread, self._startup_worker = thread, worker
-            thread.start(QThread.Priority.LowPriority)
+            # Normal priority: during boot the animated loading screen keeps the
+            # GUI thread busy, and a low-priority loader was starved for many
+            # seconds on CPUs without a GPU (Windows CI).
+            thread.start(QThread.Priority.NormalPriority)
 
         def _publish_startup(self, runtimes):
             service = GuideService(tuple(runtimes), definitions=tuple(record.definition for record in self._broadcaster.records))
@@ -544,7 +547,7 @@ def launch(module, paths, db, state_db, channels_dir, *, windowed=False):
     worker.finished.connect(worker.deleteLater)
     thread.finished.connect(lambda: relay.post(control.finished), Qt.ConnectionType.DirectConnection)
     app._channelos_bootstrap = (engine, window, control, worker, thread, boot_video_window, relay)
-    thread.start(QThread.Priority.LowPriority)
+    thread.start(QThread.Priority.NormalPriority)  # see StartupController.startDataLoading
     if not owns_application: return 0
     result = int(app.exec())
     control.cancel.set()

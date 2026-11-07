@@ -128,7 +128,7 @@ checks are recorded separately in [Windows acceptance](releases/WINDOWS_0.0.6_AC
 
 ## Tabs
 
-Settings has four tabs, chosen in the sidebar or with Page Up / Page Down,
+Settings has five tabs, chosen in the sidebar or with Page Up / Page Down,
 the controller shoulder buttons or triggers (they wrap around):
 
 - **General**: display mode, performance profile, reduced motion, controller
@@ -136,6 +136,8 @@ the controller shoulder buttons or triggers (they wrap around):
 - **Video & Audio**: audio output, volume, mute, and every picture setting.
 - **Extras**: theme, Theme Builder, startup video and loading style, and
   Portable Setup & Backup.
+- **Controller**: controller input, layout, Button Mapper, Keyboard Mapper and
+  Dedicated Controller Mode.
 - **Profiles**: switch profile, the PIN, and the Kids, Daycare and Lobby editors.
 
 Rows are keyed by name in `SettingsScreen.qml`, which also owns keyboard and
@@ -241,3 +243,16 @@ loud it can go and, for Lobby, the channel it starts on.
   that should only see its channels.
 - The PIN locks ChannelOS itself. For a dedicated kiosk PC, pair Lobby with
   Windows' assigned access so the computer also opens only ChannelOS.
+
+## Controller
+
+| Row | What it does |
+| --- | --- |
+| Controller Input | Turn controller reading on or off. Keyboard and mouse always work. |
+| Controller Layout | Which controller is drawn. Automatic matches the one plugged in. |
+| Button Mapper | A drawing of your controller with every button; pick what each one does. |
+| Keyboard Mapper | Every action with its keys; select one and press a key to add it. |
+| Dedicated Controller Mode | Text boxes open an on-screen keyboard for couch typing. |
+
+See [CONTROL_INPUT.md](CONTROL_INPUT.md) for supported controllers and the
+safety rules (left stick always navigates, Esc is always Back).

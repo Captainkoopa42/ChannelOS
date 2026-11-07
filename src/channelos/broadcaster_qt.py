@@ -1276,6 +1276,8 @@ class BroadcasterKeyFilter(CouchKeyFilter):
                     focus.inherits(value) for value in ('QQuickComboBox','QQuickSpinBox','QQuickListView')))
                 arrows = {ControlIntent.UP:Qt.Key.Key_Up,ControlIntent.DOWN:Qt.Key.Key_Down,ControlIntent.LEFT:Qt.Key.Key_Left,ControlIntent.RIGHT:Qt.Key.Key_Right}
                 modifiers = Qt.KeyboardModifier.NoModifier
+                if command.intent is ControlIntent.SELECT and self.open_keyboard_for_focus():
+                    return True
                 if command.intent is ControlIntent.SELECT:
                     key = Qt.Key.Key_Return if self._text_entry_has_focus() or direct else Qt.Key.Key_Space
                 elif direct:
@@ -1526,6 +1528,7 @@ def run_qt(
         ),
     )
     window._channelos_controller_input = controller_input
+    controller.attach_controller_input(controller_input)
 
     playback_timer = QTimer(window)
     playback_timer.setInterval(250)

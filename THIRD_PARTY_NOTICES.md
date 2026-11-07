@@ -24,6 +24,8 @@ and release gate.
 | PyYAML | `>=6.0,<7` | Required YAML parsing | MIT | <https://pypi.org/project/PyYAML/> |
 | tzdata | `==2026.6` | Pinned IANA time-zone data shared by Windows and Unix planner calculations | Apache-2.0; bundled IANA data also carries its upstream notices | <https://pypi.org/project/tzdata/2026.6/> |
 | python-vlc | `>=3.0.0` | Optional Python binding for playback | LGPL-2.1-or-later for the generated module | <https://pypi.org/project/python-vlc/> |
+| PySDL2 | `>=0.9.16` | Optional game-controller input (PlayStation, Nintendo, retro adapters) | Public domain (CC0) or Zlib | <https://pypi.org/project/PySDL2/> |
+| pysdl2-dll | `>=2.30` | Ships SDL2.dll on Windows; ChannelOS bundles only SDL2.dll | MPL-2.0 for the packaging; SDL2 itself is Zlib | <https://pypi.org/project/pysdl2-dll/> |
 | PySide6 / Qt for Python | `>=6.8,<7` | Optional Qt Quick couch interface | LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only, or a commercial Qt license | <https://pypi.org/project/PySide6/> |
 | pytest | `>=8,<9` | Development and test dependency; not required at runtime | MIT | <https://pypi.org/project/pytest/> |
 | PyInstaller | `>=6.22,<7` | Windows one-folder packaging tool | GPL-2.0-only with the PyInstaller bootloader exception; some files Apache-2.0 | <https://pyinstaller.org/en/stable/license.html> |

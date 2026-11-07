@@ -301,13 +301,13 @@ def test_settings_tabs_group_rows_and_switch_with_controls() -> None:
 
     try:
         tabs = evaluate("tabs.map(function(t) { return t.title })")
-        assert tabs == ["General", "Video & Audio", "Extras", "Profiles"]
+        assert tabs == ["General", "Video & Audio", "Extras", "Controller", "Profiles"]
         keys = lambda: evaluate("settingsRows.map(function(r) { return r.key })")
         general = keys()
-        assert general[0] == "displayMode" and "controllerEnabled" in general and "audioOutput" not in general
+        assert general[0] == "displayMode" and "controllerEnabled" not in general and "audioOutput" not in general
         # Every setting appears on exactly one tab.
         everything = evaluate("allRows.map(function(r) { return r.key })")
-        assert len(everything) == len(set(everything)) == 36
+        assert len(everything) == len(set(everything)) == 40
 
         host.settingsSelection = 3
         evaluate('handleControllerIntent("CHANNEL_UP")')
@@ -327,6 +327,9 @@ def test_settings_tabs_group_rows_and_switch_with_controls() -> None:
         assert not evaluate("themeBuilderOpen") and host.screen == "settings"
         evaluate('handleControllerIntent("CHANNEL_UP")')
         assert evaluate("currentTab") == 3
+        assert keys() == ["controllerEnabled", "controllerLayout", "buttonMapper", "keyboardMapper", "dedicatedController"]
+        evaluate('handleControllerIntent("CHANNEL_UP")')
+        assert evaluate("currentTab") == 4
         assert keys() == ["activeProfile", "profilePin", "editKids", "editDaycare", "editLobby"]
         evaluate('handleControllerIntent("CHANNEL_UP")')
         assert evaluate("currentTab") == 0, "tabs wrap around"

@@ -21,6 +21,8 @@ playback = [
 ]
 ui = [
     "PySide6>=6.8,<7",
+    "PySDL2>=0.9.16",
+    "pysdl2-dll>=2.30",
 ]
 dev = [
     "pytest>=8,<9",
@@ -28,6 +30,8 @@ dev = [
 package = [
     "PyInstaller>=6.22,<7",
     "PySide6>=6.8,<7",
+    "PySDL2>=0.9.16",
+    "pysdl2-dll>=2.30",
     "python-vlc>=3.0.0",
 ]
 

@@ -20,6 +20,10 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
 from .artwork import MediaArtworkCache
 from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
+from .controller_layouts import (
+    ACTION_IDS, ACTION_LABELS, ACTIONS, DEFAULT_BINDINGS, DEFAULT_KEYS, FAMILIES, FIXED_KEYS, KEY_ACTION_IDS,
+    LAYOUT_CHOICES, clean_bindings, clean_key_bindings, effective_bindings, family_by_id, key_label,
+)
 from .couch_actions import CouchActions
 from .couch_model import GUIDE_REACH, _floor_to_half_hour, build_couch_snapshot, clamp_guide_start
 from .diagnostics import LOG_DIRECTORY_ENV
@@ -149,6 +153,7 @@ class CouchController(QObject):
     themeChanged = Signal()
     themesChanged = Signal()
     profileChanged = Signal()
+    controllerButtonPressed = Signal(str)
 
     def __init__(
         self,
@@ -325,6 +330,12 @@ class CouchController(QObject):
             "bootVideoSound": self._settings.boot_video_sound,
             "loadingStyle": self._settings.loading_style,
             "loadingStyleLabel": LOADING_STYLE_LABELS[self._settings.loading_style],
+            "controllerLayout": self._settings.controller_layout,
+            "controllerLayoutLabel": "Automatic" if self._settings.controller_layout == "auto"
+                                     else family_by_id(self._settings.controller_layout)["name"],
+            "controllerRemapped": len(self._settings.controller_bindings),
+            "keysRemapped": len(self._settings.key_bindings),
+            "dedicatedController": self._settings.dedicated_controller,
         }
 
     def _audio_output_device_name(self) -> str:
@@ -1224,6 +1235,8 @@ class CouchController(QObject):
         self._muted = settings.muted
         if (previous.generate_video_thumbnails, previous.thumbnail_width, previous.background_artwork_during_playback) != (settings.generate_video_thumbnails, settings.thumbnail_width, settings.background_artwork_during_playback):
             self._artwork_unavailable.clear()
+        if (previous.controller_bindings, previous.key_bindings) != (settings.controller_bindings, settings.key_bindings):
+            self._apply_input_bindings()
         if previous.video != settings.video:
             self._actions.set_video_settings(settings.video)
             self._on_demand.set_video_settings(settings.video)
@@ -1319,6 +1332,16 @@ class CouchController(QObject):
                 value = not self._settings.boot_video_sound
                 self._save_settings(replace(self._settings, boot_video_sound=value))
                 return {"ok": True, "message": f"Boot video sound: {'On' if value else 'Off'}", "settings": self.settings}
+            if name == "controllerLayout":
+                value = self._cycle_choice(self._settings.controller_layout, LAYOUT_CHOICES, step)
+                self._save_settings(replace(self._settings, controller_layout=value))
+                label = "Automatic (matches the connected controller)" if value == "auto" else family_by_id(value)["name"]
+                return {"ok": True, "message": f"Controller layout: {label}", "settings": self.settings}
+            if name == "dedicatedController":
+                value = not self._settings.dedicated_controller
+                self._save_settings(replace(self._settings, dedicated_controller=value))
+                hint = ": text boxes open the on-screen keyboard" if value else ""
+                return {"ok": True, "message": f"Dedicated controller mode {'on' if value else 'off'}{hint}", "settings": self.settings}
             if name == "loadingStyle":
                 value = self._cycle_choice(self._settings.loading_style, LOADING_STYLE_CHOICES, step)
                 self._save_settings(replace(self._settings, loading_style=value))
@@ -1730,6 +1753,127 @@ class CouchController(QObject):
     def profileVolumeLimits(self) -> list[int]:
         return list(VOLUME_LIMITS)
 
+    # --- Controller and keyboard mapping -----------------------------------------
+
+    def attach_controller_input(self, controller_input) -> None:
+        self._controller_input = controller_input
+        self._apply_input_bindings()
+
+    def _apply_input_bindings(self) -> None:
+        controller_input = getattr(self, "_controller_input", None)
+        if controller_input is not None:
+            controller_input.set_bindings(effective_bindings(dict(self._settings.controller_bindings)))
+        CouchKeyFilter.set_key_overrides(dict(self._settings.key_bindings))
+
+    @Property("QVariantList", constant=True)
+    def controllerFamilies(self) -> list[dict[str, object]]:
+        return [dict(family) for family in FAMILIES]
+
+    @Property("QVariantList", constant=True)
+    def controllerActions(self) -> list[dict[str, str]]:
+        return [{"id": action, "label": label} for action, label in ACTIONS]
+
+    @Property("QVariantMap", notify=settingsChanged)
+    def controllerBindings(self) -> dict[str, str]:
+        merged = dict(DEFAULT_BINDINGS)
+        merged.update(dict(self._settings.controller_bindings))
+        return merged
+
+    @Slot(str, str, result="QVariantMap")
+    def setControllerBinding(self, control: str, action: str) -> dict[str, object]:
+        if control not in DEFAULT_BINDINGS or action not in ACTION_IDS:
+            return {"ok": False, "message": "Unknown button or action"}
+        bindings = dict(self._settings.controller_bindings)
+        bindings[control] = action
+        cleaned = tuple(sorted(clean_bindings(bindings).items()))
+        try:
+            self._save_settings(replace(self._settings, controller_bindings=cleaned))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_input_bindings()
+        return {"ok": True, "message": f"{ACTION_LABELS[action]}", "settings": self.settings}
+
+    @Slot(result="QVariantMap")
+    def resetControllerBindings(self) -> dict[str, object]:
+        try:
+            self._save_settings(replace(self._settings, controller_bindings=()))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_input_bindings()
+        return {"ok": True, "message": "Controller buttons are back to their defaults", "settings": self.settings}
+
+    @Slot(bool)
+    def setControllerCapture(self, active: bool) -> None:
+        """The button mapper listens for raw presses while it is open."""
+        controller_input = getattr(self, "_controller_input", None)
+        if controller_input is not None:
+            controller_input.set_capture(self.controllerButtonPressed.emit if active else None)
+
+    @Property("QVariantList", notify=settingsChanged)
+    def keyBindings(self) -> list[dict[str, object]]:
+        """One row per action with every key that triggers it."""
+        merged = dict(DEFAULT_KEYS)
+        merged.update(dict(self._settings.key_bindings))
+        rows = []
+        for action in KEY_ACTION_IDS:
+            if action == "NONE":
+                continue
+            keys = sorted(key for key, bound in merged.items() if bound == action)
+            rows.append({"action": action, "label": ACTION_LABELS[action],
+                         "keys": [{"key": key, "label": key_label(key), "fixed": key in FIXED_KEYS} for key in keys]})
+        return rows
+
+    @Slot(int, result=str)
+    def keyName(self, key: int) -> str:
+        try:
+            return Qt.Key(int(key)).name
+        except ValueError:
+            return ""
+
+    @Slot(str, str, result="QVariantMap")
+    def setKeyBinding(self, key_name: str, action: str) -> dict[str, object]:
+        """Give ``key_name`` to ``action`` (``NONE`` frees it)."""
+        if key_name in FIXED_KEYS:
+            return {"ok": False, "message": "Esc is always Back, so you can never get stuck"}
+        if key_name in {f"Key_{digit}" for digit in range(10)}:
+            return {"ok": False, "message": "Number keys always enter channel numbers"}
+        if not key_name.startswith("Key_") or action not in KEY_ACTION_IDS:
+            return {"ok": False, "message": "That key can't be mapped"}
+        bindings = dict(self._settings.key_bindings)
+        bindings[key_name] = action
+        if DEFAULT_KEYS.get(key_name, "NONE") == action:
+            bindings.pop(key_name)
+        cleaned = tuple(sorted(clean_key_bindings(bindings).items()))
+        try:
+            self._save_settings(replace(self._settings, key_bindings=cleaned))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_input_bindings()
+        label = key_label(key_name)
+        message = f"{label} does nothing now" if action == "NONE" else f"{label}: {ACTION_LABELS[action]}"
+        return {"ok": True, "message": message, "settings": self.settings}
+
+    @Slot(str, result="QVariantMap")
+    def clearKeysForAction(self, action: str) -> dict[str, object]:
+        merged = dict(DEFAULT_KEYS)
+        merged.update(dict(self._settings.key_bindings))
+        result: dict[str, object] = {"ok": True, "message": "No keys to clear"}
+        for key, bound in merged.items():
+            if bound == action and key not in FIXED_KEYS:
+                result = self.setKeyBinding(key, "NONE")
+        if result.get("ok"):
+            result["message"] = f"Cleared keys for {ACTION_LABELS.get(action, action)}"
+        return result
+
+    @Slot(result="QVariantMap")
+    def resetKeyBindings(self) -> dict[str, object]:
+        try:
+            self._save_settings(replace(self._settings, key_bindings=()))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_input_bindings()
+        return {"ok": True, "message": "Keyboard keys are back to their defaults", "settings": self.settings}
+
     # --- Boot video -----------------------------------------------------------
 
     def _boot_directory(self) -> Path:
@@ -1864,6 +2008,9 @@ class CouchKeyFilter(QObject):
         connect_screen_changed(window, self._guard_profile_screen)
         self._allowed_screen = "home"
         self._profile_checked = None
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.focusObjectChanged.connect(self._focus_object_changed)
         profile_changed = getattr(controller, "profileChanged", None)
         if profile_changed is not None:
             profile_changed.connect(self._profile_changed)
@@ -1893,6 +2040,10 @@ class CouchKeyFilter(QObject):
         """
         if self._profile_checked is True:
             return False  # BroadcasterKeyFilter checked this command already
+        if bool(self._window.property("keyboardVisible")):
+            QMetaObject.invokeMethod(self._window, "handleKeyboardIntent", Qt.ConnectionType.DirectConnection,
+                                     Q_ARG("QVariant", command.intent.value))
+            return True
         if bool(self._window.property("pinPadVisible")):
             digit = command.value if command.intent is ControlIntent.DIGIT else -1
             QMetaObject.invokeMethod(self._window, "handlePinIntent", Qt.ConnectionType.DirectConnection,
@@ -2039,9 +2190,25 @@ class CouchKeyFilter(QObject):
         self._show_audio_hud(result)
         return True
 
+    _key_overrides: dict[str, str] = {}
+
+    @classmethod
+    def set_key_overrides(cls, overrides: dict[str, str]) -> None:
+        """Keyboard mapper changes: Qt key name -> action (``NONE`` disables)."""
+        CouchKeyFilter._key_overrides = dict(overrides)
+
     @staticmethod
     def command_for_key(key: int) -> ControlCommand | None:
         """Translate one Qt keyboard/media key without applying UI behavior."""
+        overrides = CouchKeyFilter._key_overrides
+        if overrides:
+            try:
+                name = Qt.Key(int(key)).name
+            except ValueError:
+                name = ""
+            if name in overrides:
+                action = overrides[name]
+                return None if action == "NONE" else ControlCommand(ControlIntent(action))
 
         digits = {
             Qt.Key.Key_0: 0,
@@ -3036,6 +3203,8 @@ class CouchKeyFilter(QObject):
         focused control. The keys are synthesized, so every control keeps its
         normal keyboard behavior and signals.
         """
+        if intent is ControlIntent.SELECT and self._text_entry_has_focus() and self.open_keyboard_for_focus():
+            return True
         focus = QGuiApplication.focusObject()
         adjustable = focus is not None and any(
             focus.inherits(name) for name in ("QQuickSlider", "QQuickComboBox", "QQuickSpinBox", "QQuickRangeSlider"))
@@ -3058,6 +3227,29 @@ class CouchKeyFilter(QObject):
             self._synthesizing = False
         return True
 
+    def _dedicated_controller(self) -> bool:
+        settings = getattr(self._controller, "settings", None)
+        return isinstance(settings, dict) and bool(settings.get("dedicatedController"))
+
+    def open_keyboard_for_focus(self) -> bool:
+        """Dedicated Controller Mode: type into the focused text box on screen."""
+        if not self._dedicated_controller() or not self._text_entry_has_focus():
+            return False
+        focus = QGuiApplication.focusObject()
+        label = str(focus.property("placeholderText") or focus.property("accessibleName") or "")
+        QMetaObject.invokeMethod(self._window, "openKeyboard", Qt.ConnectionType.DirectConnection,
+                                 Q_ARG("QVariant", focus), Q_ARG("QVariant", label))
+        return True
+
+    def _focus_object_changed(self, focus) -> None:
+        if not bool(self._window.property("keyboardVisible")):
+            # A click into a text box opens the couch keyboard too.
+            if focus is not None and QGuiApplication.mouseButtons() != Qt.MouseButton.NoButton:
+                QTimer.singleShot(0, self.open_keyboard_for_focus)
+            return
+        if focus is None or not self._text_entry_has_focus():
+            QMetaObject.invokeMethod(self._window, "closeKeyboard", Qt.ConnectionType.DirectConnection)
+
     @staticmethod
     def _text_entry_has_focus() -> bool:
         """True while a text box (hex field, name, search…) is being typed in."""
@@ -3072,6 +3264,8 @@ class CouchKeyFilter(QObject):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if event.type() != QEvent.Type.KeyPress or getattr(self, "_synthesizing", False):
             return False
+        if bool(self._window.property("keyCaptureActive")):
+            return False  # the keyboard mapper is listening for a raw key
         if self._text_entry_has_focus() and event.key() not in (Qt.Key.Key_Escape, Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
             # Typing belongs to the text box: letters, digits, Backspace,
             # arrows and Enter never become remote commands while editing.
@@ -3235,6 +3429,7 @@ def run_qt(
         ),
     )
     window._channelos_controller_input = controller_input
+    controller.attach_controller_input(controller_input)
 
     # The channel continues broadcasting independently of UI input.
     # Poll the Viewer Clock often enough that short-form captures hand off

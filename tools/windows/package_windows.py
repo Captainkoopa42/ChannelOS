@@ -39,6 +39,8 @@ PYTHON_COMPONENTS = (
     "PyYAML",
     "tzdata",
     "python-vlc",
+    "PySDL2",
+    "pysdl2-dll",
 )
 EFFECTIVE_LICENSES = {
     "channelos": "MPL-2.0",
@@ -50,6 +52,8 @@ EFFECTIVE_LICENSES = {
     "pyyaml": "MIT",
     "tzdata": "Apache-2.0",
     "python-vlc": "LGPL-2.1-or-later",
+    "pysdl2": "CC0-1.0 OR Zlib",
+    "pysdl2-dll": "MPL-2.0 packaging; bundled SDL2.dll is Zlib",
 }
 PROJECT_URLS = {
     "channelos": "https://github.com/Captainkoopa42/ChannelOS",
@@ -61,6 +65,8 @@ PROJECT_URLS = {
     "pyyaml": "https://pyyaml.org/",
     "tzdata": "https://github.com/python/tzdata",
     "python-vlc": "https://wiki.videolan.org/PythonBinding",
+    "pysdl2": "https://github.com/py-sdl/py-sdl2",
+    "pysdl2-dll": "https://github.com/py-sdl/py-sdl2/tree/master/sdl2dll",
 }
 
 
@@ -391,6 +397,11 @@ def validate_package_root(package_root: Path) -> None:
         package_root / "_internal" / "channelos" / "qml" / "PlannerMediaBin.qml",
         package_root / "_internal" / "channelos" / "qml" / "Theme.qml",
         package_root / "_internal" / "channelos" / "qml" / "BootScreen.qml",
+        package_root / "_internal" / "channelos" / "qml" / "OnScreenKeyboard.qml",
+        package_root / "_internal" / "sdl2dll" / "dll" / "SDL2.dll",
+        package_root / "_internal" / "channelos" / "qml" / "ControllerDiagram.qml",
+        package_root / "_internal" / "channelos" / "qml" / "ControllerMapper.qml",
+        package_root / "_internal" / "channelos" / "qml" / "KeyboardMapper.qml",
         package_root / "_internal" / "channelos" / "qml" / "ProfileEditor.qml",
         package_root / "_internal" / "channelos" / "qml" / "PinPad.qml",
         package_root / "_internal" / "channelos" / "assets" / "mascot" / "body.png",

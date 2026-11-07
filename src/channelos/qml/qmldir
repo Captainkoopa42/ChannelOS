@@ -28,3 +28,7 @@ ThemeBuilder 1.0 ThemeBuilder.qml
 BootScreen 1.0 BootScreen.qml
 PinPad 1.0 PinPad.qml
 ProfileEditor 1.0 ProfileEditor.qml
+ControllerDiagram 1.0 ControllerDiagram.qml
+ControllerMapper 1.0 ControllerMapper.qml
+KeyboardMapper 1.0 KeyboardMapper.qml
+OnScreenKeyboard 1.0 OnScreenKeyboard.qml

@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Mapping, Protocol
 
 from .control import ControlCommand, ControlIntent
 
@@ -29,6 +29,13 @@ class GamepadButton(StrEnum):
     MENU = "menu"
     LEFT_STICK = "left_stick"
     RIGHT_STICK = "right_stick"
+    GUIDE = "guide"
+    MISC = "misc"
+    PADDLE1 = "paddle1"
+    PADDLE2 = "paddle2"
+    PADDLE3 = "paddle3"
+    PADDLE4 = "paddle4"
+    TOUCHPAD = "touchpad"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +60,7 @@ class ControllerReading:
     controller_id: str
     name: str
     snapshot: GamepadSnapshot
+    family: str = "xbox"
 
 
 class ControllerBackend(Protocol):
@@ -87,6 +95,25 @@ _REPEATABLE_INTENTS = {
 }
 
 
+def _control_key(control: str) -> str:
+    """Binding id -> internal key ("south" -> "button:south")."""
+    if control in ("left_trigger", "right_trigger"):
+        return "trigger:" + control.split("_")[0]
+    if control.startswith("rstick_"):
+        return "rstick:" + control.removeprefix("rstick_")
+    return "button:" + control
+
+
+def _right_stick_direction(horizontal: float, vertical: float, threshold: float) -> str | None:
+    x = max(-1.0, min(1.0, float(horizontal)))
+    y = max(-1.0, min(1.0, float(vertical)))
+    if max(abs(x), abs(y)) < threshold:
+        return None
+    if abs(x) > abs(y):
+        return "right" if x > 0 else "left"
+    return "up" if y > 0 else "down"
+
+
 class GamepadIntentMapper:
     """Translate button edges and held navigation into ``ControlCommand``s."""
 
@@ -98,6 +125,7 @@ class GamepadIntentMapper:
         trigger_threshold: float = 0.55,
         repeat_delay_seconds: float = 0.38,
         repeat_interval_seconds: float = 0.12,
+        bindings: Mapping[str, ControlIntent | None] | None = None,
     ) -> None:
         if not 0.0 < stick_release_threshold < stick_press_threshold <= 1.0:
             raise ValueError("stick thresholds must satisfy 0 < release < press <= 1")
@@ -115,14 +143,40 @@ class GamepadIntentMapper:
         self._repeat_at: dict[str, float] = {}
         self._suppressed_until_release: set[str] = set()
         self._stick_direction: ControlIntent | None = None
-        self._volume_direction: ControlIntent | None = None
+        self._right_direction: str | None = None
+        self.set_bindings(bindings)
+
+    def set_bindings(self, bindings: Mapping[str, ControlIntent | None] | None) -> None:
+        """Physical control id (``south``, ``left_trigger``, ``rstick_up``…) -> intent."""
+        merged: dict[str, ControlIntent | None] = {
+            **{f"button:{button.value}": intent for button, intent in _BUTTON_INTENTS.items()},
+            "trigger:left": ControlIntent.SKIP_BACK,
+            "trigger:right": ControlIntent.SKIP_FORWARD,
+            "rstick:up": ControlIntent.VOLUME_UP,
+            "rstick:down": ControlIntent.VOLUME_DOWN,
+        }
+        for control, intent in (bindings or {}).items():
+            merged[_control_key(control)] = intent
+        self._bindings = merged
+
+    def raw_controls(self, snapshot: GamepadSnapshot) -> set[str]:
+        """Physical controls held now, as binding ids (for the button mapper)."""
+        held = {button.value for button in snapshot.buttons}
+        if snapshot.left_trigger >= self._trigger_threshold:
+            held.add("left_trigger")
+        if snapshot.right_trigger >= self._trigger_threshold:
+            held.add("right_trigger")
+        direction = _right_stick_direction(snapshot.right_x, snapshot.right_y, self._stick_press_threshold)
+        if direction:
+            held.add("rstick_" + direction)
+        return held
 
     def reset(self) -> None:
         self._active_controls.clear()
         self._repeat_at.clear()
         self._suppressed_until_release.clear()
         self._stick_direction = None
-        self._volume_direction = None
+        self._right_direction = None
 
     def prime(self, snapshot: GamepadSnapshot, *, now: float | None = None) -> None:
         """Accept current held state without firing ghost input on connection."""
@@ -180,24 +234,38 @@ class GamepadIntentMapper:
         return tuple(unique)
 
     def _controls(self, snapshot: GamepadSnapshot) -> dict[str, ControlIntent]:
-        controls = {
-            f"button:{button.value}": _BUTTON_INTENTS[button]
-            for button in snapshot.buttons
-            if button in _BUTTON_INTENTS
-        }
+        bindings = self._bindings
+        controls: dict[str, ControlIntent] = {}
+        for button in snapshot.buttons:
+            intent = bindings.get(f"button:{button.value}")
+            if intent is not None:
+                controls[f"button:{button.value}"] = intent
 
-        if snapshot.left_trigger >= self._trigger_threshold:
-            controls["trigger:left"] = ControlIntent.SKIP_BACK
-        if snapshot.right_trigger >= self._trigger_threshold:
-            controls["trigger:right"] = ControlIntent.SKIP_FORWARD
+        if snapshot.left_trigger >= self._trigger_threshold and bindings.get("trigger:left") is not None:
+            controls["trigger:left"] = bindings["trigger:left"]
+        if snapshot.right_trigger >= self._trigger_threshold and bindings.get("trigger:right") is not None:
+            controls["trigger:right"] = bindings["trigger:right"]
 
+        # The left stick always navigates, so a remapped D-pad can't strand anyone.
         direction = self._left_stick_direction(snapshot.left_x, snapshot.left_y)
         if direction is not None:
             controls["stick:left"] = direction
-        volume_direction = self._right_stick_volume(snapshot.right_y)
-        if volume_direction is not None:
-            controls["stick:right:volume"] = volume_direction
+        right = self._right_stick_hold(snapshot.right_x, snapshot.right_y)
+        if right is not None and bindings.get(f"rstick:{right}") is not None:
+            controls[f"rstick:{right}"] = bindings[f"rstick:{right}"]
         return controls
+
+    def _right_stick_hold(self, horizontal: float, vertical: float) -> str | None:
+        """Right stick as four held directions, with release hysteresis."""
+        x = max(-1.0, min(1.0, float(horizontal)))
+        y = max(-1.0, min(1.0, float(vertical)))
+        previous = self._right_direction
+        if previous is not None:
+            component = {"up": y, "down": -y, "left": -x, "right": x}[previous]
+            if component >= self._stick_release_threshold:
+                return previous
+        self._right_direction = _right_stick_direction(x, y, self._stick_press_threshold)
+        return self._right_direction
 
     def _left_stick_direction(
         self,
@@ -231,21 +299,6 @@ class GamepadIntentMapper:
         else:
             self._stick_direction = ControlIntent.UP if y > 0 else ControlIntent.DOWN
         return self._stick_direction
-
-    def _right_stick_volume(self, vertical: float) -> ControlIntent | None:
-        y = max(-1.0, min(1.0, float(vertical)))
-        previous = self._volume_direction
-        if previous is not None:
-            component = y if previous is ControlIntent.VOLUME_UP else -y
-            if component >= self._stick_release_threshold:
-                return previous
-        if abs(y) < self._stick_press_threshold:
-            self._volume_direction = None
-            return None
-        self._volume_direction = (
-            ControlIntent.VOLUME_UP if y > 0 else ControlIntent.VOLUME_DOWN
-        )
-        return self._volume_direction
 
 
 class _XInputGamepad(ctypes.Structure):
@@ -338,6 +391,7 @@ class XInputBackend:
             return ControllerReading(
                 controller_id=f"xinput:{user_index}",
                 name=f"Xbox-compatible Controller {user_index + 1}",
+                family="xbox",
                 snapshot=GamepadSnapshot(
                     buttons=buttons,
                     left_x=_normalize_signed_axis(gamepad.sThumbLX),
@@ -370,6 +424,11 @@ class ControllerInputHub:
         self._controller_id = ""
         self._controller_name = ""
 
+        self._controller_family = ""
+        self._capture: Callable[[str], object] | None = None
+        self._capture_mapper = GamepadIntentMapper()
+        self._held_raw: set[str] = set()
+
     @property
     def connected(self) -> bool:
         return bool(self._controller_id)
@@ -378,12 +437,31 @@ class ControllerInputHub:
     def controller_name(self) -> str:
         return self._controller_name
 
+    @property
+    def controller_family(self) -> str:
+        return self._controller_family
+
+    def set_bindings(self, bindings: Mapping[str, ControlIntent | None] | None) -> None:
+        self._mapper.set_bindings(bindings)
+
+    def set_capture(self, callback: Callable[[str], object] | None) -> None:
+        """Button mapper mode: report each newly pressed physical control.
+
+        While capturing, navigation uses the default layout so a half-finished
+        remap can never strand the user inside the mapper.
+        """
+        self._capture = callback
+        self._capture_mapper.reset()
+        self._held_raw = set()
+
     def reset(self) -> None:
         """Forget connection and held-input state without dispatching commands."""
 
         self._controller_id = ""
         self._controller_name = ""
+        self._controller_family = ""
         self._mapper.reset()
+        self._capture_mapper.reset()
 
     def poll(self, *, now: float | None = None) -> tuple[ControlCommand, ...]:
         sampled_at = time.monotonic() if now is None else float(now)
@@ -396,6 +474,7 @@ class ControllerInputHub:
             if self.connected:
                 self._controller_id = ""
                 self._controller_name = ""
+                self._controller_family = ""
                 self._mapper.reset()
                 if self._connection_changed is not None:
                     self._connection_changed(False, "")
@@ -404,11 +483,24 @@ class ControllerInputHub:
         if reading.controller_id != self._controller_id:
             self._controller_id = reading.controller_id
             self._controller_name = reading.name
+            self._controller_family = reading.family
             self._mapper.reset()
             self._mapper.prime(reading.snapshot, now=sampled_at)
+            self._capture_mapper.prime(reading.snapshot, now=sampled_at)
+            self._held_raw = self._mapper.raw_controls(reading.snapshot)
             if self._connection_changed is not None:
                 self._connection_changed(True, reading.name)
             return ()
+
+        if self._capture is not None:
+            held = self._capture_mapper.raw_controls(reading.snapshot)
+            for control in sorted(held - self._held_raw):
+                self._capture(control)
+            self._held_raw = held
+            commands = self._capture_mapper.update(reading.snapshot, now=sampled_at)
+            for command in commands:
+                self._dispatch(command)
+            return commands
 
         commands = self._mapper.update(reading.snapshot, now=sampled_at)
         for command in commands:
@@ -416,10 +508,136 @@ class ControllerInputHub:
         return commands
 
 
+_SDL_BUTTONS: tuple[tuple[str, GamepadButton], ...] = (
+    ("A", GamepadButton.SOUTH), ("B", GamepadButton.EAST), ("X", GamepadButton.WEST), ("Y", GamepadButton.NORTH),
+    ("DPAD_UP", GamepadButton.DPAD_UP), ("DPAD_DOWN", GamepadButton.DPAD_DOWN),
+    ("DPAD_LEFT", GamepadButton.DPAD_LEFT), ("DPAD_RIGHT", GamepadButton.DPAD_RIGHT),
+    ("LEFTSHOULDER", GamepadButton.LEFT_SHOULDER), ("RIGHTSHOULDER", GamepadButton.RIGHT_SHOULDER),
+    ("BACK", GamepadButton.VIEW), ("START", GamepadButton.MENU), ("GUIDE", GamepadButton.GUIDE),
+    ("LEFTSTICK", GamepadButton.LEFT_STICK), ("RIGHTSTICK", GamepadButton.RIGHT_STICK),
+    ("MISC1", GamepadButton.MISC), ("PADDLE1", GamepadButton.PADDLE1), ("PADDLE2", GamepadButton.PADDLE2),
+    ("PADDLE3", GamepadButton.PADDLE3), ("PADDLE4", GamepadButton.PADDLE4), ("TOUCHPAD", GamepadButton.TOUCHPAD),
+)
+
+_SDL_TYPES = {
+    "XBOX360": "Xbox 360", "XBOXONE": "Xbox One", "PS3": "PS3", "PS4": "PS4", "PS5": "PS5",
+    "NINTENDO_SWITCH_PRO": "Switch Pro", "NINTENDO_SWITCH_JOYCON_PAIR": "Joy-Con",
+    "NINTENDO_SWITCH_JOYCON_LEFT": "Joy-Con", "NINTENDO_SWITCH_JOYCON_RIGHT": "Joy-Con",
+    "AMAZON_LUNA": "Luna", "GOOGLE_STADIA": "Stadia", "NVIDIA_SHIELD": "Shield", "VIRTUAL": "Virtual",
+}
+
+
+class SDLBackend:
+    """SDL2 game-controller backend: PlayStation, Nintendo, retro adapters and more.
+
+    SDL ships a large community database that maps hundreds of pads (including
+    GameCube/N64 adapters and 8BitDo retro pads) to one positional layout.
+    Buttons are read by position, not by the letter printed on them.
+    """
+
+    def __init__(self, sdl: object) -> None:
+        self._sdl = sdl
+        self._controller = None
+        self._instance_id: int | None = None
+        self._name = ""
+        self._family = "generic"
+        self._buttons = tuple((getattr(sdl, f"SDL_CONTROLLER_BUTTON_{name}", None), button)
+                              for name, button in _SDL_BUTTONS)
+        self._buttons = tuple((code, button) for code, button in self._buttons if code is not None)
+
+    @classmethod
+    def try_create(cls) -> "SDLBackend | None":
+        try:
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                import sdl2  # type: ignore[import-not-found]
+        except Exception:
+            return None
+        try:
+            # Positional buttons: Nintendo's A (east) stays "east" so one binding
+            # table fits every brand. Read input while the window is focused only
+            # (ChannelOS also gates on focus), and never grab the screen saver.
+            for hint, value in (("SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS", b"0"),
+                                ("SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS", b"1"),
+                                ("SDL_HINT_VIDEO_ALLOW_SCREENSAVER", b"1")):
+                name = getattr(sdl2, hint, None)
+                if name is not None:
+                    sdl2.SDL_SetHint(name, value)
+            if sdl2.SDL_Init(sdl2.SDL_INIT_GAMECONTROLLER | sdl2.SDL_INIT_JOYSTICK) != 0:
+                return None
+        except Exception:
+            return None
+        return cls(sdl2)
+
+    def _open_first(self) -> None:
+        sdl = self._sdl
+        for index in range(int(sdl.SDL_NumJoysticks())):
+            if not sdl.SDL_IsGameController(index):
+                continue
+            controller = sdl.SDL_GameControllerOpen(index)
+            if not controller:
+                continue
+            raw_name = sdl.SDL_GameControllerName(controller)
+            self._name = (raw_name.decode("utf-8", "replace") if isinstance(raw_name, bytes) else str(raw_name or "")) or "Controller"
+            kind = ""
+            get_type = getattr(sdl, "SDL_GameControllerGetType", None)
+            if get_type is not None:
+                code = int(get_type(controller))
+                kind = next((label for key, label in _SDL_TYPES.items()
+                             if getattr(sdl, f"SDL_CONTROLLER_TYPE_{key}", None) == code), "")
+            from .controller_layouts import detect_family
+            self._family = detect_family(kind, self._name)
+            joystick = sdl.SDL_GameControllerGetJoystick(controller)
+            self._instance_id = int(sdl.SDL_JoystickInstanceID(joystick))
+            self._controller = controller
+            return
+
+    def read_first(self) -> ControllerReading | None:
+        sdl = self._sdl
+        sdl.SDL_GameControllerUpdate()
+        if self._controller is not None and not sdl.SDL_GameControllerGetAttached(self._controller):
+            sdl.SDL_GameControllerClose(self._controller)
+            self._controller = None
+            self._instance_id = None
+        if self._controller is None:
+            self._open_first()
+            if self._controller is None:
+                return None
+        controller = self._controller
+        buttons = frozenset(button for code, button in self._buttons
+                            if sdl.SDL_GameControllerGetButton(controller, code))
+
+        def axis(name: str) -> int:
+            return int(sdl.SDL_GameControllerGetAxis(controller, getattr(sdl, f"SDL_CONTROLLER_AXIS_{name}")))
+
+        return ControllerReading(
+            controller_id=f"sdl:{self._instance_id}",
+            name=self._name,
+            family=self._family,
+            snapshot=GamepadSnapshot(
+                buttons=buttons,
+                left_x=_normalize_signed_axis(axis("LEFTX")),
+                left_y=-_normalize_signed_axis(axis("LEFTY")),   # SDL: down is positive
+                right_x=_normalize_signed_axis(axis("RIGHTX")),
+                right_y=-_normalize_signed_axis(axis("RIGHTY")),
+                left_trigger=max(0.0, axis("TRIGGERLEFT") / 32767.0),
+                right_trigger=max(0.0, axis("TRIGGERRIGHT") / 32767.0),
+            ),
+        )
+
+
 def create_controller_backend() -> ControllerBackend | None:
-    """Return the native backend for this platform without making it required."""
+    """Return the native backend for this platform without making it required.
+
+    SDL covers the most controllers; XInput is the dependency-free fallback.
+    """
 
     disabled = os.environ.get("CHANNELOS_DISABLE_CONTROLLER", "").strip().lower()
     if disabled in {"1", "true", "yes", "on"}:
         return None
+    if os.environ.get("CHANNELOS_CONTROLLER_BACKEND", "").strip().lower() != "xinput":
+        backend = SDLBackend.try_create()
+        if backend is not None:
+            return backend
     return XInputBackend.try_create()

@@ -98,6 +98,12 @@ class CouchSettings:
     boot_video_file: str = ""
     boot_video_sound: bool = True
     loading_style: str = "classic"
+    # Controller tab. Bindings hold only changes from the defaults, as sorted
+    # (control, action) pairs so the settings object stays immutable.
+    controller_layout: str = "auto"
+    controller_bindings: tuple[tuple[str, str], ...] = ()
+    key_bindings: tuple[tuple[str, str], ...] = ()
+    dedicated_controller: bool = False
 
     @property
     def video(self) -> VideoSettings:
@@ -252,8 +258,22 @@ class CouchSettings:
         if loading_style not in LOADING_STYLE_CHOICES:
             loading_style = "classic"
 
+        from .controller_layouts import LAYOUT_CHOICES, clean_bindings, clean_key_bindings
+        controller_layout = str(values.get("controller_layout", "auto"))
+        if controller_layout not in LAYOUT_CHOICES:
+            controller_layout = "auto"
+
+        def pairs(raw):
+            if isinstance(raw, (list, tuple)):
+                raw = {item[0]: item[1] for item in raw if isinstance(item, (list, tuple)) and len(item) == 2}
+            return raw
+
         return cls(
             **video,
+            controller_layout=controller_layout,
+            controller_bindings=tuple(sorted(clean_bindings(pairs(values.get("controller_bindings"))).items())),
+            key_bindings=tuple(sorted(clean_key_bindings(pairs(values.get("key_bindings"))).items())),
+            dedicated_controller=values.get("dedicated_controller") is True,
             theme=theme,
             boot_video=boot_video,
             boot_video_file=boot_video_file,
@@ -275,8 +295,11 @@ class CouchSettings:
             ffmpeg_threads=int(ffmpeg_threads),
         )
 
-    def to_mapping(self) -> dict[str, int | bool | str]:
-        return dict(asdict(self))
+    def to_mapping(self) -> dict[str, object]:
+        values = dict(asdict(self))
+        values["controller_bindings"] = dict(self.controller_bindings)
+        values["key_bindings"] = dict(self.key_bindings)
+        return values
 
 
 class SettingsStore:

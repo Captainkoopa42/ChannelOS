@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import logging
 import sys
+import queue
 import threading
 import time
 from pathlib import Path
@@ -14,6 +15,38 @@ from PySide6.QtCore import QObject, Property, Qt, QThread, QTimer, QUrl, Signal,
 # connection to a Python slot ran `ready` on the setup thread on Windows, which
 # then built the main window off the GUI thread and deadlocked.
 QUEUED = Qt.ConnectionType.QueuedConnection
+
+
+class MainThreadRelay(QObject):
+    """Run callables on the GUI thread, posted from any thread.
+
+    On Windows CI, signal connections from a worker QThread to these Python
+    methods ran on the worker thread even when queued, which built the main
+    window off the GUI thread and deadlocked. A thread-safe queue drained by a
+    GUI-thread timer cannot do that.
+    """
+
+    def __init__(self, parent: QObject) -> None:
+        super().__init__(parent)
+        self._pending: queue.SimpleQueue = queue.SimpleQueue()
+        self._timer = QTimer(self)
+        self._timer.setInterval(15)
+        self._timer.timeout.connect(self._drain)
+        self._timer.start()
+
+    def post(self, function, *args) -> None:
+        self._pending.put((function, args))
+
+    def _drain(self) -> None:
+        while True:
+            try:
+                function, args = self._pending.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                function(*args)
+            except Exception:
+                logger.exception("Startup step failed on the GUI thread")
 from PySide6.QtGui import QWindow
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication
@@ -212,10 +245,12 @@ def install_startup_support(module):
             thread.setObjectName('ChannelOS startup')
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
-            worker.first.connect(self._startup_first, QUEUED)
-            worker.metadata.connect(self._startup_metadata, QUEUED)
-            worker.completed.connect(self._startup_remaining, QUEUED)
-            worker.failed.connect(self._startup_failed, QUEUED)
+            relay = self._startup_relay = MainThreadRelay(self)
+            direct = Qt.ConnectionType.DirectConnection
+            worker.first.connect(lambda value: relay.post(self._startup_first, value), direct)
+            worker.metadata.connect(lambda value: relay.post(self._startup_metadata, value), direct)
+            worker.completed.connect(lambda value: relay.post(self._startup_remaining, value), direct)
+            worker.failed.connect(lambda message: relay.post(self._startup_failed, message), direct)
             worker.finished.connect(thread.quit)
             worker.finished.connect(worker.deleteLater)
             thread.finished.connect(self._startup_finished)
@@ -501,12 +536,14 @@ def launch(module, paths, db, state_db, channels_dir, *, windowed=False):
     thread = QThread(app)
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
-    worker.ready.connect(control.ready, QUEUED)
-    worker.failed.connect(control.failed, QUEUED)
+    # Results reach the GUI thread through MainThreadRelay (see its note).
+    relay = MainThreadRelay(app)
+    worker.ready.connect(lambda data: relay.post(control.ready, data), Qt.ConnectionType.DirectConnection)
+    worker.failed.connect(lambda message: relay.post(control.failed, message), Qt.ConnectionType.DirectConnection)
     worker.finished.connect(thread.quit)
     worker.finished.connect(worker.deleteLater)
-    thread.finished.connect(control.finished, QUEUED)
-    app._channelos_bootstrap = (engine, window, control, worker, thread, boot_video_window)
+    thread.finished.connect(lambda: relay.post(control.finished), Qt.ConnectionType.DirectConnection)
+    app._channelos_bootstrap = (engine, window, control, worker, thread, boot_video_window, relay)
     thread.start(QThread.Priority.LowPriority)
     if not owns_application: return 0
     result = int(app.exec())

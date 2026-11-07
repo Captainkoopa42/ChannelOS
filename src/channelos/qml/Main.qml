@@ -51,6 +51,13 @@ ApplicationWindow {
     onPinPadVisibleChanged: if (pinPadVisible) pinPad.reset()
     function handlePinIntent(intent, digit) { return pinPad.handleIntent(intent, Number(digit)) }
     function pinRejected(message) { pinPad.rejected(message) }
+    // Dedicated Controller Mode: the couch keyboard for whichever text box
+    // was selected (CouchKeyFilter opens it and routes controller input here).
+    readonly property bool keyboardVisible: onScreenKeyboard.visible
+    function openKeyboard(target, label) { onScreenKeyboard.openFor(target, String(label || "")) }
+    function closeKeyboard() { if (onScreenKeyboard.visible) onScreenKeyboard.close() }
+    function handleKeyboardIntent(intent) { return onScreenKeyboard.handleIntent(String(intent)) }
+    OnScreenKeyboard { id: onScreenKeyboard }
     PinPad {
         id: pinPad
         anchors.fill: parent
@@ -101,6 +108,9 @@ ApplicationWindow {
     property bool audioHudVisible: false
     property bool controllerConnected: false
     property string controllerName: ""
+    property string controllerFamily: ""
+    // Keyboard mapper: while true, key presses reach QML untranslated.
+    property bool keyCaptureActive: false
     readonly property var settingsSnapshot:
         channelOS && channelOS.settings
         ? channelOS.settings

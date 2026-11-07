@@ -33,13 +33,14 @@ Item {
         { key: "general", title: "General", detail: "Display, controls, performance and artwork" },
         { key: "media", title: "Video & Audio", detail: "Picture, sound and output device" },
         { key: "extras", title: "Extras", detail: "Themes, startup and portable setups" },
+        { key: "controller", title: "Controller", detail: "Controllers, button and keyboard mapping, couch typing" },
         { key: "profiles", title: "Profiles", detail: "Kids, Daycare and Lobby modes with a PIN lock" }
     ]
     readonly property var allRows: [
         { tab: "general", key: "displayMode", title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
         { tab: "general", key: "performanceProfile", title: "Performance Profile", detail: "Standard preserves full artwork behavior. Lightweight reduces optional background work." },
         { tab: "general", key: "reducedMotion", title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
-        { tab: "general", key: "controllerEnabled", title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
+        { tab: "controller", key: "controllerEnabled", title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
         { tab: "general", key: "skipBack", title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
         { tab: "general", key: "skipForward", title: "Skip Forward", detail: "How far Right/Fast Forward jumps during Live TV and On Demand." },
         { tab: "general", key: "generateVideoThumbnails", title: "Generate Video Thumbnails", detail: "Use FFmpeg when no local sidecar image or cached thumbnail exists." },
@@ -67,6 +68,10 @@ Item {
         { tab: "extras", key: "loadingStyle", title: "Loading Style", detail: "Classic, a fill bar along the bottom, or the dancing ChannelOS TV. Reduced Motion uses the fill bar." },
         { tab: "extras", key: "bootPreview", action: "Preview", title: "Preview Startup", detail: "Watch the loading style without restarting." },
         { tab: "extras", key: "portable", action: "Copy / Open Setup", title: "Portable Setup & Backup", detail: "Copy channels, the media index, ad configuration and history to a drive as a backup or to take with you, or open a setup you copied earlier." },
+        { tab: "controller", key: "controllerLayout", title: "Controller Layout", detail: "Which controller the mapper draws. Automatic matches the one plugged in: Xbox, PlayStation, Nintendo, GameCube, N64, retro pads and more." },
+        { tab: "controller", key: "buttonMapper", action: "Open Button Mapper", title: "Button Mapper", detail: "See your controller and choose what every button does, like Steam's controller settings." },
+        { tab: "controller", key: "keyboardMapper", action: "Open Keyboard Mapper", title: "Keyboard Mapper", detail: "Choose which keys do what. Esc is always Back and number keys always tune channels." },
+        { tab: "controller", key: "dedicatedController", title: "Dedicated Controller Mode", detail: "For the couch: selecting any text box opens an on-screen keyboard you type on with the controller." },
         { tab: "profiles", key: "activeProfile", title: "Switch Profile", detail: "Left/Right to choose, Select to switch. Kids, Daycare and Lobby lock until the PIN is entered." },
         { tab: "profiles", key: "profilePin", action: "Set PIN", title: "PIN", detail: "4 to 8 digits. Needed to leave a locked profile, open Settings or close ChannelOS from one." },
         { tab: "profiles", key: "editKids", action: "Edit…", title: "Kids", detail: "The channels you choose for your kids, with a softer volume limit. Settings and channel tools stay locked." },
@@ -183,6 +188,12 @@ Item {
             var chosen = chosenProfile()
             return profileTitles[chosen] + (chosen === String(profileInfo.id) ? "  (on)" : "  — Select to switch")
         case "profilePin": return profileInfo.hasPin ? "Set" : "Not set"
+        case "controllerLayout":
+            if (String(preferences.controllerLayout || "auto") !== "auto") return String(preferences.controllerLayoutLabel)
+            return hostWindow && hostWindow.controllerName ? "Automatic (" + hostWindow.controllerName + ")" : "Automatic"
+        case "buttonMapper": return Number(preferences.controllerRemapped || 0) > 0 ? preferences.controllerRemapped + " changed" : ""
+        case "keyboardMapper": return Number(preferences.keysRemapped || 0) > 0 ? preferences.keysRemapped + " changed" : ""
+        case "dedicatedController": return onOff(preferences.dedicatedController)
         }
         if (String(key).indexOf("video") === 0)
             return String(preferences[key] || "Auto")
@@ -238,6 +249,12 @@ Item {
             }
         } else if (row.key === "bootPreview") {
             bootPreview.open()
+        } else if (row.key === "buttonMapper") {
+            controllerMapper.connectedFamily = hostWindow ? String(hostWindow.controllerFamily || "") : ""
+            controllerMapper.connectedName = hostWindow ? String(hostWindow.controllerName || "") : ""
+            controllerMapper.openMapper()
+        } else if (row.key === "keyboardMapper") {
+            keyboardMapper.openMapper()
         } else if (row.key === "profilePin") {
             pinSetPad.firstPin = ""
             pinSetPad.reset()
@@ -265,6 +282,14 @@ Item {
         }
         if (pinSetPopup.visible) {
             pinSetPad.handleIntent(intent, -1)
+            return
+        }
+        if (controllerMapper.visible) {
+            controllerMapper.handleIntent(intent)
+            return
+        }
+        if (keyboardMapper.visible) {
+            keyboardMapper.handleIntent(intent)
             return
         }
         if (profileEditor.visible) {
@@ -687,6 +712,17 @@ Item {
 
     ThemeBuilder {
         id: themeBuilder
+    }
+
+    ControllerMapper {
+        id: controllerMapper
+        onResult: function(result) { settingsRoot.showResult(result) }
+    }
+
+    KeyboardMapper {
+        id: keyboardMapper
+        hostWindow: settingsRoot.hostWindow
+        onResult: function(result) { settingsRoot.showResult(result) }
     }
 
     ProfileEditor {

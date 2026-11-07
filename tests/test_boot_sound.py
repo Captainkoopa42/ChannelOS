@@ -10,18 +10,18 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
-from channelos.boot_sound import BOOT_SOUND_PATH, PASS_SECONDS, BootSound, finish_delay
+from channelos.boot_sound import BAR_SECONDS, BOOT_SOUND_PATH, FADE_OUT_SECONDS, BootSound, finish_delay
 
 
 def test_track_ships_and_passes_end_on_the_beat() -> None:
-    assert BOOT_SOUND_PATH.is_file() and BOOT_SOUND_PATH.stat().st_size < 700_000
-    assert PASS_SECONDS == 3.0
-    # A quick boot hears the whole first pass, then the final note.
+    assert BOOT_SOUND_PATH.is_file() and BOOT_SOUND_PATH.stat().st_size < 1_000_000
+    assert BAR_SECONDS == 1.5 and FADE_OUT_SECONDS == 1.5
+    # A quick boot still hears two bars before fading.
     assert finish_delay(0.4) == pytest.approx(2.6)
-    # Later, it waits for the next pass boundary.
-    assert finish_delay(4.0) == pytest.approx(2.0)
-    assert finish_delay(5.98) == pytest.approx(3.02)  # too close to cut: one more pass
-    assert finish_delay(9.0) == pytest.approx(3.0)
+    # Later, the fade starts on the next bar line.
+    assert finish_delay(4.0) == pytest.approx(0.5)
+    assert finish_delay(5.98) == pytest.approx(1.52)  # too close to the line: the next one
+    assert finish_delay(40.0) == pytest.approx(0.5)
 
 
 class FakeBackend:
@@ -67,14 +67,14 @@ def test_boot_sound_plays_then_fades_on_the_next_boundary(monkeypatch) -> None:
     _pump(app, 0.2)
     backend = made[0]
     assert backend.volume == 40 and backend.playing and backend.loaded == BOOT_SOUND_PATH
-    # Pretend we are 2.8 s in: the fade starts at 3.0 s and lasts under half a second.
+    # Pretend we are 2.8 s in: the fade starts on the bar line at 3.0 s and lasts a bar.
     backend.position = 2.8
     sound.finish()
     _pump(app, 0.1)
-    assert backend.levels == [] and backend.playing, "waits for the final note"
-    _pump(app, 0.8)
-    assert backend.levels and backend.levels[-1] < 0.5
-    _pump(app, 0.3)
+    assert backend.levels == [] and backend.playing, "waits for the bar line"
+    _pump(app, 1.2)
+    assert backend.levels and 0.0 < backend.levels[-1] < 0.9
+    _pump(app, 1.0)
     assert sound.finished and not backend.playing
 
 

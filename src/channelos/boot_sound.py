@@ -1,10 +1,10 @@
 """The boot jig: "Poppie" plays softly while ChannelOS starts.
 
-The track (assets/sound/boot_poppie.ogg) is the jig repeated in passes of
-exactly 3.0 s (8 beats at 160 BPM), already softened, with a fade-in at the
-start. The first note of every pass doubles as the jig's final "na", so when
-start-up finishes the sound runs on to the next pass boundary and fades out on
-that note: a quick boot hears the jig once, a slow boot hears it loop.
+The track (assets/sound/boot_poppie.ogg) is Poppie's intro, then its lead-in
+and chorus repeating (an 18 s cycle cut exactly where the song itself repeats,
+so the seam is seamless), softened and kept quiet, with a fade-in baked in.
+When start-up finishes the sound plays on to the next bar line (1.5 s, four
+beats at 160 BPM) and fades out over one bar, after at least two bars.
 
 Playback goes through libVLC on its own thread (starting libVLC can take a
 moment); the user's volume is applied as libVLC gain from the very first
@@ -24,15 +24,16 @@ from PySide6.QtCore import QObject, QTimer
 logger = logging.getLogger(__name__)
 
 BOOT_SOUND_PATH = Path(__file__).resolve().parent / "assets" / "sound" / "boot_poppie.ogg"
-PASS_SECONDS = 3.0
-TRACK_SECONDS = 60.45
-FADE_OUT_SECONDS = 0.45
+BAR_SECONDS = 1.5          # four beats at 160 BPM
+MINIMUM_SECONDS = 3.0      # a quick boot still hears two bars
+TRACK_SECONDS = 126.0
+FADE_OUT_SECONDS = 1.5     # one bar
 
 
 def finish_delay(elapsed: float) -> float:
-    """Seconds until the next pass boundary (never before the first pass ends)."""
+    """Seconds until the fade starts: the next bar line, never before two bars."""
     elapsed = max(0.0, float(elapsed))
-    boundary = max(PASS_SECONDS, math.ceil((elapsed + 0.05) / PASS_SECONDS) * PASS_SECONDS)
+    boundary = max(MINIMUM_SECONDS, math.ceil((elapsed + 0.05) / BAR_SECONDS) * BAR_SECONDS)
     return max(0.0, boundary - elapsed)
 
 
@@ -109,7 +110,7 @@ class BootSound(QObject):
         return position if position > 0 else time.monotonic() - started
 
     def finish(self) -> None:
-        """Start-up is done: end on the next "na" with a fade."""
+        """Start-up is done: fade out from the next bar line."""
         if self._finish_requested or self._finished:
             return
         self._finish_requested = True

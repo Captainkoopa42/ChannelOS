@@ -1,0 +1,25 @@
+# Types in this directory. With a qmldir present, implicit imports expose only
+# the types listed here: add new QML files below (tests check this).
+singleton Theme 1.0 Theme.qml
+AdMediaBin 1.0 AdMediaBin.qml
+AdSettingsEditor 1.0 AdSettingsEditor.qml
+BroadcastPlannerScreen 1.0 BroadcastPlannerScreen.qml
+BroadcasterScreen 1.0 BroadcasterScreen.qml
+ChannelButton 1.0 ChannelButton.qml
+ChannelCheckBox 1.0 ChannelCheckBox.qml
+ChannelComboBox 1.0 ChannelComboBox.qml
+ChannelOperationOverlay 1.0 ChannelOperationOverlay.qml
+ChannelProgressBar 1.0 ChannelProgressBar.qml
+ChannelSpinBox 1.0 ChannelSpinBox.qml
+ChannelStudioScreen 1.0 ChannelStudioScreen.qml
+ChannelTextArea 1.0 ChannelTextArea.qml
+ChannelTextField 1.0 ChannelTextField.qml
+LibraryManagerScreen 1.0 LibraryManagerScreen.qml
+LibraryScreen 1.0 LibraryScreen.qml
+Main 1.0 Main.qml
+PlannerDatePicker 1.0 PlannerDatePicker.qml
+PlannerMediaBin 1.0 PlannerMediaBin.qml
+PortableDriveNotice 1.0 PortableDriveNotice.qml
+PortableSetupDialog 1.0 PortableSetupDialog.qml
+SettingsScreen 1.0 SettingsScreen.qml
+StartupWindow 1.0 StartupWindow.qml

@@ -250,7 +250,7 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "#050c15"
+        color: Theme.c("#050c15")
     }
 
     Timer {
@@ -269,8 +269,8 @@ Item {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: Math.max(300, parent.width * 0.22)
-        color: "#071322"
-        border.color: "#1a3550"
+        color: Theme.c("#071322")
+        border.color: Theme.c("#1a3550")
         border.width: 1
 
         Column {
@@ -282,8 +282,8 @@ Item {
 
             Row {
                 spacing: 2
-                Text { text: "Channel"; color: "#f4f7fb"; font.pixelSize: 34; font.weight: Font.DemiBold }
-                Text { text: "OS"; color: "#42adff"; font.pixelSize: 34; font.weight: Font.DemiBold }
+                Text { text: "Channel"; color: Theme.c("#f4f7fb"); font.pixelSize: 34; font.weight: Font.DemiBold }
+                Text { text: "OS"; color: Theme.c("#42adff"); font.pixelSize: 34; font.weight: Font.DemiBold }
             }
 
             Item { width: 1; height: 18 }
@@ -292,15 +292,15 @@ Item {
                 width: parent.width
                 height: 56
                 radius: 7
-                color: "#12396a"
-                border.color: "#42adff"
+                color: Theme.c("#12396a")
+                border.color: Theme.c("#42adff")
                 border.width: 2
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     text: "Settings"
-                    color: "#f4f7fb"
+                    color: Theme.c("#f4f7fb")
                     font.pixelSize: 20
                     font.weight: Font.DemiBold
                 }
@@ -310,13 +310,13 @@ Item {
                 width: parent.width
                 height: 52
                 radius: 7
-                color: backMouse.containsMouse ? "#10283f" : "transparent"
+                color: backMouse.containsMouse ? Theme.c("#10283f") : "transparent"
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     text: "‹  Back to Home"
-                    color: "#9fb0c2"
+                    color: Theme.c("#9fb0c2")
                     font.pixelSize: 18
                 }
                 MouseArea {
@@ -337,21 +337,21 @@ Item {
             spacing: 8
             Text {
                 text: "CURRENT PROFILE"
-                color: "#42adff"
+                color: Theme.c("#42adff")
                 font.pixelSize: 13
                 font.weight: Font.Bold
                 font.letterSpacing: 2
             }
             Text {
                 text: settingsRoot.profileLabel()
-                color: "#f4f7fb"
+                color: Theme.c("#f4f7fb")
                 font.pixelSize: 22
                 font.weight: Font.DemiBold
             }
             Text {
                 width: parent.width
                 text: "Preferences save to the active setup. Audio device selection stays on this PC. Lightweight reduces optional artwork work and motion."
-                color: "#9fb0c2"
+                color: Theme.c("#9fb0c2")
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
                 lineHeight: 1.2
@@ -374,7 +374,7 @@ Item {
             anchors.rightMargin: 44
             anchors.topMargin: 32
             text: "Settings"
-            color: "#f4f7fb"
+            color: Theme.c("#f4f7fb")
             font.pixelSize: 34
             font.weight: Font.DemiBold
         }
@@ -386,7 +386,7 @@ Item {
             anchors.top: settingsTitle.bottom
             anchors.topMargin: 4
             text: "Choose a ready-made profile or tune individual controls. Changes save automatically."
-            color: "#9fb0c2"
+            color: Theme.c("#9fb0c2")
             font.pixelSize: 16
             elide: Text.ElideRight
         }
@@ -419,8 +419,8 @@ Item {
                 width: Math.max(1, settingsList.width - 8)
                 height: 82
                 radius: 9
-                color: selected ? "#102b50" : "#0b1b2e"
-                border.color: selected ? "#42adff" : "#17324a"
+                color: selected ? Theme.c("#102b50") : Theme.c("#0b1b2e")
+                border.color: selected ? Theme.c("#42adff") : Theme.c("#17324a")
                 border.width: selected ? 2 : 1
 
                 MouseArea {
@@ -439,13 +439,13 @@ Item {
                     width: Math.max(1, parent.width - 300)
                     Text {
                         text: settingRow.modelData.title
-                        color: "#f4f7fb"
+                        color: Theme.c("#f4f7fb")
                         font.pixelSize: 18
                         font.weight: Font.DemiBold
                     }
                     Text {
                         text: settingRow.modelData.detail
-                        color: "#9fb0c2"
+                        color: Theme.c("#9fb0c2")
                         font.pixelSize: 13
                         width: parent.width
                         elide: Text.ElideRight
@@ -463,9 +463,9 @@ Item {
                         width: 38
                         height: 38
                         radius: 6
-                        color: minusMouse.containsMouse ? "#1a4d82" : "#10283f"
-                        border.color: "#1a91ff"
-                        Text { anchors.centerIn: parent; text: "−"; color: "#f4f7fb"; font.pixelSize: 22 }
+                        color: minusMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
+                        border.color: Theme.c("#1a91ff")
+                        Text { anchors.centerIn: parent; text: "−"; color: Theme.c("#f4f7fb"); font.pixelSize: 22 }
                         MouseArea {
                             id: minusMouse
                             anchors.fill: parent
@@ -483,7 +483,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         horizontalAlignment: Text.AlignHCenter
                         text: settingsRoot.valueFor(settingRow.index)
-                        color: "#42adff"
+                        color: Theme.c("#42adff")
                         font.pixelSize: 16
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
@@ -493,9 +493,9 @@ Item {
                         width: 38
                         height: 38
                         radius: 6
-                        color: plusMouse.containsMouse ? "#1a4d82" : "#10283f"
-                        border.color: "#1a91ff"
-                        Text { anchors.centerIn: parent; text: "+"; color: "#f4f7fb"; font.pixelSize: 22 }
+                        color: plusMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
+                        border.color: Theme.c("#1a91ff")
+                        Text { anchors.centerIn: parent; text: "+"; color: Theme.c("#f4f7fb"); font.pixelSize: 22 }
                         MouseArea {
                             id: plusMouse
                             anchors.fill: parent
@@ -517,8 +517,8 @@ Item {
                     height: 42
                     radius: 6
                     visible: settingRow.index >= settingsRoot.firstAction
-                    color: actionMouse.containsMouse ? "#1a4d82" : "#10283f"
-                    border.color: "#1a91ff"
+                    color: actionMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
+                    border.color: Theme.c("#1a91ff")
                     Text {
                         anchors.centerIn: parent
                         text: settingRow.index === 21
@@ -528,7 +528,7 @@ Item {
                               : settingRow.index === 23
                               ? "Restore Standard Defaults"
                               : "Copy / Open Setup"
-                        color: "#f4f7fb"
+                        color: Theme.c("#f4f7fb")
                         font.pixelSize: 14
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
@@ -574,15 +574,15 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 50
-        color: "#071322"
-        border.color: "#1a3550"
+        color: Theme.c("#071322")
+        border.color: Theme.c("#1a3550")
         border.width: 1
         Text {
             anchors.left: parent.left
             anchors.leftMargin: 30
             anchors.verticalCenter: parent.verticalCenter
             text: "ARROWS  Navigate / Change     ENTER  Select     F11  Display Mode     ESC / H  Home"
-            color: "#9fb0c2"
+            color: Theme.c("#9fb0c2")
             font.pixelSize: 13
         }
     }

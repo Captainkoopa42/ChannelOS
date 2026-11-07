@@ -49,18 +49,18 @@ Item {
     property var assignments: ({})
 
     // Studio palette (ChannelStudioScreen.qml).
-    readonly property color bg: "#050c15"
-    readonly property color panel: "#081625"
-    readonly property color panelRaised: "#0d2035"
-    readonly property color panelSoft: "#10283f"
-    readonly property color line: "#1a3550"
-    readonly property color muted: "#9fb0c2"
-    readonly property color ink: "#f4f7fb"
-    readonly property color accent: "#1a91ff"
-    readonly property color accentBright: "#42adff"
-    readonly property color good: "#2bcf75"
-    readonly property color warning: "#ffb84a"
-    readonly property color danger: "#ff6666"
+    readonly property color bg: Theme.c("#050c15")
+    readonly property color panel: Theme.c("#081625")
+    readonly property color panelRaised: Theme.c("#0d2035")
+    readonly property color panelSoft: Theme.c("#10283f")
+    readonly property color line: Theme.c("#1a3550")
+    readonly property color muted: Theme.c("#9fb0c2")
+    readonly property color ink: Theme.c("#f4f7fb")
+    readonly property color accent: Theme.c("#1a91ff")
+    readonly property color accentBright: Theme.c("#42adff")
+    readonly property color good: Theme.c("#2bcf75")
+    readonly property color warning: Theme.c("#ffb84a")
+    readonly property color danger: Theme.c("#ff6666")
 
     readonly property var track: rules.tracks.filter(function(t) { return t.id === selectedTrack })[0] || ({})
     readonly property var group: rules.groups.filter(function(g) { return g.id === track.group_id })[0] || ({name:"Select a track",asset_ids:[]})
@@ -155,7 +155,7 @@ Item {
             padding: 22
             bottomPadding: 0
         }
-        Overlay.modal: Rectangle { color: "#aa02070d" }
+        Overlay.modal: Rectangle { color: Theme.c("#aa02070d") }
     }
     component DialogButtons: RowLayout {
         id: buttons
@@ -535,7 +535,7 @@ Item {
                 height: 38
                 width: draftState.implicitWidth + 24
                 radius: 19
-                color: planner.dirty ? "#4b3717" : planner.panelRaised
+                color: planner.dirty ? Theme.c("#4b3717") : planner.panelRaised
                 border.color: planner.dirty ? planner.warning : planner.line
                 Text {
                     id: draftState
@@ -620,7 +620,7 @@ Item {
                                         readonly property var shows: planner.rows().filter(function(s) { return Number(String(s.display_start || "").slice(11,13))===hourRow.index })
                                         width: dayList.width; height: Math.max(44,hourShows.implicitHeight+12)
                                         radius: 6
-                                        color: drop.containsDrag ? "#12396a" : planner.panelRaised
+                                        color: drop.containsDrag ? Theme.c("#12396a") : planner.panelRaised
                                         border.color: drop.containsDrag ? planner.accentBright : planner.line
                                         RowLayout {
                                             anchors.fill: parent; anchors.margins: 6
@@ -635,8 +635,8 @@ Item {
                                                         objectName: "plannerDaySegment"
                                                         required property var modelData
                                                         Layout.fillWidth: true; implicitHeight: showLabel.implicitHeight+12; radius: 5
-                                                        color: modelData.kind==="offair" ? "#0b1622" : modelData.kind==="advertisement" ? "#3a2e17" : modelData.kind==="filler" ? "#14283b" : modelData.kind==="rerun" ? "#173452" : "#123558"
-                                                        border.color: modelData.kind==="offair" ? planner.line : modelData.kind==="advertisement" ? "#6b5326" : "#24577d"
+                                                        color: modelData.kind==="offair" ? Theme.c("#0b1622") : modelData.kind==="advertisement" ? Theme.c("#3a2e17") : modelData.kind==="filler" ? Theme.c("#14283b") : modelData.kind==="rerun" ? Theme.c("#173452") : Theme.c("#123558")
+                                                        border.color: modelData.kind==="offair" ? planner.line : modelData.kind==="advertisement" ? Theme.c("#6b5326") : Theme.c("#24577d")
                                                         Label {
                                                             id: showLabel
                                                             anchors.fill: parent; anchors.margins: 6

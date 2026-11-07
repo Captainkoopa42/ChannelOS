@@ -40,18 +40,18 @@ Item {
     readonly property bool dialogOpen: basicDialog.visible || advancedDialog.visible || binDialog.visible
     signal settingsApplied()
     signal binRequested()
-    readonly property color appBackground: "#050c15"
-    readonly property color panel: "#081625"
-    readonly property color panelRaised: "#0d2035"
-    readonly property color panelSoft: "#10283f"
-    readonly property color line: "#1a3550"
-    readonly property color textPrimary: "#f4f7fb"
-    readonly property color textSecondary: "#9fb0c2"
-    readonly property color accent: "#1a91ff"
-    readonly property color accentBright: "#42adff"
-    readonly property color liveGreen: "#2bcf75"
-    readonly property color warning: "#ffb84a"
-    readonly property color danger: "#ff6666"
+    readonly property color appBackground: Theme.c("#050c15")
+    readonly property color panel: Theme.c("#081625")
+    readonly property color panelRaised: Theme.c("#0d2035")
+    readonly property color panelSoft: Theme.c("#10283f")
+    readonly property color line: Theme.c("#1a3550")
+    readonly property color textPrimary: Theme.c("#f4f7fb")
+    readonly property color textSecondary: Theme.c("#9fb0c2")
+    readonly property color accent: Theme.c("#1a91ff")
+    readonly property color accentBright: Theme.c("#42adff")
+    readonly property color liveGreen: Theme.c("#2bcf75")
+    readonly property color warning: Theme.c("#ffb84a")
+    readonly property color danger: Theme.c("#ff6666")
 
     component StudioButton: Button {
         id: studioButton
@@ -71,11 +71,13 @@ Item {
             id: buttonLabel
             text: studioButton.text
             color: !studioButton.enabled
-                   ? "#607489"
+                   ? Theme.c("#607489")
                    : studioButton.destructive
                    ? adsRoot.danger
-                   : studioButton.highlighted || studioButton.checked
-                   ? "#ffffff" : adsRoot.textPrimary
+                   : studioButton.highlighted
+                   ? Theme.c("#ffffff")
+                   : studioButton.checked
+                   ? Theme.c("#fffffe") : adsRoot.textPrimary
             font.pixelSize: 12
             font.weight: studioButton.highlighted || studioButton.checked
                          ? Font.DemiBold : Font.Medium
@@ -88,20 +90,20 @@ Item {
             id: buttonBackground
             radius: 7
             color: !studioButton.enabled
-                   ? "#091522"
+                   ? Theme.c("#091522")
                    : studioButton.down
-                   ? (studioButton.destructive ? "#54212a" : "#0a66ad")
+                   ? (studioButton.destructive ? Theme.c("#54212a") : Theme.c("#0a66ad"))
                    : studioButton.destructive
-                   ? (studioButton.hovered ? "#351b24" : "#21151c")
+                   ? (studioButton.hovered ? Theme.c("#351b24") : Theme.c("#21151c"))
                    : studioButton.highlighted
                    ? (studioButton.hovered ? adsRoot.accentBright
                                            : adsRoot.accent)
                    : studioButton.checked
-                   ? (studioButton.hovered ? "#176aa6" : "#12527f")
+                   ? (studioButton.hovered ? Theme.c("#176aa6") : Theme.c("#12527f"))
                    : studioButton.hovered
-                   ? "#143a5c" : adsRoot.panelRaised
+                   ? Theme.c("#143a5c") : adsRoot.panelRaised
             border.color: !studioButton.enabled
-                          ? "#14283b"
+                          ? Theme.c("#14283b")
                           : studioButton.destructive
                           ? adsRoot.danger
                           : studioButton.activeFocus
@@ -138,7 +140,7 @@ Item {
         }
 
         Overlay.modal: Rectangle {
-            color: "#aa02070d"
+            color: Theme.c("#aa02070d")
         }
     }
 
@@ -163,7 +165,7 @@ Item {
         id: tab
         implicitHeight: 38
         contentItem: Text { text: tab.text; color: adsRoot.textPrimary; font.pixelSize: 12; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight }
-        background: Rectangle { color: tab.checked ? "#12527f" : adsRoot.panel; border.color: tab.checked || tab.activeFocus ? adsRoot.accentBright : adsRoot.line; radius: 4 }
+        background: Rectangle { color: tab.checked ? Theme.c("#12527f") : adsRoot.panel; border.color: tab.checked || tab.activeFocus ? adsRoot.accentBright : adsRoot.line; radius: 4 }
     }
     function split(value) { return String(value || "").split(";").map(function(x) { return x.trim() }).filter(function(x) { return x.length > 0 }) }
     function editorValues() {

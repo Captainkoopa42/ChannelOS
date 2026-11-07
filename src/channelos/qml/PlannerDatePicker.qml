@@ -70,7 +70,7 @@ ChannelButton {
         modal: false
         focus: true
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-        background: Rectangle { radius: 10; color: "#0d2035"; border.color: "#1a3550" }
+        background: Rectangle { radius: 10; color: Theme.c("#0d2035"); border.color: Theme.c("#1a3550") }
 
         ColumnLayout {
             anchors.fill: parent
@@ -85,7 +85,7 @@ ChannelButton {
                     text: picker.viewMonth
                           ? picker.monthNames[picker.parts(picker.viewMonth + "-01").month - 1] + " "
                             + picker.parts(picker.viewMonth + "-01").year : ""
-                    color: "#f4f7fb"
+                    color: Theme.c("#f4f7fb")
                     font.pixelSize: 14
                     font.weight: Font.DemiBold
                 }
@@ -104,7 +104,7 @@ ChannelButton {
                         Layout.fillWidth: true
                         horizontalAlignment: Text.AlignHCenter
                         text: modelData
-                        color: "#9fb0c2"
+                        color: Theme.c("#9fb0c2")
                         font.pixelSize: 10
                     }
                 }
@@ -119,12 +119,12 @@ ChannelButton {
                         Layout.fillWidth: true
                         implicitHeight: 32
                         radius: 6
-                        color: selected ? "#1a91ff" : cellArea.containsMouse ? "#143a5c" : "transparent"
-                        border.color: isToday && !selected ? "#42adff" : "transparent"
+                        color: selected ? Theme.c("#1a91ff") : cellArea.containsMouse ? Theme.c("#143a5c") : "transparent"
+                        border.color: isToday && !selected ? Theme.c("#42adff") : "transparent"
                         Text {
                             anchors.centerIn: parent
                             text: Number(cell.modelData.slice(-2))
-                            color: cell.selected ? "#ffffff" : cell.inMonth ? "#f4f7fb" : "#55687c"
+                            color: cell.selected ? Theme.c("#ffffff") : cell.inMonth ? Theme.c("#f4f7fb") : Theme.c("#55687c")
                             font.pixelSize: 12
                             font.weight: cell.selected ? Font.Bold : Font.Normal
                         }

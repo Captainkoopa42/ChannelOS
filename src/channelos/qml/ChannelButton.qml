@@ -19,13 +19,13 @@ Button {
         id: buttonLabel
         text: channelButton.text
         color: !channelButton.enabled
-               ? "#607489"
+               ? Theme.c("#607489")
                : channelButton.destructive
-               ? "#ff6666"
-               : channelButton.activeFocus
-                 || channelButton.highlighted
-                 || channelButton.checked
-               ? "#ffffff" : "#f4f7fb"
+               ? Theme.c("#ff6666")
+               : channelButton.highlighted
+               ? Theme.c("#ffffff")
+               : channelButton.activeFocus || channelButton.checked
+               ? Theme.c("#fffffe") : Theme.c("#f4f7fb")
         font.pixelSize: 12
         font.weight: channelButton.activeFocus
                      || channelButton.highlighted
@@ -39,27 +39,27 @@ Button {
     background: Rectangle {
         radius: 7
         color: !channelButton.enabled
-               ? "#091522"
+               ? Theme.c("#091522")
                : channelButton.down
-               ? (channelButton.destructive ? "#54212a" : "#0a66ad")
+               ? (channelButton.destructive ? Theme.c("#54212a") : Theme.c("#0a66ad"))
                : channelButton.destructive
-               ? (channelButton.hovered ? "#351b24" : "#21151c")
+               ? (channelButton.hovered ? Theme.c("#351b24") : Theme.c("#21151c"))
                : channelButton.highlighted
-               ? (channelButton.hovered ? "#42adff" : "#1a91ff")
+               ? (channelButton.hovered ? Theme.c("#42adff") : Theme.c("#1a91ff"))
                : channelButton.checked
-               ? (channelButton.hovered ? "#176aa6" : "#12527f")
+               ? (channelButton.hovered ? Theme.c("#176aa6") : Theme.c("#12527f"))
                : channelButton.activeFocus
-               ? (channelButton.hovered ? "#1a4d82" : "#12396a")
+               ? (channelButton.hovered ? Theme.c("#1a4d82") : Theme.c("#12396a"))
                : channelButton.hovered
-               ? "#143a5c" : "#0d2035"
+               ? Theme.c("#143a5c") : Theme.c("#0d2035")
         border.color: !channelButton.enabled
-                      ? "#14283b"
+                      ? Theme.c("#14283b")
                       : channelButton.destructive
-                      ? "#ff6666"
+                      ? Theme.c("#ff6666")
                       : channelButton.activeFocus
                         || channelButton.highlighted
                         || channelButton.checked
-                      ? "#42adff" : "#1a3550"
+                      ? Theme.c("#42adff") : Theme.c("#1a3550")
         border.width: channelButton.activeFocus
                       || channelButton.highlighted
                       || channelButton.checked ? 2 : 1

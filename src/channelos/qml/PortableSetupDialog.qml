@@ -18,9 +18,9 @@ Dialog {
     property bool showOperation: false
     onOpened: openExisting.forceActiveFocus()
     header: Label {
-        text: "Portable Setup"; color: "#f4f7fb"; font.pixelSize: 22; font.bold: true
+        text: "Portable Setup"; color: Theme.c("#f4f7fb"); font.pixelSize: 22; font.bold: true
         leftPadding: 20; topPadding: 16; bottomPadding: 8
-        background: Rectangle { color: "#0d2035"; radius: 10 }
+        background: Rectangle { color: Theme.c("#0d2035"); radius: 10 }
     }
     Connections {
         target: channelOS
@@ -60,7 +60,7 @@ Dialog {
             }
         }
     }
-    background: Rectangle { color: "#0d2035"; border.color: "#294158"; radius: 10 }
+    background: Rectangle { color: Theme.c("#0d2035"); border.color: Theme.c("#294158"); radius: 10 }
     contentItem: Flickable {
         clip: true
         contentWidth: width
@@ -70,18 +70,18 @@ Dialog {
             id: body
             width: parent.width - 12
             spacing: 12
-            Label { text: "CURRENT SETUP  •  " + String(portableDialog.setup.name || "This PC"); color: "#42adff"; font.bold: true }
+            Label { text: "CURRENT SETUP  •  " + String(portableDialog.setup.name || "This PC"); color: Theme.c("#42adff"); font.bold: true }
             Label {
                 Layout.fillWidth: true
                 text: String(portableDialog.setup.dataDirectory || "")
-                wrapMode: Text.WrapAnywhere; color: "#b7c5d5"
+                wrapMode: Text.WrapAnywhere; color: Theme.c("#b7c5d5")
             }
             Label {
                 Layout.fillWidth: true
                 text: portableDialog.setup.active
                       ? "Channels, index, ad settings and history save directly to this drive."
                       : "Copy your setup to a drive, or open an existing setup and save changes there."
-                wrapMode: Text.Wrap; color: "#b7c5d5"
+                wrapMode: Text.Wrap; color: Theme.c("#b7c5d5")
             }
             ChannelButton {
                 id: openExisting
@@ -89,12 +89,12 @@ Dialog {
                 enabled: !portableDialog.copyState.active
                 onClicked: portableDialog.showResult(channelOS.chooseExistingPortableSetup())
             }
-            Rectangle { Layout.fillWidth: true; height: 1; color: "#294158" }
-            Label { text: "COPY TO DRIVE / FOLDER"; color: "#f4f7fb"; font.bold: true }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.c("#294158") }
+            Label { text: "COPY TO DRIVE / FOLDER"; color: Theme.c("#f4f7fb"); font.bold: true }
             Label {
                 Layout.fillWidth: true
                 text: "Choose a folder containing your media, or choose the drive itself. Existing media there is reused."
-                wrapMode: Text.Wrap; color: "#b7c5d5"
+                wrapMode: Text.Wrap; color: Theme.c("#b7c5d5")
             }
             RowLayout {
                 Layout.fillWidth: true
@@ -161,7 +161,7 @@ Dialog {
                       + (Number(portableDialog.review.mediaBytesToCopy || 0) / 1073741824).toFixed(2) + " GB)\n"
                       + String(portableDialog.review.offlineFiles || 0) + " unavailable files retained in the index"
                       + "\nApplication: " + (portableDialog.review.applicationIncluded ? "included" : "use a compatible ChannelOS installation")
-                color: "#b7c5d5"; wrapMode: Text.Wrap
+                color: Theme.c("#b7c5d5"); wrapMode: Text.Wrap
             }
             Repeater {
                 model: portableDialog.review.ok ? portableDialog.review.sources : []
@@ -169,7 +169,7 @@ Dialog {
                     required property var modelData
                     Layout.fillWidth: true
                     text: String(modelData.name) + " → " + String(modelData.relativePath || "drive root")
-                    color: "#8fa9c2"; wrapMode: Text.WrapAnywhere
+                    color: Theme.c("#8fa9c2"); wrapMode: Text.WrapAnywhere
                 }
             }
             ProgressBar {
@@ -180,7 +180,7 @@ Dialog {
             Label {
                 Layout.fillWidth: true
                 text: String(portableDialog.showOperation ? portableDialog.copyState.message : portableDialog.feedback)
-                color: portableDialog.copyState.phase === "error" ? "#ff8585" : "#b7c5d5"
+                color: portableDialog.copyState.phase === "error" ? Theme.c("#ff8585") : Theme.c("#b7c5d5")
                 wrapMode: Text.WrapAnywhere
             }
             RowLayout {
@@ -195,7 +195,7 @@ Dialog {
                     onClicked: portableDialog.showResult(channelOS.openPortableSetup(portableDialog.copyState.destination, portableDialog.copyState.setupId))
                 }
             }
-            Label { text: "RECENT SETUPS"; color: "#42adff"; font.bold: true }
+            Label { text: "RECENT SETUPS"; color: Theme.c("#42adff"); font.bold: true }
             Repeater {
                 model: portableDialog.setup.recent || []
                 delegate: RowLayout {
@@ -204,7 +204,7 @@ Dialog {
                     Label {
                         Layout.fillWidth: true
                         text: String(modelData.name || "Setup") + (modelData.available ? "" : " • drive unavailable") + "\n" + modelData.root
-                        color: "#b7c5d5"; wrapMode: Text.WrapAnywhere
+                        color: Theme.c("#b7c5d5"); wrapMode: Text.WrapAnywhere
                     }
                     ChannelButton {
                         text: "Open"

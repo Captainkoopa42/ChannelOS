@@ -15,7 +15,7 @@ ColumnLayout {
         text: bin.planner && bin.planner.mediaBin.length
               ? bin.planner.count(bin.planner.mediaBin.length, "collection") + " · drag one onto an hour in Day, or add it as a track"
               : "Indexed collections appear here"
-        color: "#9fb0c2"
+        color: Theme.c("#9fb0c2")
         font.pixelSize: 11
         wrapMode: Text.Wrap
     }
@@ -43,8 +43,8 @@ ColumnLayout {
             height: binContent.implicitHeight + 20
             radius: 8
             property var binGroup: modelData
-            color: binDrag.containsMouse ? "#12304d" : "#0d2035"
-            border.color: binDrag.drag.active ? "#42adff" : "#1a3550"
+            color: binDrag.containsMouse ? Theme.c("#12304d") : Theme.c("#0d2035")
+            border.color: binDrag.drag.active ? Theme.c("#42adff") : Theme.c("#1a3550")
             Drag.active: binDrag.drag.active
             Drag.source: binCard
             Drag.keys: ["planner-group"]
@@ -59,7 +59,7 @@ ColumnLayout {
                 spacing: 5
                 Text {
                     text: binCard.modelData.name
-                    color: "#f4f7fb"
+                    color: Theme.c("#f4f7fb")
                     font.weight: Font.DemiBold
                     font.pixelSize: 13
                     elide: Text.ElideRight
@@ -67,13 +67,13 @@ ColumnLayout {
                 }
                 Text {
                     text: bin.planner.count(binCard.modelData.count, "video") + " · " + bin.planner.hours(binCard.modelData.seconds)
-                    color: "#9fb0c2"
+                    color: Theme.c("#9fb0c2")
                     font.pixelSize: 11
                 }
                 Text {
                     visible: binCard.modelData.missing > 0
                     text: binCard.modelData.missing + " unavailable or not yet measured"
-                    color: "#ffb84a"
+                    color: Theme.c("#ffb84a")
                     font.pixelSize: 11
                     Layout.fillWidth: true
                     wrapMode: Text.Wrap
@@ -108,7 +108,7 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: bin.planner && !bin.planner.mediaBin.length
         text: bin.planner && bin.planner.loaded ? "No indexed media. Add and scan a source in Library first." : "Loading collections…"
-        color: "#9fb0c2"
+        color: Theme.c("#9fb0c2")
         font.pixelSize: 11
         wrapMode: Text.Wrap
     }

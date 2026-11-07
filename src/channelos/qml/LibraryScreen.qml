@@ -13,15 +13,15 @@ Item {
     readonly property bool viewActive: hostWindow !== null && hostWindow.screen === "library" && !managerVisible
     visible: hostWindow !== null && hostWindow.screen === "library"
 
-    readonly property color appBackground: "#050c15"
-    readonly property color railBackground: "#06111e"
-    readonly property color panel: "#081625"
-    readonly property color panelRaised: "#0d2035"
-    readonly property color line: "#1a3550"
-    readonly property color textPrimary: "#f4f7fb"
-    readonly property color textSecondary: "#9fb0c2"
-    readonly property color accent: "#1a91ff"
-    readonly property color accentBright: "#42adff"
+    readonly property color appBackground: Theme.c("#050c15")
+    readonly property color railBackground: Theme.c("#06111e")
+    readonly property color panel: Theme.c("#081625")
+    readonly property color panelRaised: Theme.c("#0d2035")
+    readonly property color line: Theme.c("#1a3550")
+    readonly property color textPrimary: Theme.c("#f4f7fb")
+    readonly property color textSecondary: Theme.c("#9fb0c2")
+    readonly property color accent: Theme.c("#1a91ff")
+    readonly property color accentBright: Theme.c("#42adff")
 
     property var snapshot: ({items: [], sources: []})
     property var viewData: null
@@ -481,12 +481,12 @@ Item {
 
     function cardColor(item, shift) {
         var palette = [
-            ["#163b5d", "#07131f"],
-            ["#27445e", "#0a1522"],
-            ["#244238", "#081712"],
-            ["#4a314d", "#160b19"],
-            ["#4b3d25", "#171108"],
-            ["#293a63", "#0a1022"]
+            [Theme.c("#163b5d"), Theme.c("#07131f")],
+            [Theme.c("#27445e"), Theme.c("#0a1522")],
+            [Theme.c("#244238"), Theme.c("#081712")],
+            [Theme.c("#4a314d"), Theme.c("#160b19")],
+            [Theme.c("#4b3d25"), Theme.c("#171108")],
+            [Theme.c("#293a63"), Theme.c("#0a1022")]
         ]
         var key = String(item.assetId || item.title || "media")
         var total = shift || 0
@@ -729,8 +729,8 @@ Item {
                     width: navigationItems.width
                     height: 48
                     radius: 6
-                    color: modelData.action === "library" ? "#103568"
-                           : navMouse.containsMouse ? "#0d2744" : "transparent"
+                    color: modelData.action === "library" ? Theme.c("#103568")
+                           : navMouse.containsMouse ? Theme.c("#0d2744") : "transparent"
                     border.color: modelData.action === "library"
                                   ? libraryRoot.accentBright : "transparent"
                     border.width: modelData.action === "library" ? 1 : 0
@@ -777,7 +777,7 @@ Item {
             anchors.margins: 22
             height: 112
             radius: 8
-            color: "#091827"
+            color: Theme.c("#091827")
             border.color: line
 
             Column {
@@ -806,7 +806,7 @@ Item {
                     width: parent.width
                     height: 5
                     radius: 3
-                    color: "#142b40"
+                    color: Theme.c("#142b40")
                     Rectangle {
                         width: parent.width
                         height: parent.height
@@ -830,9 +830,9 @@ Item {
         Rectangle {
             anchors.fill: parent
             gradient: Gradient {
-                GradientStop { position: 0.0; color: "#071728" }
-                GradientStop { position: 0.55; color: "#050d18" }
-                GradientStop { position: 1.0; color: "#050c15" }
+                GradientStop { position: 0.0; color: Theme.c("#071728") }
+                GradientStop { position: 0.55; color: Theme.c("#050d18") }
+                GradientStop { position: 1.0; color: Theme.c("#050c15") }
             }
         }
 
@@ -870,7 +870,7 @@ Item {
                 width: Math.min(310, parent.width * 0.28)
                 height: 44
                 placeholderText: "Search your library…"
-                placeholderTextColor: "#71869c"
+                placeholderTextColor: Theme.c("#71869c")
                 color: textPrimary
                 text: libraryRoot.query
                 onTextChanged: libraryRoot.query = text
@@ -903,7 +903,7 @@ Item {
             anchors.rightMargin: 28
             height: 92
             radius: 9
-            color: "#0a1b2d"
+            color: Theme.c("#0a1b2d")
             border.color: line
             visible: Boolean(libraryRoot.selectedItem().assetId)
 
@@ -1014,7 +1014,7 @@ Item {
                     height: 38
                     radius: 5
                     color: shelfDelegate.shelfIndex === libraryRoot.selectedShelf
-                           ? "#0d2035" : "transparent"
+                           ? Theme.c("#0d2035") : "transparent"
 
                     Text {
                         id: shelfChevron
@@ -1102,13 +1102,13 @@ Item {
                         property bool artworkReady: artworkImage.status === Image.Ready
                         property bool shelfOpen: shelfDelegate.expanded
                         color: colors[0]
-                        border.color: selected ? accentBright : "#243d55"
+                        border.color: selected ? accentBright : Theme.c("#243d55")
                         border.width: selected ? 3 : 1
 
                         gradient: Gradient {
                             GradientStop { position: 0.0; color: mediaCard.colors[0] }
                             GradientStop { position: 0.68; color: mediaCard.colors[1] }
-                            GradientStop { position: 1.0; color: "#050a11" }
+                            GradientStop { position: 1.0; color: Theme.c("#050a11") }
                         }
 
                         function requestArtwork() {
@@ -1165,9 +1165,9 @@ Item {
                                 anchors.fill: parent
                                 visible: mediaCard.artworkReady
                                 gradient: Gradient {
-                                    GradientStop { position: 0.0; color: "#05000000" }
-                                    GradientStop { position: 0.72; color: "#18000000" }
-                                    GradientStop { position: 1.0; color: "#9a050a11" }
+                                    GradientStop { position: 0.0; color: Theme.c("#05000000") }
+                                    GradientStop { position: 0.72; color: Theme.c("#18000000") }
+                                    GradientStop { position: 1.0; color: Theme.c("#9a050a11") }
                                 }
                             }
 
@@ -1179,7 +1179,7 @@ Item {
                                 elide: Text.ElideRight
                                 text: libraryRoot.friendlyFormat(mediaCard.modelData)
                                 visible: !mediaCard.artworkReady
-                                color: "#d9ecff"
+                                color: Theme.c("#d9ecff")
                                 opacity: 0.78
                                 font.pixelSize: mediaCard.width > 260 ? 22 : 17
                                 font.weight: Font.Bold
@@ -1202,7 +1202,7 @@ Item {
                             anchors.right: parent.right
                             anchors.bottom: parent.bottom
                             height: parent.height * 0.48
-                            color: "#c9060c14"
+                            color: Theme.c("#c9060c14")
 
                             Column {
                                 anchors.left: parent.left
@@ -1244,7 +1244,7 @@ Item {
                             height: 4
                             radius: 2
                             visible: Boolean(mediaCard.modelData.continueWatching)
-                            color: "#31465b"
+                            color: Theme.c("#31465b")
 
                             Rectangle {
                                 width: parent.width * Math.max(
@@ -1308,7 +1308,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: 50
-            color: "#06111e"
+            color: Theme.c("#06111e")
             border.color: line
 
             Row {
@@ -1332,7 +1332,7 @@ Item {
         anchors.fill: parent
         z: 110
         visible: libraryRoot.addToChannelVisible
-        color: "#c8050a11"
+        color: Theme.c("#c8050a11")
 
         MouseArea {
             anchors.fill: parent
@@ -1417,7 +1417,7 @@ Item {
                     height: 72
                     radius: 8
                     color: index === libraryRoot.addToChannelSelection
-                           ? "#103568" : panelRaised
+                           ? Theme.c("#103568") : panelRaised
                     border.color: index === libraryRoot.addToChannelSelection
                                   ? accentBright : line
                     border.width: index === libraryRoot.addToChannelSelection ? 2 : 1
@@ -1493,14 +1493,14 @@ Item {
                 anchors.bottomMargin: 14
                 height: 66
                 radius: 7
-                color: libraryRoot.addToChannelError ? "#35131a" : "#0b2031"
-                border.color: libraryRoot.addToChannelError ? "#b95769" : line
+                color: libraryRoot.addToChannelError ? Theme.c("#35131a") : Theme.c("#0b2031")
+                border.color: libraryRoot.addToChannelError ? Theme.c("#b95769") : line
 
                 Text {
                     anchors.fill: parent
                     anchors.margins: 13
                     text: libraryRoot.addToChannelMessage
-                    color: libraryRoot.addToChannelError ? "#ffd8df" : textSecondary
+                    color: libraryRoot.addToChannelError ? Theme.c("#ffd8df") : textSecondary
                     font.pixelSize: 13
                     wrapMode: Text.WordWrap
                     verticalAlignment: Text.AlignVCenter

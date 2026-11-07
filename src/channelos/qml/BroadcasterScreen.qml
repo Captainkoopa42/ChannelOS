@@ -7,18 +7,18 @@ Item {
     anchors.fill: parent
     z: 90
 
-    readonly property color appBackground: "#050c15"
-    readonly property color panel: "#081625"
-    readonly property color panelRaised: "#0d2035"
-    readonly property color panelSoft: "#10283f"
-    readonly property color line: "#1a3550"
-    readonly property color textPrimary: "#f4f7fb"
-    readonly property color textSecondary: "#9fb0c2"
-    readonly property color accent: "#1a91ff"
-    readonly property color accentBright: "#42adff"
-    readonly property color liveGreen: "#2bcf75"
-    readonly property color warning: "#ffb84a"
-    readonly property color danger: "#ff6666"
+    readonly property color appBackground: Theme.c("#050c15")
+    readonly property color panel: Theme.c("#081625")
+    readonly property color panelRaised: Theme.c("#0d2035")
+    readonly property color panelSoft: Theme.c("#10283f")
+    readonly property color line: Theme.c("#1a3550")
+    readonly property color textPrimary: Theme.c("#f4f7fb")
+    readonly property color textSecondary: Theme.c("#9fb0c2")
+    readonly property color accent: Theme.c("#1a91ff")
+    readonly property color accentBright: Theme.c("#42adff")
+    readonly property color liveGreen: Theme.c("#2bcf75")
+    readonly property color warning: Theme.c("#ffb84a")
+    readonly property color danger: Theme.c("#ff6666")
 
     property var hostWindow: null
     property var snapshot: channelOS
@@ -345,10 +345,10 @@ Item {
         width: (parent.width - 110) / 4
         height: parent.height * 0.29 - 56
         radius: 10
-        color: homeCardMouse.containsMouse ? "#12396a" : "#0b1b2e"
+        color: homeCardMouse.containsMouse ? Theme.c("#12396a") : Theme.c("#0b1b2e")
         border.color: homeCardMouse.containsMouse
                       ? broadcasterRoot.accentBright
-                      : "#17324a"
+                      : Theme.c("#17324a")
         border.width: homeCardMouse.containsMouse ? 2 : 1
 
         Column {
@@ -467,7 +467,7 @@ Item {
             anchors.right: parent.right
             anchors.top: parent.top
             height: 104
-            color: "#071322"
+            color: Theme.c("#071322")
             border.color: broadcasterRoot.line
             border.width: 1
 
@@ -535,7 +535,7 @@ Item {
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
                 width: parent.width * 0.42
-                color: "#06111e"
+                color: Theme.c("#06111e")
                 border.color: broadcasterRoot.line
                 border.width: 1
 
@@ -584,13 +584,13 @@ Item {
                         height: 86
                         radius: 7
                         color: index === broadcasterRoot.selectedChannelIndex
-                               ? "#12396a"
+                               ? Theme.c("#12396a")
                                : channelMouse.containsMouse
-                                 ? "#0e2842"
-                                 : "#0a1a2b"
+                                 ? Theme.c("#0e2842")
+                                 : Theme.c("#0a1a2b")
                         border.color: index === broadcasterRoot.selectedChannelIndex
                                       ? broadcasterRoot.accentBright
-                                      : "#17324a"
+                                      : Theme.c("#17324a")
                         border.width: index === broadcasterRoot.selectedChannelIndex ? 2 : 1
 
                         Row {
@@ -647,7 +647,7 @@ Item {
                                 width: 54
                                 height: 25
                                 radius: 12
-                                color: "#174e36"
+                                color: Theme.c("#174e36")
 
                                 Text {
                                     anchors.centerIn: parent
@@ -740,7 +740,7 @@ Item {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.bottom: parent.bottom
-                color: "#091827"
+                color: Theme.c("#091827")
                 border.color: broadcasterRoot.line
                 border.width: 1
 
@@ -789,7 +789,7 @@ Item {
                             height: listFeedbackText.implicitHeight + 28
                             radius: 7
                             color: broadcasterRoot.feedbackIsError
-                                   ? "#401c25" : "#123628"
+                                   ? Theme.c("#401c25") : Theme.c("#123628")
                             border.color: broadcasterRoot.feedbackIsError
                                           ? broadcasterRoot.danger
                                           : broadcasterRoot.liveGreen
@@ -954,7 +954,7 @@ Item {
                             width: parent.width
                             height: 130
                             radius: 8
-                            color: "#0b2136"
+                            color: Theme.c("#0b2136")
                             border.color: broadcasterRoot.accent
 
                             Column {
@@ -1010,7 +1010,7 @@ Item {
                                 width: safetyLabel.implicitWidth + 22
                                 height: 28
                                 radius: 14
-                                color: "#463719"
+                                color: Theme.c("#463719")
 
                                 Text {
                                     id: safetyLabel
@@ -1272,7 +1272,7 @@ Item {
                                         width: ListView.view.width
                                         height: 42
                                         radius: 6
-                                        color: "#0d2035"
+                                        color: Theme.c("#0d2035")
                                         border.color: broadcasterRoot.line
 
                                         Text {
@@ -1318,7 +1318,7 @@ Item {
                             width: parent.width
                             height: previewColumn.implicitHeight + 34
                             radius: 8
-                            color: "#071827"
+                            color: Theme.c("#071827")
                             border.color: broadcasterRoot.line
 
                             Column {
@@ -1402,7 +1402,7 @@ Item {
                             width: parent.width
                             height: feedbackText.implicitHeight + 28
                             radius: 7
-                            color: broadcasterRoot.feedbackIsError ? "#401c25" : "#123628"
+                            color: broadcasterRoot.feedbackIsError ? Theme.c("#401c25") : Theme.c("#123628")
                             border.color: broadcasterRoot.feedbackIsError
                                           ? broadcasterRoot.danger : broadcasterRoot.liveGreen
 
@@ -1474,7 +1474,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: 56
-            color: "#06111e"
+            color: Theme.c("#06111e")
             border.color: broadcasterRoot.line
             border.width: 1
 

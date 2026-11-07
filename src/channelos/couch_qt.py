@@ -46,6 +46,7 @@ from .runtime import (
     utc_now,
 )
 from .settings import (
+    BOOT_SOUND_CHOICES,
     ARTWORK_CACHE_LIMIT_CHOICES_MB,
     BOOT_VIDEO_CHOICES,
     LOADING_STYLE_CHOICES,
@@ -90,6 +91,7 @@ VIDEO_VALUE_LABELS = {
 }
 THEME_LABELS = {"channelos": "ChannelOS", "chromespace": "ChromeSpace"}
 BOOT_VIDEO_LABELS = {"static": "TV Static", "custom": "My Video", "off": "Off"}
+BOOT_SOUND_LABELS = {"poppie": "Poppie", "custom": "My Sound", "off": "Off"}
 LOADING_STYLE_LABELS = {"classic": "Classic", "bar": "Fill Bar", "tv": "Dancing TV"}
 BOOT_VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".wmv", ".mpg", ".mpeg", ".gif"}
 
@@ -331,6 +333,9 @@ class CouchController(QObject):
             "loadingStyle": self._settings.loading_style,
             "loadingStyleLabel": LOADING_STYLE_LABELS[self._settings.loading_style],
             "bootSound": self._settings.boot_sound,
+            "bootSoundLabel": BOOT_SOUND_LABELS[self._settings.boot_sound],
+            "bootSoundFile": self._settings.boot_sound_file,
+            "bootSoundVolume": self._settings.boot_sound_volume,
             "controllerLayout": self._settings.controller_layout,
             "controllerLayoutLabel": "Automatic" if self._settings.controller_layout == "auto"
                                      else family_by_id(self._settings.controller_layout)["name"],
@@ -1330,9 +1335,16 @@ class CouchController(QObject):
                 hint = "" if self._boot_video_path() else " (choose a video to add My Video)"
                 return {"ok": True, "message": f"Boot video: {BOOT_VIDEO_LABELS[value]}{hint}", "settings": self.settings}
             if name == "bootSound":
-                value = not self._settings.boot_sound
+                choices = tuple(c for c in BOOT_SOUND_CHOICES if c != "custom" or self._boot_sound_path())
+                current = self._settings.boot_sound if self._settings.boot_sound in choices else "poppie"
+                value = self._cycle_choice(current, choices, step)
                 self._save_settings(replace(self._settings, boot_sound=value))
-                return {"ok": True, "message": f"Boot sound: {'On' if value else 'Off'}", "settings": self.settings}
+                hint = "" if self._boot_sound_path() else " (choose a sound to add My Sound)"
+                return {"ok": True, "message": f"Boot sound: {BOOT_SOUND_LABELS[value]}{hint}", "settings": self.settings}
+            if name == "bootSoundVolume":
+                value = max(5, min(100, self._settings.boot_sound_volume + 5 * step))
+                self._save_settings(replace(self._settings, boot_sound_volume=value))
+                return {"ok": True, "message": f"Boot sound volume: {value}%", "settings": self.settings}
             if name == "bootVideoSound":
                 value = not self._settings.boot_video_sound
                 self._save_settings(replace(self._settings, boot_video_sound=value))
@@ -1881,16 +1893,58 @@ class CouchController(QObject):
 
     @Slot(bool)
     def bootSoundPreview(self, playing: bool) -> None:
-        """Settings → Preview Startup plays the boot jig too."""
-        from .boot_sound import BootSound
+        """Settings → Preview Startup plays the boot sound too."""
+        from .boot_sound import BootSound, boot_sound_plan
         previous = getattr(self, "_boot_sound_preview", None)
         if previous is not None:
             previous.fade_out()
             self._boot_sound_preview = None
-        if playing and self._settings.boot_sound and self._settings.boot_video != "custom":
-            volume = 0 if self._muted else self._volume
-            self._boot_sound_preview = BootSound(volume, False, parent=self)
+        plan = boot_sound_plan(replace(self._settings, muted=self._muted, volume_percent=self._volume),
+                               self._settings_store.path.parent) if playing else None
+        if plan is not None:
+            self._boot_sound_preview = BootSound.from_plan(plan, parent=self)
             self._boot_sound_preview.start()
+
+    def _boot_sound_path(self) -> Path | None:
+        name = self._settings.boot_sound_file
+        path = self._boot_directory() / name if name else None
+        return path if path is not None and path.is_file() else None
+
+    @Slot(result="QVariantMap")
+    def chooseBootSound(self) -> dict[str, object]:
+        """Pick a boot sound; it is copied into the setup's boot folder."""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            None, "Choose a boot sound", str(Path.home()),
+            "Audio (*.mp3 *.ogg *.oga *.opus *.wav *.flac *.m4a *.aac *.wma)")
+        if not path:
+            return {"ok": False, "cancelled": True, "message": ""}
+        return self.importBootSound(path)
+
+    @Slot(str, result="QVariantMap")
+    def importBootSound(self, path: str) -> dict[str, object]:
+        import shutil
+        import uuid
+        from .boot_sound import BOOT_SOUND_SUFFIXES
+        source = Path(path)
+        try:
+            if source.suffix.lower() not in BOOT_SOUND_SUFFIXES:
+                raise ValueError("Choose an audio file such as MP3, OGG, WAV or FLAC")
+            if not source.is_file():
+                raise ValueError(f"Sound not found: {source}")
+            if source.stat().st_size > 50 * 1024 * 1024:
+                raise ValueError("That sound is over 50 MB. Choose a shorter boot sound.")
+            directory = self._boot_directory()
+            directory.mkdir(parents=True, exist_ok=True)
+            name = f"sound-{uuid.uuid4().hex[:10]}{source.suffix.lower()}"
+            shutil.copyfile(source, directory / name)
+            previous = self._boot_sound_path()
+            self._save_settings(replace(self._settings, boot_sound="custom", boot_sound_file=name))
+            if previous is not None and previous.name != name:
+                previous.unlink(missing_ok=True)
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+        return {"ok": True, "message": f"Boot sound set: {source.name}", "settings": self.settings}
 
     # --- Boot video -----------------------------------------------------------
 

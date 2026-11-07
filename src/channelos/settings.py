@@ -33,6 +33,8 @@ FFMPEG_THREAD_CHOICES = (0, 1, 2)
 THEME_CHOICES = ("channelos", "chromespace")
 BOOT_VIDEO_CHOICES = ("static", "custom", "off")
 LOADING_STYLE_CHOICES = ("classic", "bar", "tv")
+BOOT_SOUND_CHOICES = ("poppie", "custom", "off")
+BOOT_SOUND_VOLUMES = tuple(range(5, 101, 5))
 
 # Persisted name -> (choices, default). Values outside the choices fall back
 # to the default, so an edited or older settings file can never break playback.
@@ -98,7 +100,10 @@ class CouchSettings:
     boot_video_file: str = ""
     boot_video_sound: bool = True
     loading_style: str = "tv"
-    boot_sound: bool = True   # "Poppie" plays softly during start-up
+    # Boot sound: "poppie" (built in), your own "custom" sound, or "off".
+    boot_sound: str = "poppie"
+    boot_sound_file: str = ""
+    boot_sound_volume: int = 25
     # Controller tab. Bindings hold only changes from the defaults, as sorted
     # (control, action) pairs so the settings object stays immutable.
     controller_layout: str = "auto"
@@ -255,6 +260,14 @@ class CouchSettings:
         boot_video_file = Path(str(values.get("boot_video_file", "") or "")).name
         if boot_video not in BOOT_VIDEO_CHOICES or (boot_video == "custom" and not boot_video_file):
             boot_video = "static"
+        raw_sound = values.get("boot_sound", "poppie")
+        boot_sound = {True: "poppie", False: "off"}.get(raw_sound, raw_sound) if isinstance(raw_sound, bool) else str(raw_sound)
+        boot_sound_file = Path(str(values.get("boot_sound_file", "") or "")).name
+        if boot_sound not in BOOT_SOUND_CHOICES or (boot_sound == "custom" and not boot_sound_file):
+            boot_sound = "poppie"
+        boot_sound_volume = values.get("boot_sound_volume", 25)
+        if isinstance(boot_sound_volume, bool) or boot_sound_volume not in BOOT_SOUND_VOLUMES:
+            boot_sound_volume = 25
         loading_style = str(values.get("loading_style", "tv"))
         if loading_style not in LOADING_STYLE_CHOICES:
             loading_style = "tv"
@@ -279,7 +292,9 @@ class CouchSettings:
             boot_video=boot_video,
             boot_video_file=boot_video_file,
             boot_video_sound=bool(values.get("boot_video_sound", True)),
-            boot_sound=values.get("boot_sound", True) is not False,
+            boot_sound=boot_sound,
+            boot_sound_file=boot_sound_file,
+            boot_sound_volume=boot_sound_volume,
             loading_style=loading_style,
             volume_percent=max(0, min(100, int(volume))),
             muted=muted,

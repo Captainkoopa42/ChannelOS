@@ -101,14 +101,70 @@ def test_missing_audio_stays_silent() -> None:
     assert sound.finished
 
 
-def test_settings_toggle_and_preferences(tmp_path: Path) -> None:
+def test_settings_and_boot_plan(tmp_path: Path) -> None:
+    from channelos.boot_sound import POPPIE_LOOP, boot_sound_plan
     from channelos.settings import CouchSettings, SettingsStore
     from channelos.startup_qt import boot_preferences
-    assert CouchSettings().boot_sound is True
-    assert CouchSettings.from_mapping({"boot_sound": False}).boot_sound is False
+    defaults = CouchSettings()
+    assert (defaults.boot_sound, defaults.boot_sound_volume) == ("poppie", 25)
+    # Older settings files stored a yes/no.
+    assert CouchSettings.from_mapping({"boot_sound": False}).boot_sound == "off"
+    assert CouchSettings.from_mapping({"boot_sound": True}).boot_sound == "poppie"
+    assert CouchSettings.from_mapping({"boot_sound": "custom"}).boot_sound == "poppie", "custom needs a file"
+    assert CouchSettings.from_mapping({"boot_sound_volume": 33}).boot_sound_volume == 25
     store = SettingsStore(tmp_path / "settings.json")
-    store.save(CouchSettings(volume_percent=60))
-    prefs = boot_preferences(tmp_path / "runtime.db")
-    assert prefs["bootSound"] is True and prefs["volume"] == 60
-    store.save(CouchSettings(volume_percent=60, muted=True))
-    assert boot_preferences(tmp_path / "runtime.db")["volume"] == 0
+    store.save(CouchSettings(volume_percent=80))
+    plan = boot_preferences(tmp_path / "runtime.db")["bootSoundPlan"]
+    assert plan["volume"] == 20 and plan["loop"] == POPPIE_LOOP and plan["path"] == BOOT_SOUND_PATH
+    assert boot_sound_plan(CouchSettings(muted=True), tmp_path) is None
+    assert boot_sound_plan(CouchSettings(boot_sound="off"), tmp_path) is None
+    (tmp_path / "boot").mkdir()
+    (tmp_path / "boot" / "sound-1.mp3").write_bytes(b"x")
+    custom = boot_sound_plan(CouchSettings(boot_sound="custom", boot_sound_file="sound-1.mp3", boot_sound_volume=50), tmp_path)
+    assert custom["path"].name == "sound-1.mp3" and custom["loop"] is None and custom["volume"] == 50
+
+
+def test_poppie_loops_back_to_the_lead_in_while_loading() -> None:
+    from PySide6.QtGui import QGuiApplication
+    app = QGuiApplication.instance() or QGuiApplication([])
+
+    class Looping(FakeBackend):
+        seeks: list = []
+        ended = False
+        def seek(self, seconds):
+            self.seeks.append(seconds)
+            self.position = seconds
+        def has_ended(self):
+            return self.ended
+
+    made = []
+    sound = BootSound(25, backend_factory=lambda v: made.append(Looping(v)) or made[-1])
+    sound.start()
+    _pump(app, 0.2)
+    backend = made[0]
+    backend.position = 54.0
+    _pump(app, 0.1)
+    assert backend.seeks and abs(backend.seeks[-1] - 18.03) < 0.05, "back to the lead-in at the cycle end"
+    backend.ended = True
+    _pump(app, 0.1)
+    assert backend.playing and abs(backend.seeks[-1] - 18.03) < 0.05
+    sound.stop()
+
+
+def test_custom_sound_import_and_volume(tmp_path: Path) -> None:
+    from test_performance_operations import controller_fixture
+    _app, controller, _root = controller_fixture(tmp_path)
+    try:
+        assert controller.settings["bootSoundLabel"] == "Poppie" and controller.settings["bootSoundVolume"] == 25
+        assert controller.adjustSetting("bootSoundVolume", -1)["message"] == "Boot sound volume: 20%"
+        song = tmp_path / "my song.mp3"
+        song.write_bytes(b"ID3 fake")
+        assert not controller.importBootSound(str(tmp_path / "notes.txt"))["ok"]
+        result = controller.importBootSound(str(song))
+        assert result["ok"] and controller.settings["bootSound"] == "custom"
+        stored = controller._boot_sound_path()
+        assert stored is not None and stored.read_bytes() == b"ID3 fake"
+        assert controller.adjustSetting("bootSound", 1)["message"] == "Boot sound: Off"
+        assert controller.adjustSetting("bootSound", 1)["message"] == "Boot sound: Poppie"
+    finally:
+        controller.stop()

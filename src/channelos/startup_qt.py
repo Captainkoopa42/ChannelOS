@@ -88,6 +88,7 @@ class BootSkipFilter(QObject):
 
 def boot_preferences(state_db) -> dict:
     """Boot look from the saved settings, read before anything else opens."""
+    from .boot_sound import boot_sound_plan
     from .settings import SettingsStore
     try:
         settings = SettingsStore(Path(state_db).with_name("settings.json")).load()
@@ -118,8 +119,7 @@ def boot_preferences(state_db) -> dict:
             logger.exception("Boot theme could not be prepared")
     return {"video": video, "videoPath": str(video_path) if video == "custom" else "",
             "sound": settings.boot_video_sound, "loadingStyle": settings.loading_style,
-            "bootSound": settings.boot_sound and video != "custom",
-            "volume": 0 if settings.muted else settings.volume_percent,
+            "bootSoundPlan": boot_sound_plan(settings, setup),
             "reducedMotion": settings.reduced_motion, "themeSpec": spec}
 
 
@@ -434,7 +434,7 @@ def launch(module, paths, db, state_db, channels_dir, *, windowed=False):
         def videoPlaying(self): return self.video_playing
 
         @Property('QVariantMap', constant=True)
-        def boot(self): return {k: v for k, v in preferences.items() if k != 'themeSpec'}
+        def boot(self): return {k: v for k, v in preferences.items() if k not in ('themeSpec', 'bootSoundPlan')}
 
         @Property('QVariantMap', constant=True)
         def themeSpec(self): return preferences['themeSpec']
@@ -549,9 +549,9 @@ def launch(module, paths, db, state_db, channels_dir, *, windowed=False):
     control = Bootstrap()
     # The boot jig plays from the first frame until the first channel is ready.
     boot_sound = None
-    if preferences.get("bootSound"):
+    if preferences.get("bootSoundPlan"):
         from .boot_sound import BootSound
-        boot_sound = BootSound(int(preferences.get("volume", 0)), False, parent=app)
+        boot_sound = BootSound.from_plan(preferences["bootSoundPlan"], parent=app)
         boot_sound.start()
         app._channelos_boot_sound = boot_sound
         app.aboutToQuit.connect(boot_sound.stop)

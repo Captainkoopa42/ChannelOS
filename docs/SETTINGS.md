@@ -205,11 +205,15 @@ Settings → Extras controls what you see while ChannelOS starts.
   icon hops to a beat, its antennas spring, the power light blinks, and the
   guide rows on its screen light up as startup progresses). Reduced Motion
   shows the fill bar instead of the dancing TV. Dancing TV is the default.
-- **Boot Sound** (on by default): *Poppie* plays softly while ChannelOS
-  starts: its intro, then its lead-in and chorus repeating, so a long start-up
-  never hears the same few seconds over and over. It fades in, and once the
-  first channel is ready it fades out over one bar from the next bar line. It follows your volume and mute, and a custom boot video's own sound
-  replaces it. The dancing TV hops on every second beat.
+- **Boot Sound**: *Poppie* (default), *My Sound*, or *Off*. Poppie plays its
+  intro, then its lead-in and chorus, repeating seamlessly for as long as
+  start-up takes. Once the first channel is ready it fades out over one bar
+  from the next bar line. A custom boot video's own sound replaces it.
+- **My Boot Sound**: choose an MP3, OGG, WAV or FLAC (up to 50 MB) to play
+  instead. It is copied into the setup's `boot` folder and repeats whole while
+  loading.
+- **Boot Sound Volume**: 5–100% of your main volume, 25% by default. Nothing
+  plays while muted.
 - **Preview Startup** runs the chosen style through a full boot without
   restarting.
 

@@ -45,7 +45,8 @@ jobs:
         run: python tools/windows/smoke_broadcast_planner.py
 
       - name: Verify staged startup, saved playback, and lazy screens
-        run: python tools/windows/smoke_startup.py
+        timeout-minutes: 6
+        run: python -u tools/windows/smoke_startup.py
 
       - name: Verify packaged portable setup relocation and startup
         run: python tools/windows/smoke_portable_setup.py

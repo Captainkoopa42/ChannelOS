@@ -45,6 +45,7 @@ def run(*, skip_video=False, vlc_dir=None):
             if runtime.break_store:
                 runtime.break_store.close()
         start = time.perf_counter()
+        print('startup smoke: launching', flush=True)
         assert run_couch([], db=library.database_path, state_db=store.database_path,
                          channels_dir=broadcaster.managed_directory, windowed=True) == 0
         bootstrap = app._channelos_bootstrap[1]
@@ -141,7 +142,9 @@ def run(*, skip_video=False, vlc_dir=None):
                 app.quit()
         timer.timeout.connect(check)
         timer.start()
+        print('startup smoke: event loop', flush=True)
         app.exec()
+        print('startup smoke: event loop returned', flush=True)
         assert not errors, errors
         assert results.get('lazyScreens') and results['bootstrapVisible'], results
         print(json.dumps(results, sort_keys=True))
@@ -152,6 +155,11 @@ def run(*, skip_video=False, vlc_dir=None):
 
 
 if __name__ == '__main__':
+    import faulthandler
+    import sys
+    # If anything ever blocks the event loop, show where (stderr is unbuffered).
+    faulthandler.dump_traceback_later(75, repeat=True, file=sys.stderr)
+    print('startup smoke: begin', flush=True)
     parser = argparse.ArgumentParser()
     parser.add_argument('--skip-video', action='store_true', help='Check shell loading without requiring a native decoder')
     parser.add_argument('--vlc-dir', type=Path, default=Path('dist/windows/ChannelOS/runtime/vlc'))

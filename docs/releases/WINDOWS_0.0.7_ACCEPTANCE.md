@@ -9,7 +9,8 @@ Run the existing `WINDOWS_0.0.6_ACCEPTANCE.md` regression route as well.
 | Check | Expected result | Device result |
 |---|---|---|
 | Cold boot | Home appears without loading the Planner or scanning media again | Pending |
-| Planner entry | New/Open Planner loads indexed bins in a worker; keyboard text remains text | Pending |
+| Planner entry | Studio → Planner tab loads indexed collections in a worker; planner channels open on that tab; keyboard text remains text | Pending |
+| Calendar conversion | Adding the first planner rule to a calendar channel asks first; Keep Calendar leaves the draft unchanged; Studio blocks stay fixed after Apply | Pending |
 | Shared progression | Add the same collection 2–5 times; windows share one cursor | Pending |
 | Reruns | Add an independent rerun; its progress does not consume the primary track | Pending |
 | Loop vs cycle | Loop a shorter collection while another finishes; first-pass completion remains earned | Pending |

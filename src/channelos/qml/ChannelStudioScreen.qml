@@ -125,6 +125,10 @@ Item {
     property var groupsLibrary: draftData.groups || []
     property var blocksByDay: ({})
     property string viewMode: "week"
+    // The Planner tab embeds the Broadcast Planner for rule-based channels.
+    readonly property bool plannerView: viewMode === "planner"
+    readonly property bool draftDirty: dirty || plannerPanel.dirty
+    property var pendingPlannerSave: null
     property int snapMinutes: 15
     property bool dayMediaBinVisible: false
     property date anchorDate: new Date()
@@ -505,6 +509,10 @@ Item {
         rebuildMediaIndex()
         groupsLibrary = draftData.groups || []
         editingChannelNumber = Number(draftData.editingChannelNumber || 0)
+        // Planner channels open on the Planner tab; calendar channels never
+        // inherit it from a previous visit. The embedded planner reloads.
+        viewMode = plannerIntent ? "planner" : (viewMode === "planner" ? "week" : viewMode)
+        plannerPanel.invalidate()
         channelNumberField.text = String(draftData.channel || 1)
         channelNameField.text = String(draftData.name || "")
         descriptionField.text = String(draftData.description || "")
@@ -1465,6 +1473,10 @@ Item {
             feedbackIsError = true
             return
         }
+        if (plannerPanel.loaded && (plannerPanel.hasRules || plannerIntent)) {
+            applyPlannerDraft()
+            return
+        }
         if (calendarBlocks.count === 0) {
             feedbackMessage = "Add or Auto Fill at least one program before applying a calendar channel."
             feedbackIsError = true
@@ -1496,6 +1508,30 @@ Item {
         feedbackIsError = false
     }
 
+    // One Apply for both tabs: Studio's identity, calendar blocks (kept as
+    // protected manual blocks) and ad settings, plus the planner's rules.
+    function applyPlannerDraft() {
+        if (plannerPanel.dirty && plannerPanel.calculating) {
+            feedbackMessage = "The planner forecast is still calculating. Apply again when it is ready."
+            feedbackIsError = true
+            return
+        }
+        if (plannerPanel.dirty && plannerPanel.forecast.confidence === "Blocked") {
+            var issues = plannerPanel.forecast.issues || []
+            feedbackMessage = issues.length ? String(issues[0].message) : "The planner forecast is blocked. Open the Planner tab to fix it."
+            feedbackIsError = true
+            viewMode = "planner"
+            return
+        }
+        var editor = plannerPanel.composeEditor(editorObject())
+        var queued = channelOS.startChannelMutation(editingChannelNumber > 0 ? "update" : "create",
+                                                   editingChannelNumber, editor)
+        pendingChannelSave = Boolean(queued && queued.ok)
+        pendingPlannerSave = pendingChannelSave ? editor.planner : null
+        feedbackMessage = String(queued && queued.message || "Channel preparation could not start.")
+        feedbackIsError = !pendingChannelSave
+    }
+
     function navigateRange(amount) {
         if (viewMode === "month")
             anchorDate = new Date(anchorDate.getFullYear(),
@@ -1523,7 +1559,7 @@ Item {
             feedbackIsError = false
             return
         }
-        if (dirty) {
+        if (draftDirty) {
             discardDraftDialog.open()
             return
         }
@@ -1534,6 +1570,7 @@ Item {
         var destination = pendingExitDestination || "home"
         pendingExitDestination = ""
         dirty = false
+        plannerPanel.dirty = false
         if (hostWindow)
             hostWindow.screen = destination
     }
@@ -1548,6 +1585,7 @@ Item {
 
     function handleControllerIntent(intent) {
         if (adSettings.dialogOpen) { if (intent === "BACK") adSettings.cancelActive(); return }
+        if (plannerPanel.dialogOpen()) { if (intent === "BACK") plannerPanel.back(); return }
         if (!hostWindow || hostWindow.screen !== "studio")
             return
         if (autoFillBusy) {
@@ -1557,6 +1595,8 @@ Item {
         }
         if (intent === "BACK")
             leaveStudio()
+        else if (plannerView)
+            return
         else if (intent === "LEFT")
             navigateRange(-1)
         else if (intent === "RIGHT")
@@ -1605,7 +1645,7 @@ Item {
         Shortcut {
             sequence: "Esc"
             enabled: studioSurface.visible && !discardDraftDialog.visible && !adSettings.dialogOpen
-                     && !studioRoot.autoFillBusy
+                     && !studioRoot.autoFillBusy && !plannerPanel.dialogOpen() && !convertDialog.visible
             onActivated: studioRoot.leaveStudio()
         }
 
@@ -1664,14 +1704,16 @@ Item {
                             font.weight: Font.DemiBold
                         }
                         Text {
-                            text: "Calendar programming with editable Broadcast Clock blocks"
+                            text: studioRoot.plannerView
+                                  ? "Rule-based programming with a forecast of every airing"
+                                  : "Calendar programming with editable Broadcast Clock blocks"
                             color: studioRoot.textSecondary
                             font.pixelSize: 12
                         }
                     }
 
                     Rectangle {
-                        visible: dirty
+                        visible: studioRoot.draftDirty
                         radius: 12
                         color: "#4b3717"
                         border.color: studioRoot.warning
@@ -1747,7 +1789,7 @@ Item {
             id: mediaPanel
             anchors.left: parent.left
             anchors.top: studioHeader.bottom
-            anchors.bottom: studioRoot.viewMode === "day"
+            anchors.bottom: studioRoot.viewMode === "day" || studioRoot.plannerView
                             ? studioFooter.top : timelinePanel.top
             width: Math.max(250, parent.width * 0.20)
             visible: studioRoot.viewMode !== "day"
@@ -1759,7 +1801,7 @@ Item {
                 id: binTabs
                 anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
                 anchors.margins: 14
-                StudioButton { text: "MEDIA BIN"; Layout.fillWidth: true; checked: studioRoot.activeBin === "media"; onClicked: studioRoot.activeBin = "media" }
+                StudioButton { objectName: "studioMediaBinTab"; text: studioRoot.plannerView ? "COLLECTIONS" : "MEDIA BIN"; Layout.fillWidth: true; checked: studioRoot.activeBin === "media"; onClicked: studioRoot.activeBin = "media" }
                 StudioButton { objectName: "studioAdBinTab"; text: "AD BIN"; Layout.fillWidth: true; checked: studioRoot.activeBin === "ads"; onClicked: studioRoot.activeBin = "ads" }
             }
             AdMediaBin {
@@ -1773,8 +1815,15 @@ Item {
                 onSourcesEdited: function(paths) { adSettings.setSources(paths) }
                 onExclusionsEdited: function(ids) { adSettings.setExcluded(ids) }
             }
+            PlannerMediaBin {
+                objectName: "studioPlannerCollections"
+                visible: studioRoot.activeBin === "media" && studioRoot.plannerView
+                planner: plannerPanel
+                anchors.top: binTabs.bottom; anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                anchors.margins: 14
+            }
             ColumnLayout {
-                visible: studioRoot.activeBin === "media"
+                visible: studioRoot.activeBin === "media" && !studioRoot.plannerView
                 anchors.top: binTabs.bottom; anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
                 anchors.margins: 14
                 spacing: 10
@@ -2019,7 +2068,7 @@ Item {
                           ? parent.left : mediaPanel.right
             anchors.right: parent.right
             anchors.top: studioHeader.bottom
-            anchors.bottom: studioRoot.viewMode === "day"
+            anchors.bottom: studioRoot.viewMode === "day" || studioRoot.plannerView
                             ? studioFooter.top : timelinePanel.top
             color: "#091827"
             border.color: studioRoot.line
@@ -2037,9 +2086,10 @@ Item {
                     Layout.preferredHeight: implicitHeight
                     spacing: 8
 
-                    StudioButton { text: "‹"; width: 38; onClicked: studioRoot.navigateRange(-1) }
-                    StudioButton { text: "Today"; onClicked: studioRoot.goToday() }
+                    StudioButton { visible: !studioRoot.plannerView; text: "‹"; width: 38; onClicked: studioRoot.navigateRange(-1) }
+                    StudioButton { visible: !studioRoot.plannerView; text: "Today"; onClicked: studioRoot.goToday() }
                     Row {
+                        visible: !studioRoot.plannerView
                         spacing: 8
                         height: 38
                         Label {
@@ -2055,9 +2105,10 @@ Item {
                             onActivated: studioRoot.snapMinutes = [5, 10, 15, 30][currentIndex]
                         }
                     }
-                    StudioButton { text: "›"; width: 38; onClicked: studioRoot.navigateRange(1) }
+                    StudioButton { visible: !studioRoot.plannerView; text: "›"; width: 38; onClicked: studioRoot.navigateRange(1) }
 
                     Text {
+                        visible: !studioRoot.plannerView
                         width: Math.min(230, calendarPanel.width - 28)
                         height: 38
                         verticalAlignment: Text.AlignVCenter
@@ -2090,18 +2141,28 @@ Item {
                         onClicked: studioRoot.viewMode = "month"
                     }
                     StudioButton {
+                        objectName: "studioPlannerTab"
+                        text: "Planner"
+                        checkable: true
+                        checked: studioRoot.plannerView
+                        onClicked: studioRoot.viewMode = "planner"
+                    }
+                    StudioButton {
+                        visible: !studioRoot.plannerView
                         text: "Copy / Repeat Week"
                         enabled: !studioRoot.autoFillBusy
                                  && studioRoot.viewMode === "week"
                         onClicked: weeklyPatternDialog.open()
                     }
                     StudioButton {
+                        visible: !studioRoot.plannerView
                         text: "Clear Range"
                         destructive: true
                         enabled: !studioRoot.autoFillBusy
                         onClicked: studioRoot.clearVisibleRange()
                     }
                     StudioButton {
+                        visible: !studioRoot.plannerView
                         text: adSettings.adEnabled ? "Auto Fill + Ads" : "Auto Fill Range"
                         highlighted: true
                         enabled: !studioRoot.autoFillBusy
@@ -2125,6 +2186,26 @@ Item {
                 Item {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+
+                    BroadcastPlannerScreen {
+                        id: plannerPanel
+                        objectName: "studioPlannerPanel"
+                        z: 5
+                        visible: studioRoot.plannerView
+                        embedded: true
+                        hostWindow: studioRoot.hostWindow
+                        active: studioRoot.plannerView && Boolean(studioRoot.hostWindow)
+                                && studioRoot.hostWindow.screen === "studio"
+                        channelNumber: studioRoot.editingChannelNumber
+                        externalAds: adSettings
+                        confirmConversion: !studioRoot.plannerIntent
+                                           && (studioRoot.editingChannelNumber > 0 || calendarBlocks.count > 0)
+                        onConversionRequested: convertDialog.open()
+                        onFeedbackChanged: if (studioRoot.plannerView && feedback) {
+                            studioRoot.feedbackMessage = feedback
+                            studioRoot.feedbackIsError = feedbackError
+                        }
+                    }
 
                     Row {
                         id: weekGrid
@@ -2644,7 +2725,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: studioFooter.top
             height: 210
-            visible: studioRoot.viewMode !== "day"
+            visible: studioRoot.viewMode !== "day" && !studioRoot.plannerView
             color: "#06111e"
             border.color: studioRoot.line
 
@@ -3114,6 +3195,47 @@ Item {
     }
 
     StudioDialog {
+        id: convertDialog
+        objectName: "studioPlannerConvertDialog"
+        anchors.centerIn: parent
+        width: 500
+        title: "Make this a Planner channel?"
+        onAccepted: plannerPanel.acceptConversion()
+        onRejected: plannerPanel.rejectConversion()
+
+        footer: Rectangle {
+            implicitHeight: 58
+            color: studioRoot.panel
+            border.color: studioRoot.line
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 16
+                spacing: 10
+                StudioButton {
+                    text: "Keep Calendar"
+                    onClicked: convertDialog.reject()
+                }
+                StudioButton {
+                    objectName: "studioPlannerConvertConfirm"
+                    text: "Use Planner"
+                    highlighted: true
+                    onClicked: convertDialog.accept()
+                }
+            }
+        }
+
+        contentItem: Text {
+            width: 430
+            text: "Adding planner rules turns this calendar channel into a Planner channel when you apply it. "
+                  + "Your Studio blocks stay exactly where they are as fixed programs, and the planner fills "
+                  + "the time around them. Nothing changes on air until you press Apply to Channel."
+            color: studioRoot.textPrimary
+            wrapMode: Text.Wrap
+        }
+    }
+
+    StudioDialog {
         id: discardDraftDialog
         anchors.centerIn: parent
         width: 460
@@ -3303,10 +3425,15 @@ Item {
             studioRoot.pendingChannelSave = false
             studioRoot.feedbackMessage = String(result && result.message || "Channel operation failed.")
             studioRoot.feedbackIsError = !(result && result.ok)
+            var plannerSave = studioRoot.pendingPlannerSave
+            studioRoot.pendingPlannerSave = null
             if (result && result.ok) {
+                if (plannerSave) studioRoot.plannerIntent = plannerSave
                 studioRoot.editingChannelNumber = Number(result.channelNumber)
                 if (studioRoot.hostWindow) studioRoot.hostWindow.studioChannelNumber = studioRoot.editingChannelNumber
                 studioRoot.dirty = false
+                // Reload the committed planner (cursors, protected blocks).
+                if (plannerSave || plannerPanel.loaded) plannerPanel.invalidate()
             }
         }
     }

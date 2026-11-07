@@ -11,6 +11,7 @@ from .playback import (
     NativeVideoSurface,
     PlaybackBackend,
     PlaybackError,
+    VideoSettings,
 )
 
 BackendFactory = Callable[[], PlaybackBackend]
@@ -60,6 +61,16 @@ class OnDemandSession:
         if self._backend is not None:
             self._backend.attach_video_surface(surface)
 
+    def set_video_settings(self, settings: VideoSettings) -> None:
+        self._video_settings = settings
+        if self._backend is not None:
+            self._backend.set_video_settings(settings)
+
+    def set_surface_size(self, width: int, height: int) -> None:
+        self._surface_size = (int(width), int(height))
+        if self._backend is not None:
+            self._backend.set_surface_size(*self._surface_size)
+
     def _ensure_backend(self) -> PlaybackBackend:
         if self._backend is not None:
             return self._backend
@@ -69,6 +80,10 @@ class OnDemandSession:
             backend.attach_video_surface(self._surface)
         if self._audio_output_device_id is not None:
             backend.set_audio_output_device(self._audio_output_device_id)
+        if getattr(self, "_surface_size", None):
+            backend.set_surface_size(*self._surface_size)
+        if getattr(self, "_video_settings", None) is not None:
+            backend.set_video_settings(self._video_settings)
 
         self._backend = backend
         return backend

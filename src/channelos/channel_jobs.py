@@ -165,7 +165,7 @@ class ChannelMutationWorker(QObject):
 
 def install_channel_operations_support(module):
     """Add asynchronous UI commands while retaining the synchronous service API."""
-    from PySide6.QtCore import Property, QThread, Qt
+    from PySide6.QtCore import Property, QThread
     from .control import ControlIntent
     from .runtime_jobs import adopt_runtime
 

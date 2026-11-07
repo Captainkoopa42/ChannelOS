@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -76,7 +77,10 @@ def test_shared_form_controls_cover_every_visual_state(
     filename: str,
     required_tokens: list[str],
 ) -> None:
-    qml = (QML_ROOT / filename).read_text(encoding="utf-8")
+    # Colours are written as Theme.c("#...") so themes can remap them; the
+    # checks below are about the ChannelOS palette values themselves.
+    qml = re.sub(r'Theme\.[cv]\(("#[0-9a-fA-F]+")\)', r"\1",
+                 (QML_ROOT / filename).read_text(encoding="utf-8"))
 
     assert '"#111f2c"' in qml
     for token in required_tokens:

@@ -278,3 +278,47 @@ def test_keyboard_paging_keys(key, intent) -> None:
     from PySide6.QtCore import Qt
     from channelos.couch_qt import CouchKeyFilter
     assert CouchKeyFilter.command_for_key(getattr(Qt.Key, key)) == ControlCommand(intent)
+
+
+def test_live_button_returns_to_now_then_watches_the_selected_channel(tmp_path: Path) -> None:
+    pytest.importorskip("PySide6")
+    app, controller, window, router = _router(tmp_path)
+    tuned = []
+    controller.tuneChannel = lambda number: tuned.append(number) or {"ok": True, "message": "tuned"}
+    try:
+        live_start = controller.snapshot["horizonStartMs"]
+        assert router.dispatch_command(ControlCommand(ControlIntent.SKIP_FORWARD))
+        assert controller.snapshot["horizonStartMs"] > live_start
+
+        # First press: back to now, nothing tuned.
+        assert router.dispatch_command(ControlCommand(ControlIntent.GO_LIVE))
+        app.processEvents()
+        assert controller.snapshot["horizonStartMs"] == live_start
+        assert _selected(controller, window)["isCurrent"]
+        assert window.property("screen") == "guide" and tuned == []
+
+        # Second press at now: watch the selected channel live.
+        assert router.dispatch_command(ControlCommand(ControlIntent.GO_LIVE))
+        app.processEvents()
+        assert tuned == [controller.snapshot["rows"][1]["channelNumber"]]
+        assert window.property("screen") == "live"
+    finally:
+        window.close()
+        controller.stop()
+
+
+def test_live_button_catches_up_on_the_channel_already_playing(tmp_path: Path) -> None:
+    pytest.importorskip("PySide6")
+    app, controller, window, router = _router(tmp_path)
+    calls = []
+    channel = controller.snapshot["rows"][1]["channelNumber"]
+    controller.goLive = lambda: calls.append("live") or {"ok": True, "message": "live"}
+    controller.tuneChannel = lambda number: calls.append(("tune", number)) or {"ok": True, "message": "tuned"}
+    controller._playback = dict(controller._playback, channelNumber=channel, isLive=False, isUnassigned=False)
+    try:
+        router.dispatch_command(ControlCommand(ControlIntent.GUIDE_NOW))
+        router.dispatch_command(ControlCommand(ControlIntent.GO_LIVE))
+        assert calls == ["live"]
+    finally:
+        window.close()
+        controller.stop()

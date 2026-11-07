@@ -9,16 +9,16 @@ import json
 import time
 from collections import OrderedDict
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from ..library import IndexedMedia, MediaAsset, MediaLocation
 from ..models import ChannelDefinition
 from ..portable import path_tree
 from .advertising import AdPlanner
-from .contracts import PlannerDefinition, PlannerValidationError
+from .contracts import PlannerValidationError
 from .engine import Asset, Compiler, Segment, stable_id
-from .timezones import get_zone, local_instant
+from .timezones import get_zone
 
 TABLES = ('planner_revisions', 'planner_checkpoints', 'planner_occurrences', 'planner_completions', 'planner_cycles', 'planner_legacy', 'planner_manual_releases','planner_failures')
 

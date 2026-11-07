@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
@@ -10,7 +11,7 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt, SIGNAL
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt, SIGNAL
 from PySide6.QtGui import QDesktopServices, QGuiApplication, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
@@ -45,13 +46,56 @@ from .settings import (
     PERFORMANCE_PROFILES,
     SKIP_BACK_CHOICES,
     SKIP_FORWARD_CHOICES,
+    THEME_CHOICES,
+    VIDEO_SETTING_CHOICES,
     CouchSettings,
     SettingsStore,
 )
 from .television import TelevisionSession
+from .themes import (
+    CUSTOM_PREFIX,
+    PRESETS,
+    ROLE_LABELS,
+    ROLE_NAMES,
+    CustomTheme,
+    ThemeStore,
+    derive_palette,
+)
 from .window_startup import NativeWindowSnapshot, NativeWindowStartupGate
 
 logger = logging.getLogger(__name__)
+
+# Settings-screen name -> (CouchSettings field, readable label).
+VIDEO_SETTING_NAMES = {
+    "videoAspectRatio": ("video_aspect_ratio", "Aspect ratio"),
+    "videoFit": ("video_fit", "Picture fit"),
+    "videoOverscan": ("video_overscan_percent", "Overscan trim"),
+    "videoDeinterlace": ("video_deinterlace", "Deinterlace"),
+    "videoHardwareDecoding": ("video_hardware_decoding", "Hardware decoding"),
+    "videoBrightness": ("video_brightness", "Brightness"),
+    "videoContrast": ("video_contrast", "Contrast"),
+    "videoSaturation": ("video_saturation", "Saturation"),
+}
+VIDEO_VALUE_LABELS = {
+    "auto": "Auto", "fit": "Fit (letterbox)", "fill": "Fill (crop edges)", "stretch": "Stretch",
+    "off": "Off", "yadif": "Yadif", "yadif2x": "Yadif 2x", "bob": "Bob", "blend": "Blend", "linear": "Linear",
+}
+THEME_LABELS = {"channelos": "ChannelOS", "chromespace": "ChromeSpace"}
+# Settings screen rows (mirrors SettingsScreen.qml): values 0-20, then actions.
+SETTINGS_VIDEO_ROWS = {12 + index: name for index, name in enumerate(VIDEO_SETTING_NAMES)}
+SETTINGS_THEME_BUILDER = 21
+SETTINGS_FIRST_ACTION = 22  # Clear artwork; then logs, reset, portable setup
+SETTINGS_ROW_COUNT = 26
+
+
+def video_value_label(field: str, value: object) -> str:
+    if field == "video_overscan_percent":
+        return "Off" if not value else f"{value}%"
+    if field in {"video_brightness", "video_contrast", "video_saturation"}:
+        return f"{value}%"
+    if field == "video_hardware_decoding":
+        return "Auto (GPU)" if value == "auto" else "Off (CPU)"
+    return VIDEO_VALUE_LABELS.get(str(value), str(value))
 
 
 def _resolved_audio_output_rows(
@@ -100,6 +144,8 @@ class CouchController(QObject):
     libraryArtworkResolved = Signal(str, str, bool)
     onDemandChanged = Signal()
     settingsChanged = Signal()
+    themeChanged = Signal()
+    themesChanged = Signal()
 
     def __init__(
         self,
@@ -162,6 +208,11 @@ class CouchController(QObject):
                 host_data_directory() / 'portable-devices' / (self._library.portable.setup_id + '.json'),
             )
         self._settings = self._settings_store.load()
+        self._theme_store = ThemeStore(self._settings_store.path.parent / "themes")
+        self._theme_preview: dict[str, object] | None = None
+        self._theme_palette_cache: dict[str, dict[str, str]] = {}
+        if self._settings.theme.startswith("custom-") and self._theme_store.get(self._settings.theme) is None:
+            self._settings = replace(self._settings, theme="channelos")
         selected_audio_device = self._settings.audio_output_device_id
         self._audio_output_devices: list[dict[str, object]] = [
             {
@@ -180,6 +231,8 @@ class CouchController(QObject):
             )
         self._actions.set_audio_output_device(selected_audio_device or None)
         self._on_demand.set_audio_output_device(selected_audio_device or None)
+        self._actions.set_video_settings(self._settings.video)
+        self._on_demand.set_video_settings(self._settings.video)
         cache_stats = None if getattr(self, '_defer_initial_views', False) else self._artwork_cache.stats()
         self._artwork_cache_bytes = 0 if cache_stats is None else cache_stats.size_bytes
         self._artwork_cache_files = 0 if cache_stats is None else cache_stats.file_count
@@ -252,6 +305,12 @@ class CouchController(QObject):
             "ffmpegThreads": self._settings.ffmpeg_threads,
             "artworkCacheBytes": self._artwork_cache_bytes,
             "artworkCacheFiles": self._artwork_cache_files,
+            **{
+                name: video_value_label(field, getattr(self._settings, field))
+                for name, (field, _label) in VIDEO_SETTING_NAMES.items()
+            },
+            "theme": self._settings.theme,
+            "themeName": self._theme_name(self._settings.theme),
         }
 
     def _audio_output_device_name(self) -> str:
@@ -1151,6 +1210,9 @@ class CouchController(QObject):
         self._muted = settings.muted
         if (previous.generate_video_thumbnails, previous.thumbnail_width, previous.background_artwork_during_playback) != (settings.generate_video_thumbnails, settings.thumbnail_width, settings.background_artwork_during_playback):
             self._artwork_unavailable.clear()
+        if previous.video != settings.video:
+            self._actions.set_video_settings(settings.video)
+            self._on_demand.set_video_settings(settings.video)
         if previous.artwork_cache_limit_mb != settings.artwork_cache_limit_mb:
             # Cache maintenance belongs to the existing serial artwork worker.
             self._artwork_queue.put(('', Path(), settings.artwork_cache_limit_mb))
@@ -1221,6 +1283,23 @@ class CouchController(QObject):
             return self.toggleMute()
 
         try:
+            if name in VIDEO_SETTING_NAMES:
+                field, label = VIDEO_SETTING_NAMES[name]
+                choices, _default = VIDEO_SETTING_CHOICES[field]
+                value = self._cycle_choice(getattr(self._settings, field), choices, step)
+                settings = replace(self._settings, **{field: value})
+                message = f"{label}: {video_value_label(field, value)}"
+                if field in {"video_deinterlace", "video_hardware_decoding"}:
+                    message += " (from the next program)"
+                self._save_settings(settings)
+                return {"ok": True, "message": message, "settings": self.settings}
+            if name == "theme":
+                choices = tuple(THEME_CHOICES) + tuple(t.theme_id for t in self._theme_store.load())
+                current = self._settings.theme if self._settings.theme in choices else "channelos"
+                value = self._cycle_choice(current, choices, step)
+                self._save_settings(replace(self._settings, theme=value))
+                self.themeChanged.emit()
+                return {"ok": True, "message": f"Theme: {self._theme_name(value)}", "settings": self.settings}
             if name == "performanceProfile":
                 value = self._cycle_choice(
                     self._settings.performance_profile,
@@ -1382,10 +1461,148 @@ class CouchController(QObject):
         self._start_artwork_worker()
         return {'ok': True, 'pending': True, 'message': 'Clearing generated thumbnails…'}
 
+    # --- Themes -------------------------------------------------------------
+
+    def _theme_name(self, theme_id: str) -> str:
+        if theme_id in THEME_LABELS:
+            return THEME_LABELS[theme_id]
+        theme = self._theme_store.get(theme_id)
+        return theme.name if theme else "ChannelOS"
+
+    def _image_url(self, name: str) -> str:
+        path = self._theme_store.image_path(name)
+        return QUrl.fromLocalFile(str(path)).toString() if path else ""
+
+    def _custom_spec(self, theme: CustomTheme) -> dict[str, object]:
+        key = json.dumps(theme.to_mapping(), sort_keys=True)
+        palette = self._theme_palette_cache.get(key)
+        if palette is None:
+            palette = derive_palette(theme.roles, panel_opacity=theme.panel_opacity if theme.wallpaper else 100)
+            self._theme_palette_cache = {key: palette}  # active + one preview is enough
+        return {"name": theme.theme_id, "palette": palette, "wallpaper": self._image_url(theme.wallpaper),
+                "wallpaperFit": theme.wallpaper_fit, "wallpaperOpacity": theme.wallpaper_opacity}
+
+    @Property("QVariantMap", notify=themeChanged)
+    def themeSpec(self) -> dict[str, object]:
+        """What Theme.qml shows now: a saved theme, or a Theme Builder preview."""
+        if self._theme_preview is not None:
+            return self._theme_preview
+        theme_id = self._settings.theme
+        if theme_id.startswith(CUSTOM_PREFIX):
+            theme = self._theme_store.get(theme_id)
+            if theme is not None:
+                return self._custom_spec(theme)
+            theme_id = "channelos"
+        return {"name": theme_id, "palette": {}, "wallpaper": "", "wallpaperFit": "fill", "wallpaperOpacity": 100}
+
+    @Property("QVariantList", notify=themesChanged)
+    def themes(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = [
+            {"id": theme_id, "name": THEME_LABELS[theme_id], "builtin": True, "roles": dict(PRESETS[theme_id]),
+             "wallpaper": "", "wallpaperUrl": "", "wallpaperFit": "fill", "wallpaperOpacity": 100, "panelOpacity": 100}
+            for theme_id in THEME_CHOICES
+        ]
+        for theme in self._theme_store.load():
+            row = theme.to_mapping()
+            row.update(builtin=False, wallpaperUrl=self._image_url(theme.wallpaper))
+            rows.append(row)
+        return rows
+
+    @Property("QVariantList", constant=True)
+    def themeRoles(self) -> list[dict[str, str]]:
+        return [{"key": name, "label": ROLE_LABELS[name]} for name in ROLE_NAMES]
+
+    @Slot(str, result="QVariantMap")
+    def previewTheme(self, draft_json: str) -> dict[str, object]:
+        """Show an unsaved Theme Builder draft across the whole app."""
+        try:
+            draft = CustomTheme.from_mapping(json.loads(draft_json))
+        except (TypeError, ValueError) as exc:
+            return {"ok": False, "message": str(exc)}
+        self._theme_preview = self._custom_spec(draft)
+        self.themeChanged.emit()
+        return {"ok": True}
+
+    @Slot()
+    def endThemePreview(self) -> None:
+        if self._theme_preview is not None:
+            self._theme_preview = None
+            self.themeChanged.emit()
+
+    @Slot(str, bool, result="QVariantMap")
+    def saveTheme(self, draft_json: str, use: bool) -> dict[str, object]:
+        try:
+            theme = self._theme_store.save(json.loads(draft_json))
+            if use:
+                self._save_settings(replace(self._settings, theme=theme.theme_id))
+        except (OSError, TypeError, ValueError) as exc:
+            return self._error(exc)
+        self._theme_preview = None
+        self.themesChanged.emit()
+        self.themeChanged.emit()
+        message = f"Saved theme {theme.name}" + (" and switched to it" if use else "")
+        return {"ok": True, "id": theme.theme_id, "message": message, "settings": self.settings}
+
+    @Slot(str, result="QVariantMap")
+    def useTheme(self, theme_id: str) -> dict[str, object]:
+        if theme_id not in THEME_CHOICES and self._theme_store.get(theme_id) is None:
+            return {"ok": False, "message": "That theme no longer exists"}
+        try:
+            self._save_settings(replace(self._settings, theme=theme_id))
+        except OSError as exc:
+            return self._error(exc)
+        self._theme_preview = None
+        self.themeChanged.emit()
+        return {"ok": True, "message": f"Theme: {self._theme_name(theme_id)}", "settings": self.settings}
+
+    @Slot(str, result="QVariantMap")
+    def deleteTheme(self, theme_id: str) -> dict[str, object]:
+        if not theme_id.startswith(CUSTOM_PREFIX):
+            return {"ok": False, "message": "Built-in themes cannot be deleted"}
+        name = self._theme_name(theme_id)
+        try:
+            self._theme_store.delete(theme_id)
+            if self._settings.theme == theme_id:
+                self._save_settings(replace(self._settings, theme="channelos"))
+        except OSError as exc:
+            return self._error(exc)
+        self.themesChanged.emit()
+        self.themeChanged.emit()
+        return {"ok": True, "message": f"Deleted theme {name}", "settings": self.settings}
+
+    @Slot(result="QVariantMap")
+    def chooseThemeImage(self) -> dict[str, object]:
+        """Pick a wallpaper; it is copied into the setup's themes folder."""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            None, "Choose a theme image", str(Path.home()),
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)")
+        if not path:
+            return {"ok": False, "cancelled": True, "message": ""}
+        return self.importThemeImage(path)
+
+    @Slot(str, result="QVariantMap")
+    def importThemeImage(self, path: str) -> dict[str, object]:
+        try:
+            name = self._theme_store.import_image(path)
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+        return {"ok": True, "file": name, "url": self._image_url(name), "message": "Image added"}
+
+    @Slot(int, int)
+    def setVideoSurfaceSize(self, width: int, height: int) -> None:
+        """The native video window resized: fill/stretch follow its shape."""
+        if int(width) <= 0 or int(height) <= 0:
+            return
+        self._actions.set_surface_size(int(width), int(height))
+        self._on_demand.set_surface_size(int(width), int(height))
+
     @Slot(result="QVariantMap")
     def resetSettings(self) -> dict[str, object]:
         try:
             self._save_settings(CouchSettings())
+            self._theme_preview = None
+            self.themeChanged.emit()
             self._actions.set_audio_output_device(None)
             self._on_demand.set_audio_output_device(None)
             self._apply_audio_state()
@@ -1786,6 +2003,52 @@ class CouchKeyFilter(QObject):
         start = horizon_start + minutes * 60_000
         self._shift_guide_to(start, start + offset + 1)
 
+    def _guide_at_now(self) -> bool:
+        if not self._guide_live() or self._guide_focus_ms():
+            return False
+        row_index = int(self._window.property("selectedRow"))
+        programs = self._selected_programs()
+        index = int(self._window.property("selectedProgram"))
+        return (0 <= index < len(programs) and isinstance(programs[index], dict)
+                and bool(programs[index].get("isCurrent"))) or (not programs and row_index >= 0)
+
+    @Slot()
+    def activateGuideLive(self) -> None:
+        """Guide LIVE: first press returns to now; pressed at now, watch live.
+
+        Watching live tunes the selected channel at its live point. If that
+        channel is already playing behind (or ahead of) live, it catches up.
+        """
+        if str(self._window.property("screen")) != "guide":
+            return
+        if not self._guide_at_now():
+            self._guide_to_now()
+            self._notify({"message": "Guide is at now - press LIVE again to watch live"})
+            return
+        rows = self._rows()
+        row_index = int(self._window.property("selectedRow"))
+        if not 0 <= row_index < len(rows):
+            return
+        row = rows[row_index]
+        if bool(row.get("isUnassigned")):
+            self._notify({"message": "Channel 001 is unassigned - create Channel 001 in Broadcaster to replace the static slot"})
+            return
+        channel = int(row.get("channelNumber", 0))
+        playback = self._controller.playback if isinstance(self._controller.playback, dict) else {}
+        same_channel = int(playback.get("channelNumber", -1)) == channel and not bool(playback.get("isUnassigned"))
+        # Show the native video surface before libVLC creates its output.
+        self._window.setProperty("screen", "live")
+        QApplication.processEvents()
+        if same_channel:
+            result = self._controller.goLive() if not bool(playback.get("isLive")) else {"ok": True, "message": "Watching live"}
+        else:
+            result = self._controller.tuneChannel(channel)
+        self._notify(result)
+        if not bool(result.get("ok")):
+            self._window.setProperty("screen", "guide")
+        else:
+            self._show_live_hud()
+
     def _guide_to_now(self) -> None:
         to_now = getattr(self._controller, "guideWindowToNow", None)
         self._window.setProperty("guideFocusMs", 0.0)
@@ -2021,6 +2284,8 @@ class CouchKeyFilter(QObject):
                 9: "backgroundArtworkDuringPlayback",
                 10: "reducedMotion",
                 11: "controllerEnabled",
+                **SETTINGS_VIDEO_ROWS,
+                20: "theme",
             }
             name = names.get(selection)
             if name is None:
@@ -2185,6 +2450,13 @@ class CouchKeyFilter(QObject):
             return False
 
         if screen == "settings":
+            settings_item = getattr(self._window, "_channelos_settings_item", None)
+            if settings_item is not None and bool(settings_item.property("themeBuilderOpen")):
+                # The Theme Builder owns navigation while it is open.
+                QMetaObject.invokeMethod(settings_item, "handleThemeBuilderIntent",
+                                         Qt.ConnectionType.DirectConnection,
+                                         Q_ARG("QVariant", intent.value))
+                return True
             if intent is ControlIntent.BACK:
                 return self._go_home()
             if intent is ControlIntent.UP:
@@ -2198,7 +2470,7 @@ class CouchKeyFilter(QObject):
                 current = int(self._window.property("settingsSelection"))
                 self._window.setProperty(
                     "settingsSelection",
-                    min(14, current + 1),
+                    min(SETTINGS_ROW_COUNT - 1, current + 1),
                 )
                 return True
             if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
@@ -2206,15 +2478,20 @@ class CouchKeyFilter(QObject):
                 return self._adjust_selected_setting(direction)
             if intent is ControlIntent.SELECT:
                 selection = int(self._window.property("settingsSelection"))
-                if selection == 12:
+                if selection == SETTINGS_THEME_BUILDER:
+                    if settings_item is not None:
+                        QMetaObject.invokeMethod(settings_item, "openThemeBuilder",
+                                                 Qt.ConnectionType.DirectConnection)
+                    return True
+                if selection == SETTINGS_FIRST_ACTION:
                     result = self._controller.clearArtworkCache()
                     self._notify(result)
                     return True
-                if selection == 13:
+                if selection == SETTINGS_FIRST_ACTION + 1:
                     result = self._controller.openDiagnosticLogs()
                     self._notify(result)
                     return True
-                if selection == 14:
+                if selection == SETTINGS_FIRST_ACTION + 2:
                     result = self._controller.resetSettings()
                     self._notify(result)
                     self._window.setProperty(
@@ -2298,6 +2575,9 @@ class CouchKeyFilter(QObject):
                 return True
             if intent is ControlIntent.GUIDE_NOW:
                 self._guide_to_now()
+                return True
+            if intent is ControlIntent.GO_LIVE:
+                self.activateGuideLive()
                 return True
             if intent in {ControlIntent.REWIND, ControlIntent.FAST_FORWARD}:
                 self._page_guide(-180 if intent is ControlIntent.REWIND else 180)
@@ -2648,6 +2928,12 @@ def run_qt(
     key_filter = CouchKeyFilter(controller, window)
     window.installEventFilter(key_filter)
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
+    window.guideLiveActivated.connect(key_filter.activateGuideLive)
+    # Fill and stretch follow the video surface's shape.
+    def report_video_size(*_args) -> None:
+        controller.setVideoSurfaceSize(video_window.width(), video_window.height())
+    video_window.widthChanged.connect(report_video_size)
+    video_window.heightChanged.connect(report_video_size)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
 
     # Keep Python-owned Qt wrappers alive for the duration of the QML window.

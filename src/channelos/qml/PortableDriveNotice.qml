@@ -19,17 +19,17 @@ FocusScope {
             if (button && typeof button.clicked === "function") button.clicked()
         }
     }
-    Rectangle { anchors.fill: parent; color: "#ed050c15" }
+    Rectangle { anchors.fill: parent; color: Theme.c("#ed050c15") }
     MouseArea { anchors.fill: parent }
     ColumnLayout {
         anchors.centerIn: parent
         width: Math.min(650, parent.width - 80)
         spacing: 18
-        Label { text: "Reconnect your portable drive"; color: "#f4f7fb"; font.pixelSize: 26; font.bold: true }
+        Label { text: "Reconnect your portable drive"; color: Theme.c("#f4f7fb"); font.pixelSize: 26; font.bold: true }
         Label {
             Layout.fillWidth: true
             text: notice.feedback || String(notice.setup.message || "Playback is stopped while the drive is unavailable.")
-            color: "#b7c5d5"; wrapMode: Text.Wrap
+            color: Theme.c("#b7c5d5"); wrapMode: Text.Wrap
         }
         RowLayout {
             ChannelButton { text: "Check Drive"; onClicked: { notice.feedback = ""; channelOS.checkPortableDrive() } }

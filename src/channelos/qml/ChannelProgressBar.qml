@@ -10,8 +10,8 @@ ProgressBar {
 
     background: Rectangle {
         radius: height / 2
-        color: "#111f2c"
-        border.color: "#294158"
+        color: Theme.c("#111f2c")
+        border.color: Theme.c("#294158")
         border.width: 1
     }
 
@@ -23,7 +23,7 @@ ProgressBar {
             height: parent.height
             visible: !channelProgress.indeterminate
             radius: height / 2
-            color: "#1a91ff"
+            color: Theme.c("#1a91ff")
         }
 
         Rectangle {
@@ -32,7 +32,7 @@ ProgressBar {
             x: (parent.width + width) * channelProgress.sweepPosition - width
             visible: channelProgress.indeterminate
             radius: height / 2
-            color: "#42adff"
+            color: Theme.c("#42adff")
         }
     }
 

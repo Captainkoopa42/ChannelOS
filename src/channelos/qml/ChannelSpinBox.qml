@@ -8,22 +8,22 @@ SpinBox {
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
 
-    palette.window: "#111f2c"
-    palette.windowText: "#f4f7fb"
-    palette.base: "#111f2c"
-    palette.text: "#f4f7fb"
-    palette.button: "#162a3a"
-    palette.buttonText: "#f4f7fb"
-    palette.highlight: "#1a91ff"
-    palette.highlightedText: "#ffffff"
-    palette.mid: "#294158"
+    palette.window: Theme.c("#111f2c")
+    palette.windowText: Theme.c("#f4f7fb")
+    palette.base: Theme.c("#111f2c")
+    palette.text: Theme.c("#f4f7fb")
+    palette.button: Theme.c("#162a3a")
+    palette.buttonText: Theme.c("#f4f7fb")
+    palette.highlight: Theme.c("#1a91ff")
+    palette.highlightedText: Theme.c("#ffffff")
+    palette.mid: Theme.c("#294158")
 
     contentItem: TextInput {
         z: 2
         text: channelSpin.textFromValue(channelSpin.value, channelSpin.locale)
-        color: channelSpin.enabled ? "#f4f7fb" : "#607489"
-        selectionColor: "#1a91ff"
-        selectedTextColor: "#ffffff"
+        color: channelSpin.enabled ? Theme.c("#f4f7fb") : Theme.c("#607489")
+        selectionColor: Theme.c("#1a91ff")
+        selectedTextColor: Theme.c("#ffffff")
         font: channelSpin.font
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
@@ -40,15 +40,15 @@ SpinBox {
         implicitWidth: 30
         implicitHeight: channelSpin.height / 2
         color: channelSpin.up.pressed
-               ? "#0a66ad"
+               ? Theme.c("#0a66ad")
                : channelSpin.up.hovered
-               ? "#1a3b52" : "#162a3a"
-        border.color: channelSpin.activeFocus ? "#42adff" : "#294158"
+               ? Theme.c("#1a3b52") : Theme.c("#162a3a")
+        border.color: channelSpin.activeFocus ? Theme.c("#42adff") : Theme.c("#294158")
 
         Text {
             anchors.centerIn: parent
             text: "+"
-            color: channelSpin.enabled ? "#f4f7fb" : "#607489"
+            color: channelSpin.enabled ? Theme.c("#f4f7fb") : Theme.c("#607489")
             font.pixelSize: 13
             font.weight: Font.Bold
         }
@@ -60,15 +60,15 @@ SpinBox {
         implicitWidth: 30
         implicitHeight: channelSpin.height / 2
         color: channelSpin.down.pressed
-               ? "#0a66ad"
+               ? Theme.c("#0a66ad")
                : channelSpin.down.hovered
-               ? "#1a3b52" : "#162a3a"
-        border.color: channelSpin.activeFocus ? "#42adff" : "#294158"
+               ? Theme.c("#1a3b52") : Theme.c("#162a3a")
+        border.color: channelSpin.activeFocus ? Theme.c("#42adff") : Theme.c("#294158")
 
         Text {
             anchors.centerIn: parent
             text: "−"
-            color: channelSpin.enabled ? "#f4f7fb" : "#607489"
+            color: channelSpin.enabled ? Theme.c("#f4f7fb") : Theme.c("#607489")
             font.pixelSize: 13
             font.weight: Font.Bold
         }
@@ -77,15 +77,15 @@ SpinBox {
     background: Rectangle {
         radius: 6
         color: !channelSpin.enabled
-               ? "#091522"
+               ? Theme.c("#091522")
                : channelSpin.activeFocus
-               ? "#12396a"
+               ? Theme.c("#12396a")
                : channelSpin.hovered
-               ? "#142634" : "#111f2c"
+               ? Theme.c("#142634") : Theme.c("#111f2c")
         border.color: !channelSpin.enabled
-                      ? "#14283b"
+                      ? Theme.c("#14283b")
                       : channelSpin.activeFocus
-                      ? "#42adff" : "#294158"
+                      ? Theme.c("#42adff") : Theme.c("#294158")
         border.width: channelSpin.activeFocus ? 2 : 1
 
         Behavior on color {

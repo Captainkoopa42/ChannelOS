@@ -40,11 +40,32 @@ Item {
         { title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
         { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
         { title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
+        { title: "Aspect Ratio", detail: "Auto uses each video's own shape. Force 4:3, 16:9, widescreen film ratios and more for mislabeled recordings." },
+        { title: "Picture Fit", detail: "Fit shows the whole picture with bars, Fill crops the edges to fill the screen, Stretch fills it by distorting." },
+        { title: "Overscan Trim", detail: "Trim the noisy edges found on VHS and broadcast captures, like a real TV did." },
+        { title: "Deinterlace", detail: "Smooth combing on interlaced recordings. Auto lets VLC decide. Applies from the next program." },
+        { title: "Hardware Decoding", detail: "Use the graphics card to decode video. Turn off if a driver shows green frames or artifacts. Applies from the next program." },
+        { title: "Brightness", detail: "Picture brightness for every program." },
+        { title: "Contrast", detail: "Picture contrast for every program." },
+        { title: "Color Saturation", detail: "Picture color intensity for every program." },
+        { title: "Theme", detail: "Change the look of ChannelOS. Your own themes from the Theme Builder appear here too." },
+        { title: "Theme Builder", detail: "Make your own theme: pick every color, add a wallpaper image, and preview it live." },
         { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
         { title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
-        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, and 30 seconds forward." },
+        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, 30 seconds forward, the default picture and theme." },
         { title: "Portable Setup", detail: "Copy channels, the existing media index, ad configuration and history to a drive, or open a prior setup and save changes there." }
     ]
+
+    // Rows before firstAction change a value; the rest run an action.
+    readonly property int firstAction: 21
+    readonly property bool themeBuilderOpen: themeBuilder.visible
+
+    function openThemeBuilder() { themeBuilder.openBuilder() }
+    function handleThemeBuilderIntent(intent) { themeBuilder.handleIntent(String(intent)) }
+    readonly property var videoNames: ({
+        12: "videoAspectRatio", 13: "videoFit", 14: "videoOverscan", 15: "videoDeinterlace",
+        16: "videoHardwareDecoding", 17: "videoBrightness", 18: "videoContrast", 19: "videoSaturation"
+    })
 
     anchors.fill: parent
     visible: hostWindow !== null && hostWindow.screen === "settings"
@@ -128,7 +149,11 @@ Item {
             return preferences.reducedMotion ? "On" : "Off"
         if (index === 11)
             return preferences.controllerEnabled ? "On" : "Off"
-        if (index === 12)
+        if (videoNames[index] !== undefined)
+            return String(preferences[videoNames[index]] || "Auto")
+        if (index === 20)
+            return String(preferences.themeName || "ChannelOS")
+        if (index === 22)
             return cacheUsageLabel()
         return "Standard"
     }
@@ -145,9 +170,10 @@ Item {
             8: "artworkCacheLimit",
             9: "backgroundArtworkDuringPlayback",
             10: "reducedMotion",
-            11: "controllerEnabled"
+            11: "controllerEnabled",
+            20: "theme"
         })
-        return names[index]
+        return names[index] !== undefined ? names[index] : videoNames[index]
     }
 
     function showResult(result) {
@@ -163,7 +189,7 @@ Item {
     }
 
     function adjust(index, direction) {
-        if (index < 0 || index > 11)
+        if (index < 0 || index >= firstAction)
             return
         if (index === 1) {
             changeDisplayMode(direction)
@@ -176,20 +202,26 @@ Item {
     }
 
     function activateAction(index) {
-        if (index === 12) {
+        if (index === 21) {
+            openThemeBuilder()
+        } else if (index === 22) {
             showResult(typeof channelOS.beginArtworkCacheClear === "function"
                        ? channelOS.beginArtworkCacheClear() : channelOS.clearArtworkCache())
-        } else if (index === 13) {
+        } else if (index === 23) {
             showResult(channelOS.openDiagnosticLogs())
-        } else if (index === 14) {
+        } else if (index === 24) {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
-        } else if (index === 15) {
+        } else if (index === 25) {
             portableSetupDialog.open()
         }
     }
 
     function handleControllerIntent(intent: string): void {
+        if (themeBuilder.visible) {
+            themeBuilder.handleIntent(intent)
+            return
+        }
         if (portableSetupDialog.visible) {
             portableSetupDialog.handleControllerIntent(intent)
             return
@@ -220,16 +252,15 @@ Item {
             return
         }
         if (intent === "SELECT") {
-            if (hostWindow.settingsSelection < 12)
+            if (hostWindow.settingsSelection < firstAction)
                 adjust(hostWindow.settingsSelection, 1)
             else
                 activateAction(hostWindow.settingsSelection)
         }
     }
 
-    Rectangle {
+    ThemeBackdrop {
         anchors.fill: parent
-        color: "#050c15"
     }
 
     Timer {
@@ -248,8 +279,8 @@ Item {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: Math.max(300, parent.width * 0.22)
-        color: "#071322"
-        border.color: "#1a3550"
+        color: Theme.c("#071322")
+        border.color: Theme.c("#1a3550")
         border.width: 1
 
         Column {
@@ -261,8 +292,8 @@ Item {
 
             Row {
                 spacing: 2
-                Text { text: "Channel"; color: "#f4f7fb"; font.pixelSize: 34; font.weight: Font.DemiBold }
-                Text { text: "OS"; color: "#42adff"; font.pixelSize: 34; font.weight: Font.DemiBold }
+                Text { text: "Channel"; color: Theme.c("#f4f7fb"); font.pixelSize: 34; font.weight: Font.DemiBold }
+                Text { text: "OS"; color: Theme.c("#42adff"); font.pixelSize: 34; font.weight: Font.DemiBold }
             }
 
             Item { width: 1; height: 18 }
@@ -271,15 +302,15 @@ Item {
                 width: parent.width
                 height: 56
                 radius: 7
-                color: "#12396a"
-                border.color: "#42adff"
+                color: Theme.c("#12396a")
+                border.color: Theme.c("#42adff")
                 border.width: 2
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     text: "Settings"
-                    color: "#f4f7fb"
+                    color: Theme.c("#f4f7fb")
                     font.pixelSize: 20
                     font.weight: Font.DemiBold
                 }
@@ -289,13 +320,13 @@ Item {
                 width: parent.width
                 height: 52
                 radius: 7
-                color: backMouse.containsMouse ? "#10283f" : "transparent"
+                color: backMouse.containsMouse ? Theme.c("#10283f") : "transparent"
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     text: "‹  Back to Home"
-                    color: "#9fb0c2"
+                    color: Theme.c("#9fb0c2")
                     font.pixelSize: 18
                 }
                 MouseArea {
@@ -316,21 +347,21 @@ Item {
             spacing: 8
             Text {
                 text: "CURRENT PROFILE"
-                color: "#42adff"
+                color: Theme.c("#42adff")
                 font.pixelSize: 13
                 font.weight: Font.Bold
                 font.letterSpacing: 2
             }
             Text {
                 text: settingsRoot.profileLabel()
-                color: "#f4f7fb"
+                color: Theme.c("#f4f7fb")
                 font.pixelSize: 22
                 font.weight: Font.DemiBold
             }
             Text {
                 width: parent.width
                 text: "Preferences save to the active setup. Audio device selection stays on this PC. Lightweight reduces optional artwork work and motion."
-                color: "#9fb0c2"
+                color: Theme.c("#9fb0c2")
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
                 lineHeight: 1.2
@@ -353,7 +384,7 @@ Item {
             anchors.rightMargin: 44
             anchors.topMargin: 32
             text: "Settings"
-            color: "#f4f7fb"
+            color: Theme.c("#f4f7fb")
             font.pixelSize: 34
             font.weight: Font.DemiBold
         }
@@ -365,7 +396,7 @@ Item {
             anchors.top: settingsTitle.bottom
             anchors.topMargin: 4
             text: "Choose a ready-made profile or tune individual controls. Changes save automatically."
-            color: "#9fb0c2"
+            color: Theme.c("#9fb0c2")
             font.pixelSize: 16
             elide: Text.ElideRight
         }
@@ -398,8 +429,8 @@ Item {
                 width: Math.max(1, settingsList.width - 8)
                 height: 82
                 radius: 9
-                color: selected ? "#102b50" : "#0b1b2e"
-                border.color: selected ? "#42adff" : "#17324a"
+                color: selected ? Theme.c("#102b50") : Theme.c("#0b1b2e")
+                border.color: selected ? Theme.c("#42adff") : Theme.c("#17324a")
                 border.width: selected ? 2 : 1
 
                 MouseArea {
@@ -418,13 +449,13 @@ Item {
                     width: Math.max(1, parent.width - 300)
                     Text {
                         text: settingRow.modelData.title
-                        color: "#f4f7fb"
+                        color: Theme.c("#f4f7fb")
                         font.pixelSize: 18
                         font.weight: Font.DemiBold
                     }
                     Text {
                         text: settingRow.modelData.detail
-                        color: "#9fb0c2"
+                        color: Theme.c("#9fb0c2")
                         font.pixelSize: 13
                         width: parent.width
                         elide: Text.ElideRight
@@ -436,15 +467,15 @@ Item {
                     anchors.rightMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
-                    visible: settingRow.index < 12
+                    visible: settingRow.index < settingsRoot.firstAction
 
                     Rectangle {
                         width: 38
                         height: 38
                         radius: 6
-                        color: minusMouse.containsMouse ? "#1a4d82" : "#10283f"
-                        border.color: "#1a91ff"
-                        Text { anchors.centerIn: parent; text: "−"; color: "#f4f7fb"; font.pixelSize: 22 }
+                        color: minusMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
+                        border.color: Theme.c("#1a91ff")
+                        Text { anchors.centerIn: parent; text: "−"; color: Theme.c("#f4f7fb"); font.pixelSize: 22 }
                         MouseArea {
                             id: minusMouse
                             anchors.fill: parent
@@ -458,11 +489,11 @@ Item {
                     }
 
                     Text {
-                        width: 156
+                        width: 196
                         anchors.verticalCenter: parent.verticalCenter
                         horizontalAlignment: Text.AlignHCenter
                         text: settingsRoot.valueFor(settingRow.index)
-                        color: "#42adff"
+                        color: Theme.c("#42adff")
                         font.pixelSize: 16
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
@@ -472,9 +503,9 @@ Item {
                         width: 38
                         height: 38
                         radius: 6
-                        color: plusMouse.containsMouse ? "#1a4d82" : "#10283f"
-                        border.color: "#1a91ff"
-                        Text { anchors.centerIn: parent; text: "+"; color: "#f4f7fb"; font.pixelSize: 22 }
+                        color: plusMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
+                        border.color: Theme.c("#1a91ff")
+                        Text { anchors.centerIn: parent; text: "+"; color: Theme.c("#f4f7fb"); font.pixelSize: 22 }
                         MouseArea {
                             id: plusMouse
                             anchors.fill: parent
@@ -495,19 +526,21 @@ Item {
                     width: 236
                     height: 42
                     radius: 6
-                    visible: settingRow.index >= 12
-                    color: actionMouse.containsMouse ? "#1a4d82" : "#10283f"
-                    border.color: "#1a91ff"
+                    visible: settingRow.index >= settingsRoot.firstAction
+                    color: actionMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
+                    border.color: Theme.c("#1a91ff")
                     Text {
                         anchors.centerIn: parent
-                        text: settingRow.index === 12
+                        text: settingRow.index === 21
+                              ? "Open Theme Builder"
+                              : settingRow.index === 22
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
-                              : settingRow.index === 13
+                              : settingRow.index === 23
                               ? "Open Log Folder"
-                              : settingRow.index === 14
+                              : settingRow.index === 24
                               ? "Restore Standard Defaults"
                               : "Copy / Open Setup"
-                        color: "#f4f7fb"
+                        color: Theme.c("#f4f7fb")
                         font.pixelSize: 14
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
@@ -553,15 +586,15 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 50
-        color: "#071322"
-        border.color: "#1a3550"
+        color: Theme.c("#071322")
+        border.color: Theme.c("#1a3550")
         border.width: 1
         Text {
             anchors.left: parent.left
             anchors.leftMargin: 30
             anchors.verticalCenter: parent.verticalCenter
             text: "ARROWS  Navigate / Change     ENTER  Select     F11  Display Mode     ESC / H  Home"
-            color: "#9fb0c2"
+            color: Theme.c("#9fb0c2")
             font.pixelSize: 13
         }
     }
@@ -569,5 +602,9 @@ Item {
     PortableSetupDialog {
         id: portableSetupDialog
         parent: Overlay.overlay
+    }
+
+    ThemeBuilder {
+        id: themeBuilder
     }
 }

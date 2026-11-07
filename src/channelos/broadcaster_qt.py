@@ -36,7 +36,6 @@ from .broadcaster import (
 from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
-from .couch_model import build_couch_snapshot
 from .couch_qt import (
     CouchController,
     CouchKeyFilter,
@@ -46,8 +45,7 @@ from .guide import GuideError, GuideService
 from .library import MediaLibrary, normalize_path
 from .models import ChannelValidationError
 from .playback import NativeVideoSurface, PlaybackError
-from .resolve import resolve_channel
-from .runtime import ChannelRuntime, ChannelRuntimeError, RuntimeStore, TelevisionRuntime
+from .runtime import ChannelRuntimeError, RuntimeStore, TelevisionRuntime
 from .scanner import MediaScanner, ScanCancelled, ScanProgress, ScanSummary
 
 logger = logging.getLogger(__name__)
@@ -718,6 +716,9 @@ class BroadcasterCouchController(CouchController):
         actions.set_audio_output_device(
             self._settings.audio_output_device_id or None
         )
+        actions.set_video_settings(self._settings.video)
+        if getattr(self._actions, "_surface_size", None):
+            actions.set_surface_size(*self._actions._surface_size)
         if self._video_surface is not None:
             actions.attach_video_surface(self._video_surface)
 
@@ -1493,6 +1494,12 @@ def run_qt(
     window.installEventFilter(key_filter)
     app.aboutToQuit.connect(lambda: window.removeEventFilter(key_filter))
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
+    window.guideLiveActivated.connect(key_filter.activateGuideLive)
+    # Fill and stretch follow the video surface's shape.
+    def report_video_size(*_args) -> None:
+        controller.setVideoSurfaceSize(video_window.width(), video_window.height())
+    video_window.widthChanged.connect(report_video_size)
+    video_window.heightChanged.connect(report_video_size)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
     window._channelos_key_filter = key_filter
     window._channelos_video_window = video_window

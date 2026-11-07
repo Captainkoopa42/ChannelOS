@@ -5,6 +5,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from .playback import (
+    VIDEO_ASPECT_CHOICES,
+    VIDEO_DEINTERLACE_CHOICES,
+    VIDEO_FIT_CHOICES,
+    VIDEO_HARDWARE_DECODING_CHOICES,
+    VIDEO_LEVEL_CHOICES,
+    VIDEO_OVERSCAN_CHOICES,
+    VideoSettings,
+)
+
 
 DEFAULT_VOLUME_PERCENT = 100
 DEFAULT_MUTED = False
@@ -20,6 +30,20 @@ PERFORMANCE_PROFILES = ("standard", "lightweight", "custom")
 ARTWORK_CACHE_LIMIT_CHOICES_MB = (0, 128, 256, 512, 1024, 2048)
 THUMBNAIL_WIDTH_CHOICES = (320, 480, 640)
 FFMPEG_THREAD_CHOICES = (0, 1, 2)
+THEME_CHOICES = ("channelos", "chromespace")
+
+# Persisted name -> (choices, default). Values outside the choices fall back
+# to the default, so an edited or older settings file can never break playback.
+VIDEO_SETTING_CHOICES = {
+    "video_aspect_ratio": (VIDEO_ASPECT_CHOICES, "auto"),
+    "video_fit": (VIDEO_FIT_CHOICES, "fit"),
+    "video_overscan_percent": (VIDEO_OVERSCAN_CHOICES, 0),
+    "video_deinterlace": (VIDEO_DEINTERLACE_CHOICES, "auto"),
+    "video_hardware_decoding": (VIDEO_HARDWARE_DECODING_CHOICES, "auto"),
+    "video_brightness": (VIDEO_LEVEL_CHOICES, 100),
+    "video_contrast": (VIDEO_LEVEL_CHOICES, 100),
+    "video_saturation": (VIDEO_LEVEL_CHOICES, 100),
+}
 
 STANDARD_PERFORMANCE = {
     "generate_video_thumbnails": True,
@@ -58,6 +82,28 @@ class CouchSettings:
     reduced_motion: bool = False
     thumbnail_width: int = 640
     ffmpeg_threads: int = 0
+    video_aspect_ratio: str = "auto"
+    video_fit: str = "fit"
+    video_overscan_percent: int = 0
+    video_deinterlace: str = "auto"
+    video_hardware_decoding: str = "auto"
+    video_brightness: int = 100
+    video_contrast: int = 100
+    video_saturation: int = 100
+    theme: str = "channelos"
+
+    @property
+    def video(self) -> VideoSettings:
+        return VideoSettings(
+            aspect_ratio=self.video_aspect_ratio,
+            fit=self.video_fit,
+            overscan_percent=self.video_overscan_percent,
+            deinterlace=self.video_deinterlace,
+            hardware_decoding=self.video_hardware_decoding,
+            brightness=self.video_brightness,
+            contrast=self.video_contrast,
+            saturation=self.video_saturation,
+        )
 
     def with_performance_profile(self, profile: str) -> "CouchSettings":
         selected = str(profile).strip().lower()
@@ -178,7 +224,22 @@ class CouchSettings:
         if ffmpeg_threads not in FFMPEG_THREAD_CHOICES:
             ffmpeg_threads = 0
 
+        video = {}
+        for name, (choices, default) in VIDEO_SETTING_CHOICES.items():
+            value = values.get(name, default)
+            video[name] = value if value in choices and not isinstance(value, bool) else default
+
+        theme = str(values.get("theme", "channelos")).strip().lower()
+        # Built-in themes, or a custom theme id from the Theme Builder.
+        if theme not in THEME_CHOICES and not (
+            theme.startswith("custom-") and 8 <= len(theme) <= 40
+            and theme[7:].replace("-", "").isalnum()
+        ):
+            theme = "channelos"
+
         return cls(
+            **video,
+            theme=theme,
             volume_percent=max(0, min(100, int(volume))),
             muted=muted,
             audio_output_device_id=audio_output_device_id,

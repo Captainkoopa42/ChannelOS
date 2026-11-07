@@ -9,19 +9,19 @@ ApplicationWindow {
     minimumWidth: 1100
     minimumHeight: 650
     visible: false
-    color: "#050c15"
+    color: Theme.c("#050c15")
     title: "ChannelOS"
 
-    readonly property color appBackground: "#050c15"
-    readonly property color panel: "#081625"
-    readonly property color panelRaised: "#0d2035"
-    readonly property color panelSoft: "#10283f"
-    readonly property color line: "#1a3550"
-    readonly property color textPrimary: "#f4f7fb"
-    readonly property color textSecondary: "#9fb0c2"
-    readonly property color accent: "#1a91ff"
-    readonly property color accentBright: "#42adff"
-    readonly property color liveRed: "#ff4a4a"
+    readonly property color appBackground: Theme.c("#050c15")
+    readonly property color panel: Theme.c("#081625")
+    readonly property color panelRaised: Theme.c("#0d2035")
+    readonly property color panelSoft: Theme.c("#10283f")
+    readonly property color line: Theme.c("#1a3550")
+    readonly property color textPrimary: Theme.c("#f4f7fb")
+    readonly property color textSecondary: Theme.c("#9fb0c2")
+    readonly property color accent: Theme.c("#1a91ff")
+    readonly property color accentBright: Theme.c("#42adff")
+    readonly property color liveRed: Theme.c("#ff4a4a")
 
     property string screen: "home"
     property int homeSelection: 0
@@ -49,10 +49,10 @@ ApplicationWindow {
         width: Math.min(parent.width - 48, startupLabel.implicitWidth + 36)
         height: 38
         radius: 8
-        color: "#0d2035"
-        border.color: "#1a91ff"
+        color: Theme.c("#0d2035")
+        border.color: Theme.c("#1a91ff")
         visible: Boolean(root.startupState.active)
-        Text { id: startupLabel; anchors.centerIn: parent; color: "#f4f7fb";
+        Text { id: startupLabel; anchors.centerIn: parent; color: Theme.c("#f4f7fb");
                text: String(root.startupState.message || "Loading your channels…"); font.pixelSize: 15 }
     }
     property int selectedLibrary: 0
@@ -86,6 +86,24 @@ ApplicationWindow {
         Math.max(1, Number(settingsSnapshot.skipForwardSeconds || 30))
 
     signal homeMenuActivated(int index)
+
+    // The saved theme drives every screen sharing this engine (Theme.qml).
+    Binding {
+        target: Theme
+        property: "spec"
+        value: channelOS && channelOS.themeSpec ? channelOS.themeSpec : ({})
+    }
+    Binding {
+        target: Theme
+        property: "name"
+        value: channelOS && channelOS.themeSpec && channelOS.themeSpec.name
+               ? String(channelOS.themeSpec.name)
+               : channelOS && channelOS.settings && channelOS.settings.theme
+               ? String(channelOS.settings.theme) : "channelos"
+    }
+    // Guide LIVE: first press returns the Guide to now, a second press
+    // watches the selected channel live (CouchKeyFilter.activateGuideLive).
+    signal guideLiveActivated()
     signal homeCardActivated(int index)
 
     // One authoritative lower-third mode. This prevents the bounded HUD from
@@ -125,6 +143,8 @@ ApplicationWindow {
     property real generatedAtMs: snapshot.generatedAtMs || 0
     property real horizonSpanMs: Math.max(1, horizonEndMs - horizonStartMs)
     property bool guideLiveWindow: snapshot.isLiveWindow === undefined ? true : Boolean(snapshot.isLiveWindow)
+    readonly property bool guideAtNow: guideLiveWindow && guideFocusMs <= 0
+                                       && selectedProgram === currentProgramIndex(selectedRow)
 
     function requestVisibleGuideRows() {
         if (!channelOS || typeof channelOS.requestGuideRows !== "function") return
@@ -393,7 +413,7 @@ ApplicationWindow {
 
     function paintStatic(canvas) {
         var ctx = canvas.getContext("2d")
-        ctx.fillStyle = "#111820"
+        ctx.fillStyle = Theme.c("#111820")
         ctx.fillRect(0, 0, canvas.width, canvas.height)
         for (var i = 0; i < 1800; ++i) {
             var g = 45 + Math.floor(Math.random() * 160)
@@ -566,7 +586,7 @@ ApplicationWindow {
         id: infoPanelComponent
 
         Rectangle {
-            color: "#f4071422"
+            color: Theme.c("#f4071422")
             border.color: root.line
             border.width: 1
 
@@ -677,7 +697,7 @@ ApplicationWindow {
 
         Rectangle {
             anchors.fill: parent
-            color: "#8a02070d"
+            color: Theme.c("#8a02070d")
 
             MouseArea {
                 anchors.fill: parent
@@ -725,9 +745,8 @@ ApplicationWindow {
         }
     }
 
-    Rectangle {
+    ThemeBackdrop {
         anchors.fill: parent
-        color: root.appBackground
     }
 
     // Native libVLC presentation surface.
@@ -791,13 +810,13 @@ ApplicationWindow {
         anchors.fill: parent
         z: 49
         visible: root.screen === "live" && root.playback.eventType === "offair"
-        color: "#071321"
+        color: Theme.c("#071321")
         Column {
             anchors.centerIn: parent
             spacing: 14
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: root.playback.channelName || "ChannelOS"; color: "#91b9e1"; font.pixelSize: 22 }
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Off air"; color: "#f0f6ff"; font.pixelSize: 48; font.weight: Font.DemiBold }
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "No scheduled program at this broadcast time"; color: "#a3b6ca"; font.pixelSize: 16 }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: root.playback.channelName || "ChannelOS"; color: Theme.c("#91b9e1"); font.pixelSize: 22 }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Off air"; color: Theme.c("#f0f6ff"); font.pixelSize: 48; font.weight: Font.DemiBold }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "No scheduled program at this broadcast time"; color: Theme.c("#a3b6ca"); font.pixelSize: 16 }
         }
     }
 
@@ -824,7 +843,7 @@ ApplicationWindow {
         Rectangle {
             anchors.fill: parent
             radius: 12
-            color: "#f20a1725"
+            color: Theme.v("#f20a1725")
             border.color: root.liveRed
             border.width: 2
 
@@ -844,7 +863,7 @@ ApplicationWindow {
                 Text {
                     width: parent.width
                     text: root.playbackError
-                    color: root.textPrimary
+                    color: Theme.v("#f4f7fb")
                     font.pixelSize: 16
                     wrapMode: Text.Wrap
                 }
@@ -852,7 +871,7 @@ ApplicationWindow {
                 Text {
                     width: parent.width
                     text: "Return Home, restore the file if it moved, and re-scan that Library folder."
-                    color: root.textSecondary
+                    color: Theme.v("#9fb0c2")
                     font.pixelSize: 14
                     wrapMode: Text.Wrap
                 }
@@ -889,14 +908,14 @@ ApplicationWindow {
             Rectangle {
                 anchors.fill: parent
                 radius: 10
-                color: "#dc081625"
-                border.color: root.accentBright
+                color: Theme.v("#dc081625")
+                border.color: Theme.v("#42adff")
                 border.width: 1
 
                 Text {
                     anchors.centerIn: parent
                     text: "CH " + root.channelEntry
-                    color: root.textPrimary
+                    color: Theme.v("#f4f7fb")
                     font.pixelSize: 28
                     font.weight: Font.Bold
                     font.letterSpacing: 2
@@ -927,12 +946,12 @@ ApplicationWindow {
             Rectangle {
                 anchors.fill: parent
                 radius: 8
-                color: "#dc081625"
+                color: Theme.v("#dc081625")
 
                 Text {
                     anchors.centerIn: parent
                     text: root.muted ? "MUTED" : "VOL " + root.volumePercent
-                    color: root.muted ? root.liveRed : root.textPrimary
+                    color: root.muted ? root.liveRed : Theme.v("#f4f7fb")
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
                 }
@@ -998,14 +1017,14 @@ ApplicationWindow {
                 // now lives in a top-level alpha-composited Window, its alpha
                 // blends with the video instead of resolving against a native
                 // child backing surface.
-                color: "#e6081625"
+                color: Theme.v("#e6081625")
 
                 Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
                     height: 2
-                    color: root.accent
+                    color: Theme.v("#1a91ff")
                     opacity: 0.75
                 }
 
@@ -1024,7 +1043,7 @@ ApplicationWindow {
                                   + (root.playback.displayNumber || "---")
                                   + "   "
                                   + (root.playback.channelName || "")
-                            color: root.accentBright
+                            color: Theme.v("#42adff")
                             font.pixelSize: 22
                             font.weight: Font.DemiBold
                             font.letterSpacing: 1
@@ -1036,17 +1055,17 @@ ApplicationWindow {
                             width: liveStateText.implicitWidth + 24
                             radius: 15
                             color: root.playback.paused
-                                   ? "#9a6a20"
+                                   ? Theme.v("#9a6a20")
                                    : (root.playback.isLive
-                                      ? "#a83232"
-                                      : "#164d80")
+                                      ? Theme.v("#a83232")
+                                      : Theme.v("#164d80"))
 
                             Text {
                                 id: liveStateText
                                 objectName: "liveClockStatus"
                                 anchors.centerIn: parent
                                 text: root.televisionClockBadge(root.playback)
-                                color: root.textPrimary
+                                color: Theme.v("#f4f7fb")
                                 font.pixelSize: 14
                                 font.weight: Font.Bold
                             }
@@ -1062,11 +1081,11 @@ ApplicationWindow {
                             width: 42
                             height: 30
                             radius: 5
-                            color: "#9a6a20"
+                            color: Theme.v("#9a6a20")
                             Text {
                                 anchors.centerIn: parent
                                 text: "AD"
-                                color: root.textPrimary
+                                color: Theme.v("#f4f7fb")
                                 font.pixelSize: 15
                                 font.weight: Font.Bold
                             }
@@ -1078,7 +1097,7 @@ ApplicationWindow {
                                      + (root.playback.parentProgramTitle
                                          ? " • " + root.playback.parentProgramTitle : ""))
                                   : (root.playback.title || "No Programming")
-                            color: root.textPrimary
+                            color: Theme.v("#f4f7fb")
                             font.pixelSize: 30
                             font.weight: Font.DemiBold
                             width: parent.width - (root.playback.isAdvertisement ? 52 : 0)
@@ -1090,7 +1109,7 @@ ApplicationWindow {
                         visible: Boolean(root.playback.isAdvertisement)
                         text: "Playing: " + (root.playback.title || "Commercial")
                               + " • " + Math.ceil(root.playback.breakRemainingSeconds || 0) + "s remaining"
-                        color: root.textSecondary
+                        color: Theme.v("#9fb0c2")
                         font.pixelSize: 14
                         elide: Text.ElideRight
                     }
@@ -1103,7 +1122,7 @@ ApplicationWindow {
                             text: root.formatClock(root.playback.programStartMs)
                                   + " - "
                                   + root.formatClock(root.playback.programEndMs)
-                            color: root.textSecondary
+                            color: Theme.v("#9fb0c2")
                             font.pixelSize: 17
                         }
 
@@ -1113,7 +1132,7 @@ ApplicationWindow {
                                   : "Viewer Clock"
                             color: root.playback.isLive
                                    ? root.liveRed
-                                   : root.accentBright
+                                   : Theme.v("#42adff")
                             font.pixelSize: 17
                             font.weight: Font.DemiBold
                         }
@@ -1123,13 +1142,13 @@ ApplicationWindow {
                         width: parent.width
                         height: 5
                         radius: 3
-                        color: "#31465b"
+                        color: Theme.v("#31465b")
 
                         Rectangle {
                             width: parent.width * bottomHudOverlay.liveProgressFraction
                             height: parent.height
                             radius: 3
-                            color: root.accentBright
+                            color: Theme.v("#42adff")
                         }
                     }
 
@@ -1139,14 +1158,14 @@ ApplicationWindow {
 
                         Text {
                             text: "NEXT"
-                            color: root.textSecondary
+                            color: Theme.v("#9fb0c2")
                             font.pixelSize: 14
                             font.weight: Font.Bold
                         }
 
                         Text {
                             text: root.playback.nextTitle || "No next program"
-                            color: root.textPrimary
+                            color: Theme.v("#f4f7fb")
                             font.pixelSize: 16
                             width: parent.width * 0.57
                             elide: Text.ElideRight
@@ -1156,7 +1175,7 @@ ApplicationWindow {
                             text: root.playback.nextStartMs
                                   ? root.formatClock(root.playback.nextStartMs)
                                   : ""
-                            color: root.textSecondary
+                            color: Theme.v("#9fb0c2")
                             font.pixelSize: 15
                         }
                     }
@@ -1169,16 +1188,16 @@ ApplicationWindow {
                     anchors.bottomMargin: 16
                     spacing: 25
 
-                    Text { text: root.controllerConnected ? "A / X  Pause / Play" : "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: (root.controllerConnected ? "LT  -" : "LEFT  -") + root.configuredSkipBackSeconds + "s"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: (root.controllerConnected ? "RT  +" : "RIGHT  +") + root.configuredSkipForwardSeconds + "s"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "LB/RB  Channel" : "UP/DOWN  Channel"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "MENU  Home" : "0-9  Tune"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "R3  Previous" : "P  Previous"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "R-STICK  Volume" : "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { visible: !root.controllerConnected; text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "L3  Live" : "L  Live"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "Y  Info  ·  VIEW  Guide" : "I  Info  ·  G  Guide"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "A / X  Pause / Play" : "SPACE  Pause / Play"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: (root.controllerConnected ? "LT  -" : "LEFT  -") + root.configuredSkipBackSeconds + "s"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: (root.controllerConnected ? "RT  +" : "RIGHT  +") + root.configuredSkipForwardSeconds + "s"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "LB/RB  Channel" : "UP/DOWN  Channel"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "MENU  Home" : "0-9  Tune"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "R3  Previous" : "P  Previous"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "R-STICK  Volume" : "+/-  Volume"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { visible: !root.controllerConnected; text: "M  Mute"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "L3  Live" : "L  Live"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "Y  Info  ·  VIEW  Guide" : "I  Info  ·  G  Guide"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
                 }
             }
         }
@@ -1190,14 +1209,14 @@ ApplicationWindow {
 
             Rectangle {
                 anchors.fill: parent
-                color: "#e6081625"
+                color: Theme.v("#e6081625")
 
                 Rectangle {
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.top: parent.top
                     height: 2
-                    color: root.accent
+                    color: Theme.v("#1a91ff")
                 }
 
                 Column {
@@ -1212,7 +1231,7 @@ ApplicationWindow {
 
                         Text {
                             text: "CHANNEL OS  |  ON DEMAND"
-                            color: root.accentBright
+                            color: Theme.v("#42adff")
                             font.pixelSize: 20
                             font.weight: Font.DemiBold
                             font.letterSpacing: 1
@@ -1224,14 +1243,14 @@ ApplicationWindow {
                             width: odStateText.implicitWidth + 24
                             radius: 14
                             color: root.onDemand.paused
-                                   ? "#9a6a20"
-                                   : "#164d80"
+                                   ? Theme.v("#9a6a20")
+                                   : Theme.v("#164d80")
 
                             Text {
                                 id: odStateText
                                 anchors.centerIn: parent
                                 text: root.onDemand.paused ? "PAUSED" : "PLAYING"
-                                color: root.textPrimary
+                                color: Theme.v("#f4f7fb")
                                 font.pixelSize: 13
                                 font.weight: Font.Bold
                             }
@@ -1240,7 +1259,7 @@ ApplicationWindow {
 
                     Text {
                         text: root.onDemand.title || "Owned Media"
-                        color: root.textPrimary
+                        color: Theme.v("#f4f7fb")
                         font.pixelSize: 29
                         font.weight: Font.DemiBold
                         width: parent.width
@@ -1251,7 +1270,7 @@ ApplicationWindow {
                         text: root.formatDurationSeconds(root.onDemand.positionSeconds)
                               + " / "
                               + root.formatDurationSeconds(root.onDemand.durationSeconds)
-                        color: root.textSecondary
+                        color: Theme.v("#9fb0c2")
                         font.pixelSize: 16
                     }
 
@@ -1259,14 +1278,14 @@ ApplicationWindow {
                         width: parent.width
                         height: 5
                         radius: 3
-                        color: "#31465b"
+                        color: Theme.v("#31465b")
 
                         Rectangle {
                             width: parent.width
                                    * bottomHudOverlay.onDemandProgressFraction
                             height: parent.height
                             radius: 3
-                            color: root.accentBright
+                            color: Theme.v("#42adff")
                         }
                     }
                 }
@@ -1278,14 +1297,14 @@ ApplicationWindow {
                     anchors.bottomMargin: 18
                     spacing: 28
 
-                    Text { text: root.controllerConnected ? "A / X  Pause / Play" : "SPACE  Pause / Play"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: (root.controllerConnected ? "LT  -" : "LEFT  -") + root.configuredSkipBackSeconds + "s"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: (root.controllerConnected ? "RT  +" : "RIGHT  +") + root.configuredSkipForwardSeconds + "s"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "R-STICK  Volume" : "+/-  Volume"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { visible: !root.controllerConnected; text: "M  Mute"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "LB/RB  Tune Channel" : "0-9  Tune Channel"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "R3  Previous Channel" : "P  Previous Channel"; color: root.textSecondary; font.pixelSize: 13 }
-                    Text { text: root.controllerConnected ? "Y  Info  ·  B  Library" : "I  Info  ·  ESC  Library"; color: root.textSecondary; font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "A / X  Pause / Play" : "SPACE  Pause / Play"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: (root.controllerConnected ? "LT  -" : "LEFT  -") + root.configuredSkipBackSeconds + "s"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: (root.controllerConnected ? "RT  +" : "RIGHT  +") + root.configuredSkipForwardSeconds + "s"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "R-STICK  Volume" : "+/-  Volume"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { visible: !root.controllerConnected; text: "M  Mute"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "LB/RB  Tune Channel" : "0-9  Tune Channel"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "R3  Previous Channel" : "P  Previous Channel"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
+                    Text { text: root.controllerConnected ? "Y  Info  ·  B  Library" : "I  Info  ·  ESC  Library"; color: Theme.v("#9fb0c2"); font.pixelSize: 13 }
                 }
             }
         }
@@ -1325,8 +1344,8 @@ ApplicationWindow {
             Rectangle {
                 anchors.fill: parent
                 radius: 7
-                color: "#b8081625"
-                border.color: "#1a3550"
+                color: Theme.c("#b8081625")
+                border.color: Theme.c("#1a3550")
                 border.width: 1
 
                 Text {
@@ -1352,15 +1371,15 @@ ApplicationWindow {
             anchors.top: parent.top
             anchors.bottom: homeCards.top
             width: parent.width * 0.34
-            color: "#071322"
+            color: Theme.c("#071322")
             border.color: root.line
             border.width: 1
 
             Rectangle {
                 anchors.fill: parent
                 gradient: Gradient {
-                    GradientStop { position: 0.0; color: "#0a1c32" }
-                    GradientStop { position: 1.0; color: "#06101d" }
+                    GradientStop { position: 0.0; color: Theme.c("#0a1c32") }
+                    GradientStop { position: 1.0; color: Theme.c("#06101d") }
                 }
                 opacity: 0.72
             }
@@ -1443,7 +1462,7 @@ ApplicationWindow {
                             width: parent.width
                             height: 54
                             radius: 6
-                            color: selected ? "#12396a" : "transparent"
+                            color: selected ? Theme.c("#12396a") : "transparent"
                             border.color: selected ? root.accentBright : "transparent"
                             border.width: selected ? 2 : 0
 
@@ -1518,8 +1537,8 @@ ApplicationWindow {
             anchors.margins: 18
             radius: 9
             clip: true
-            color: "#10151b"
-            border.color: "#173653"
+            color: Theme.v("#10151b")
+            border.color: Theme.v("#173653")
             border.width: 1
 
             Canvas {
@@ -1539,15 +1558,15 @@ ApplicationWindow {
                 anchors.fill: parent
                 visible: !homePreview.unassigned
                 gradient: Gradient {
-                    GradientStop { position: 0.0; color: "#153b60" }
-                    GradientStop { position: 0.55; color: "#0b2034" }
-                    GradientStop { position: 1.0; color: "#06101a" }
+                    GradientStop { position: 0.0; color: Theme.v("#153b60") }
+                    GradientStop { position: 0.55; color: Theme.v("#0b2034") }
+                    GradientStop { position: 1.0; color: Theme.v("#06101a") }
                 }
             }
 
             Rectangle {
                 anchors.fill: parent
-                color: "#020913"
+                color: Theme.v("#020913")
                 opacity: 0.17
             }
 
@@ -1555,10 +1574,10 @@ ApplicationWindow {
                 anchors.centerIn: parent
                 spacing: 12
                 visible: homePreview.unassigned
-                Text { anchors.horizontalCenter: parent.horizontalCenter; text: "CH 001"; color: root.textPrimary; font.pixelSize: 56; font.letterSpacing: 5 }
-                Rectangle { width: 230; height: 2; color: root.accent; anchors.horizontalCenter: parent.horizontalCenter }
-                Text { anchors.horizontalCenter: parent.horizontalCenter; text: "UNASSIGNED"; color: root.accentBright; font.pixelSize: 28; font.letterSpacing: 8 }
-                Text { anchors.horizontalCenter: parent.horizontalCenter; text: "NO PROGRAMMING"; color: "#c5ccd4"; font.pixelSize: 16; font.letterSpacing: 4 }
+                Text { anchors.horizontalCenter: parent.horizontalCenter; text: "CH 001"; color: Theme.v("#f4f7fb"); font.pixelSize: 56; font.letterSpacing: 5 }
+                Rectangle { width: 230; height: 2; color: Theme.v("#1a91ff"); anchors.horizontalCenter: parent.horizontalCenter }
+                Text { anchors.horizontalCenter: parent.horizontalCenter; text: "UNASSIGNED"; color: Theme.v("#42adff"); font.pixelSize: 28; font.letterSpacing: 8 }
+                Text { anchors.horizontalCenter: parent.horizontalCenter; text: "NO PROGRAMMING"; color: Theme.v("#c5ccd4"); font.pixelSize: 16; font.letterSpacing: 4 }
             }
 
             Column {
@@ -1573,7 +1592,7 @@ ApplicationWindow {
 
                 Text {
                     text: root.homeTelevision.stateLabel || "TELEVISION"
-                    color: root.accentBright
+                    color: Theme.v("#42adff")
                     font.pixelSize: 15
                     font.weight: Font.Bold
                     font.letterSpacing: 3
@@ -1581,13 +1600,13 @@ ApplicationWindow {
                 Text {
                     text: "CH " + (root.homeTelevision.displayNumber || "---")
                           + "  " + (root.homeTelevision.channelName || "")
-                    color: root.textPrimary
+                    color: Theme.v("#f4f7fb")
                     font.pixelSize: 22
                     font.weight: Font.DemiBold
                 }
                 Text {
                     text: root.homeTelevision.title || "No Programming"
-                    color: root.textPrimary
+                    color: Theme.v("#f4f7fb")
                     font.pixelSize: 34
                     font.weight: Font.DemiBold
                     width: parent.width
@@ -1599,7 +1618,7 @@ ApplicationWindow {
                             + " - "
                             + root.formatClock(root.homeTelevision.programEndMs)
                           : "No scheduled programming"
-                    color: root.textSecondary
+                    color: Theme.v("#9fb0c2")
                     font.pixelSize: 17
                 }
                 Text {
@@ -1608,7 +1627,7 @@ ApplicationWindow {
                     text: root.televisionClockText(root.homeTelevision)
                     color: root.homeTelevision.isLive
                            ? root.liveRed
-                           : root.accentBright
+                           : Theme.v("#42adff")
                     font.pixelSize: 15
                     font.weight: Font.DemiBold
                 }
@@ -1623,12 +1642,12 @@ ApplicationWindow {
                     width: 10
                     height: 10
                     radius: 5
-                    color: homePreview.unassigned ? root.accent : root.liveRed
+                    color: homePreview.unassigned ? Theme.v("#1a91ff") : root.liveRed
                     anchors.verticalCenter: parent.verticalCenter
                 }
                 Text {
                     text: "CH " + (root.homeTelevision.displayNumber || "001")
-                    color: root.textPrimary
+                    color: Theme.v("#f4f7fb")
                     font.pixelSize: 19
                 }
             }
@@ -1640,7 +1659,7 @@ ApplicationWindow {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: parent.height * 0.29
-            color: "#07111e"
+            color: Theme.c("#07111e")
             border.color: root.line
             border.width: 1
 
@@ -1663,8 +1682,8 @@ ApplicationWindow {
                         width: (homeCards.width - 56 - 54) / 4
                         height: parent.height
                         radius: 10
-                        color: selected ? "#102b50" : "#0b1b2e"
-                        border.color: selected ? root.accentBright : "#17324a"
+                        color: selected ? Theme.c("#102b50") : Theme.c("#0b1b2e")
+                        border.color: selected ? root.accentBright : Theme.c("#17324a")
                         border.width: selected ? 2 : 1
 
                         Column {
@@ -1707,7 +1726,7 @@ ApplicationWindow {
 
             height: 112
 
-            color: "#071322"
+            color: Theme.c("#071322")
             border.color: root.line
             border.width: 1
 
@@ -1776,7 +1795,7 @@ ApplicationWindow {
 
             width: parent.width * 0.62
 
-            color: "#06111e"
+            color: Theme.c("#06111e")
             border.color: root.line
             border.width: 1
 
@@ -1800,12 +1819,12 @@ ApplicationWindow {
                     radius: 7
 
                     color: index === root.selectedLibrary
-                           ? "#12396a"
-                           : "#0a1a2b"
+                           ? Theme.c("#12396a")
+                           : Theme.c("#0a1a2b")
 
                     border.color: index === root.selectedLibrary
                                   ? root.accentBright
-                                  : "#17324a"
+                                  : Theme.c("#17324a")
 
                     border.width:
                         index === root.selectedLibrary ? 2 : 1
@@ -1900,7 +1919,7 @@ ApplicationWindow {
             anchors.top: libraryHeader.bottom
             anchors.bottom: libraryFooter.top
 
-            color: "#091827"
+            color: Theme.c("#091827")
 
             border.color: root.line
             border.width: 1
@@ -1918,12 +1937,12 @@ ApplicationWindow {
                 gradient: Gradient {
                     GradientStop {
                         position: 0.0
-                        color: "#12304a"
+                        color: Theme.c("#12304a")
                     }
 
                     GradientStop {
                         position: 1.0
-                        color: "#08131f"
+                        color: Theme.c("#08131f")
                     }
                 }
 
@@ -2054,8 +2073,8 @@ ApplicationWindow {
                 radius: 7
 
                 color: root.libraryItems.length > 0
-                       ? "#12396a"
-                       : "#0a1826"
+                       ? Theme.c("#12396a")
+                       : Theme.c("#0a1826")
 
                 border.color:
                     root.libraryItems.length > 0
@@ -2088,7 +2107,7 @@ ApplicationWindow {
 
             height: 56
 
-            color: "#06111e"
+            color: Theme.c("#06111e")
             border.color: root.line
             border.width: 1
 
@@ -2141,7 +2160,7 @@ ApplicationWindow {
             anchors.right: parent.right
             anchors.top: parent.top
             height: parent.height * 0.35
-            color: "#071322"
+            color: Theme.c("#071322")
             border.color: root.line
             border.width: 1
 
@@ -2166,11 +2185,42 @@ ApplicationWindow {
                     color: root.textSecondary
                     font.pixelSize: 20
                 }
+                Row {
+                spacing: 18
                 Text {
+                    anchors.verticalCenter: parent.verticalCenter
                     text: guideScreen.programData.isCurrent ? "NOW PLAYING • LIVE" : (guideScreen.programData.isPast ? "EARLIER" : "UPCOMING")
                     color: guideScreen.programData.isCurrent ? root.liveRed : root.textSecondary
                     font.pixelSize: 16
                     font.weight: Font.DemiBold
+                }
+                Rectangle {
+                    id: guideLiveButton
+                    objectName: "guideLiveButton"
+                    readonly property string label: root.guideAtNow ? "●  WATCH LIVE" : "●  LIVE"
+                    width: liveLabel.implicitWidth + 36
+                    height: 34
+                    radius: 17
+                    color: liveArea.pressed ? Theme.c("#7a1d1d") : root.guideAtNow ? root.liveRed : (liveArea.containsMouse ? Theme.c("#3a1518") : Theme.c("#2a1014"))
+                    border.color: root.liveRed
+                    border.width: 2
+                    Text {
+                        id: liveLabel
+                        anchors.centerIn: parent
+                        text: guideLiveButton.label
+                        color: root.guideAtNow ? Theme.c("#ffffff") : root.liveRed
+                        font.pixelSize: 15
+                        font.weight: Font.Bold
+                        font.letterSpacing: 1
+                    }
+                    MouseArea {
+                        id: liveArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.guideLiveActivated()
+                    }
+                }
                 }
             }
 
@@ -2182,8 +2232,8 @@ ApplicationWindow {
                 anchors.margins: 26
                 width: parent.width * 0.38
                 radius: 8
-                color: "#0b1b2b"
-                border.color: root.accent
+                color: Theme.v("#0b1b2b")
+                border.color: Theme.v("#1a91ff")
                 border.width: guideScreen.programData.isCurrent ? 1 : 0
 
                 // Keep the bottom status strip in QML while the single native
@@ -2203,9 +2253,9 @@ ApplicationWindow {
                     visible: !guideScreen.rowData.isUnassigned
                              && !root.playback.active
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: "#12304a" }
-                        GradientStop { position: 0.55; color: "#0a1a29" }
-                        GradientStop { position: 1.0; color: "#07111c" }
+                        GradientStop { position: 0.0; color: Theme.v("#12304a") }
+                        GradientStop { position: 0.55; color: Theme.v("#0a1a29") }
+                        GradientStop { position: 1.0; color: Theme.v("#07111c") }
                     }
                     radius: 7
                 }
@@ -2234,7 +2284,7 @@ ApplicationWindow {
                              && !root.playback.active
                     text: guideScreen.rowData.displayNumber + "\n" + guideScreen.rowData.channelName
                     horizontalAlignment: Text.AlignHCenter
-                    color: root.textPrimary
+                    color: Theme.v("#f4f7fb")
                     font.pixelSize: 28
                     lineHeight: 1.25
                 }
@@ -2247,7 +2297,7 @@ ApplicationWindow {
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: "CH 001"
-                        color: root.textPrimary
+                        color: Theme.v("#f4f7fb")
                         font.pixelSize: 30
                         font.weight: Font.DemiBold
                         font.letterSpacing: 3
@@ -2255,7 +2305,7 @@ ApplicationWindow {
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: "UNASSIGNED"
-                        color: root.accentBright
+                        color: Theme.v("#42adff")
                         font.pixelSize: 18
                         font.weight: Font.Bold
                         font.letterSpacing: 5
@@ -2263,7 +2313,7 @@ ApplicationWindow {
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
                         text: "STATIC / NO PROGRAMMING"
-                        color: root.textSecondary
+                        color: Theme.v("#9fb0c2")
                         font.pixelSize: 12
                         font.letterSpacing: 2
                     }
@@ -2292,7 +2342,7 @@ ApplicationWindow {
                                  : (guideScreen.programData.isCurrent
                                     ? "LIVE"
                                     : "PROGRAM PREVIEW"))
-                        color: root.textPrimary
+                        color: Theme.v("#f4f7fb")
                         font.pixelSize: 15
                     }
                 }
@@ -2316,7 +2366,7 @@ ApplicationWindow {
             anchors.right: parent.right
             anchors.top: guideHeader.bottom
             height: 52
-            color: "#081625"
+            color: Theme.c("#081625")
             border.color: root.line
             border.width: 1
 
@@ -2326,7 +2376,7 @@ ApplicationWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 objectName: "guideDayLabel"
                 text: root.guideDayLabel(root.horizonStartMs || root.generatedAtMs)
-                color: root.guideLiveWindow ? root.textPrimary : "#ffb84a"
+                color: root.guideLiveWindow ? root.textPrimary : Theme.c("#ffb84a")
                 font.pixelSize: 17
                 font.weight: Font.DemiBold
             }
@@ -2385,7 +2435,7 @@ ApplicationWindow {
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
                     width: guideScreen.channelColumnWidth
-                    color: index === root.selectedRow ? "#0d2b4b" : "#071321"
+                    color: index === root.selectedRow ? Theme.c("#0d2b4b") : Theme.c("#071321")
                     border.color: index === root.selectedRow ? root.accent : root.line
                     border.width: 1
 
@@ -2434,7 +2484,7 @@ ApplicationWindow {
                     anchors.bottom: parent.bottom
                     clip: true
 
-                    Rectangle { anchors.fill: parent; color: "#081522"; border.color: root.line; border.width: 1 }
+                    Rectangle { anchors.fill: parent; color: Theme.c("#081522"); border.color: root.line; border.width: 1 }
 
                     // Exact scheduled occurrences remain in rowData.programs.
                     // displaySegments is presentation-only aggregation for
@@ -2479,17 +2529,17 @@ ApplicationWindow {
                             radius: modelData.isCluster ? 6 : 4
 
                             color: selectedSegment
-                                   ? "#146ad1"
+                                   ? Theme.c("#146ad1")
                                    : (
                                        (modelData.isUnassigned || modelData.isOffAir)
-                                       ? "#17202a"
+                                       ? Theme.c("#17202a")
                                        : (
                                            modelData.isCurrent
-                                           ? "#123558"
+                                           ? Theme.c("#123558")
                                            : (
                                                modelData.isCluster
-                                               ? "#102a43"
-                                               : "#0d2134"
+                                               ? Theme.c("#102a43")
+                                               : Theme.c("#0d2134")
                                            )
                                        )
                                    )
@@ -2498,8 +2548,8 @@ ApplicationWindow {
                                           ? root.accentBright
                                           : (
                                               modelData.isCluster
-                                              ? "#24577d"
-                                              : "#193a55"
+                                              ? Theme.c("#24577d")
+                                              : Theme.c("#193a55")
                                           )
 
                             border.width: selectedSegment ? 2 : 1
@@ -2514,7 +2564,7 @@ ApplicationWindow {
                                         (modelData.endMs - modelData.startMs) / root.horizonSpanMs * programArea.width))
                                     height: 5
                                     anchors.bottom: parent.bottom
-                                    color: "#d99b36"
+                                    color: Theme.c("#d99b36")
                                     radius: 2
                                 }
                             }
@@ -2545,7 +2595,7 @@ ApplicationWindow {
                                             + " - "
                                             + root.formatClock(modelData.endMs)
 
-                                    color: "#b8c7d6"
+                                    color: Theme.c("#b8c7d6")
                                     font.pixelSize: 12
                                     width: parent.width
                                     elide: Text.ElideRight
@@ -2589,7 +2639,7 @@ ApplicationWindow {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: 54
-            color: "#06111e"
+            color: Theme.c("#06111e")
             border.color: root.line
             border.width: 1
 
@@ -2598,7 +2648,7 @@ ApplicationWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 26
                 spacing: 28
-                Text { text: "G  Guide / Go to Now"; color: root.textSecondary; font.pixelSize: 15 }
+                Text { text: "L  Live (twice: watch)"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "← →  Time"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "PG UP / PG DN  3 Hours"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: ", .  Day"; color: root.textSecondary; font.pixelSize: 15 }
@@ -2617,7 +2667,7 @@ ApplicationWindow {
         width: Math.min(parent.width * 0.7, statusText.implicitWidth + 56)
         height: 48
         radius: 8
-        color: "#d9142b46"
+        color: Theme.c("#d9142b46")
         border.color: root.accent
         visible: root.statusMessage.length > 0
         z: 100

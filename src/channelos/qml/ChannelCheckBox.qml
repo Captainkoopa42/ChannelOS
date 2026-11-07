@@ -6,8 +6,8 @@ CheckBox {
 
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
-    palette.windowText: enabled ? "#f4f7fb" : "#607489"
-    palette.highlight: "#1a91ff"
+    palette.windowText: enabled ? Theme.c("#f4f7fb") : Theme.c("#607489")
+    palette.highlight: Theme.c("#1a91ff")
 
     indicator: Rectangle {
         implicitWidth: 21
@@ -16,24 +16,24 @@ CheckBox {
         y: Math.round((channelCheck.height - height) / 2)
         radius: 4
         color: !channelCheck.enabled
-               ? "#091522"
+               ? Theme.c("#091522")
                : channelCheck.activeFocus
-               ? "#12396a"
+               ? Theme.c("#12396a")
                : channelCheck.checked
-               ? "#12527f"
+               ? Theme.c("#12527f")
                : channelCheck.hovered
-               ? "#142634" : "#111f2c"
+               ? Theme.c("#142634") : Theme.c("#111f2c")
         border.color: !channelCheck.enabled
-                      ? "#14283b"
+                      ? Theme.c("#14283b")
                       : channelCheck.activeFocus || channelCheck.checked
-                      ? "#42adff" : "#294158"
+                      ? Theme.c("#42adff") : Theme.c("#294158")
         border.width: channelCheck.activeFocus || channelCheck.checked ? 2 : 1
 
         Text {
             anchors.centerIn: parent
             visible: channelCheck.checked
             text: "✓"
-            color: "#ffffff"
+            color: Theme.c("#fffffe")
             font.pixelSize: 14
             font.weight: Font.Bold
         }

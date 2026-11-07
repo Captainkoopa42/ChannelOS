@@ -34,6 +34,86 @@ class NativeVideoSurface:
             raise ValueError("native video window_id must be a positive integer")
 
 
+VIDEO_ASPECT_CHOICES = ("auto", "16:9", "4:3", "21:9", "2.35:1", "1.85:1", "16:10", "5:4", "1:1")
+VIDEO_FIT_CHOICES = ("fit", "fill", "stretch")
+VIDEO_OVERSCAN_CHOICES = (0, 2, 4, 6, 8)
+VIDEO_DEINTERLACE_CHOICES = ("auto", "off", "yadif", "yadif2x", "bob", "blend", "linear")
+VIDEO_HARDWARE_DECODING_CHOICES = ("auto", "off")
+VIDEO_LEVEL_CHOICES = (50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150)
+
+
+@dataclass(frozen=True, slots=True)
+class VideoSettings:
+    """Viewer picture preferences applied to every programme.
+
+    ``aspect_ratio`` overrides the source's display shape. ``fit`` decides how
+    that shape meets the screen: letterbox (fit), crop to fill, or stretch.
+    ``overscan_percent`` trims noisy edges from captured broadcasts.
+    """
+
+    aspect_ratio: str = "auto"
+    fit: str = "fit"
+    overscan_percent: int = 0
+    deinterlace: str = "auto"
+    hardware_decoding: str = "auto"
+    brightness: int = 100
+    contrast: int = 100
+    saturation: int = 100
+
+    def __post_init__(self) -> None:
+        checks = (
+            (self.aspect_ratio, VIDEO_ASPECT_CHOICES, "aspect ratio"),
+            (self.fit, VIDEO_FIT_CHOICES, "picture fit"),
+            (self.overscan_percent, VIDEO_OVERSCAN_CHOICES, "overscan"),
+            (self.deinterlace, VIDEO_DEINTERLACE_CHOICES, "deinterlace"),
+            (self.hardware_decoding, VIDEO_HARDWARE_DECODING_CHOICES, "hardware decoding"),
+            (self.brightness, VIDEO_LEVEL_CHOICES, "brightness"),
+            (self.contrast, VIDEO_LEVEL_CHOICES, "contrast"),
+            (self.saturation, VIDEO_LEVEL_CHOICES, "saturation"),
+        )
+        for value, choices, name in checks:
+            if value not in choices:
+                raise ValueError(f"unsupported {name}: {value!r}")
+
+    @property
+    def adjusts_picture(self) -> bool:
+        return (self.brightness, self.contrast, self.saturation) != (100, 100, 100)
+
+
+def _ratio(text: str) -> float:
+    left, right = str(text).split(":")
+    return float(left) / float(right)
+
+
+def video_crop_geometry(source_width: int, source_height: int, display_ratio: float,
+                        target_ratio: float | None, overscan_percent: int) -> str | None:
+    """Return a libVLC pixel crop ``WxH+X+Y``, or ``None`` for no crop.
+
+    ``display_ratio`` is the shape the source is shown at (forced or native),
+    ``target_ratio`` the shape to fill (``None`` keeps the whole picture).
+    The overscan trim is applied on every edge after the fill crop.
+    """
+
+    if source_width <= 0 or source_height <= 0:
+        return None
+    width, height = float(source_width), float(source_height)
+    if target_ratio and display_ratio > 0:
+        # Horizontal pixels per displayed unit differ when the ratio is forced.
+        pixel_stretch = (width / height) / display_ratio
+        if display_ratio > target_ratio:
+            width = height * target_ratio * pixel_stretch
+        elif display_ratio < target_ratio:
+            height = width / (target_ratio * pixel_stretch)
+    keep = 1.0 - 2.0 * overscan_percent / 100.0
+    width, height = width * keep, height * keep
+    crop_w, crop_h = int(round(width)), int(round(height))
+    if crop_w >= source_width and crop_h >= source_height:
+        return None
+    x = (source_width - crop_w) // 2
+    y = (source_height - crop_h) // 2
+    return f"{crop_w}x{crop_h}+{x}+{y}"
+
+
 @dataclass(frozen=True, slots=True)
 class AudioOutputDevice:
     """One audio destination exposed by the active playback backend."""
@@ -191,6 +271,12 @@ class PlaybackBackend(ABC):
         if level != 1.0:
             raise PlaybackUnavailableError(f"{type(self).__name__} does not support fades")
 
+    def set_video_settings(self, settings: VideoSettings) -> None:
+        """Apply viewer picture preferences. Backends without video ignore them."""
+
+    def set_surface_size(self, width: int, height: int) -> None:
+        """Report the native video surface size, used to fill or stretch."""
+
 
 class LibVLCBackend(PlaybackBackend):
     """Reference playback backend using python-vlc over the native libVLC library."""
@@ -212,6 +298,9 @@ class LibVLCBackend(PlaybackBackend):
         self._user_volume: int | None = None
         self._user_muted: bool | None = None
         self._transition_level = 1.0
+        self._video_settings = VideoSettings()
+        self._surface_size: tuple[int, int] | None = None
+        self._pending_source_size = False
         try:
             self._instance = vlc.Instance(*instance_options)
             self._player = self._instance.media_player_new()
@@ -247,18 +336,93 @@ class LibVLCBackend(PlaybackBackend):
             ) from exc
 
     def _fit_source_aspect_to_surface(self) -> None:
-        """Preserve the source ratio while fitting it inside the native window.
+        """Apply the viewer's picture shape to the current video output.
 
-        libVLC keeps video-output overrides on the media player.  Explicitly
-        clearing them prevents a prior crop or forced ratio from stretching the
-        next programme when ChannelOS reuses the player and its HWND.  A scale
-        of zero is libVLC's autoscale mode: the complete picture fits inside
-        the available surface and any unused area becomes letterboxing.
+        libVLC keeps video-output overrides on the media player, so every
+        programme gets the complete set again: a prior crop or forced ratio must
+        never leak into the next one. With default settings this clears all
+        overrides and uses autoscale (scale 0): the whole picture fits inside
+        the surface and any unused area becomes letterboxing.
         """
 
-        self._player.video_set_aspect_ratio(None)
-        self._player.video_set_crop_geometry(None)
+        settings = getattr(self, "_video_settings", None) or VideoSettings()
+        aspect = None if settings.aspect_ratio == "auto" else settings.aspect_ratio
+        surface = getattr(self, "_surface_size", None)
+        surface_ratio = surface[0] / surface[1] if surface and surface[1] > 0 else None
+        if settings.fit == "stretch" and surface:
+            aspect = f"{surface[0]}:{surface[1]}"
+        crop = None
+        needs_source = settings.overscan_percent > 0 or (settings.fit == "fill" and surface_ratio)
+        source = self._source_size() if needs_source else (0, 0)
+        if needs_source and source[0] > 0:
+            display = _ratio(aspect) if aspect and settings.fit != "stretch" else source[0] / source[1]
+            target = surface_ratio if settings.fit == "fill" else None
+            crop = video_crop_geometry(source[0], source[1], display, target, settings.overscan_percent)
+        # Remember whether the source size was still unknown, so polling can
+        # apply the crop once the decoder reports dimensions.
+        self._pending_source_size = bool(needs_source and source[0] <= 0)
+        self._player.video_set_aspect_ratio(aspect)
+        self._player.video_set_crop_geometry(crop)
         self._player.video_set_scale(0.0)
+        self._apply_picture()
+        self._apply_deinterlace()
+
+    def _source_size(self) -> tuple[int, int]:
+        try:
+            size = self._player.video_get_size(0)
+        except Exception:
+            return (0, 0)
+        if not size or len(size) != 2:
+            return (0, 0)
+        return int(size[0] or 0), int(size[1] or 0)
+
+    def _apply_picture(self) -> None:
+        settings = getattr(self, "_video_settings", None) or VideoSettings()
+        level = getattr(self, "_transition_level", 1.0)
+        try:
+            option = self._vlc.VideoAdjustOption
+            enabled = level < 1.0 or settings.adjusts_picture
+            self._player.video_set_adjust_int(option.Enable, int(enabled))
+            if enabled:
+                # libVLC adjust: brightness and contrast 0..2, saturation 0..3.
+                self._player.video_set_adjust_float(option.Brightness, level * settings.brightness / 100.0)
+                self._player.video_set_adjust_float(option.Contrast, settings.contrast / 100.0)
+                self._player.video_set_adjust_float(option.Saturation, settings.saturation / 100.0)
+        except AttributeError:
+            pass
+
+    def _apply_deinterlace(self) -> None:
+        mode = (getattr(self, "_video_settings", None) or VideoSettings()).deinterlace
+        if mode == "auto":
+            return  # libVLC's automatic detection applies through media defaults
+        try:
+            self._player.video_set_deinterlace(None if mode == "off" else mode)
+        except (AttributeError, TypeError):
+            pass
+
+    def set_video_settings(self, settings: VideoSettings) -> None:
+        self._video_settings = settings
+        self._fit_source_aspect_to_surface()
+
+    def set_surface_size(self, width: int, height: int) -> None:
+        size = (int(width), int(height))
+        if size[0] <= 0 or size[1] <= 0 or size == getattr(self, "_surface_size", None):
+            return
+        self._surface_size = size
+        settings = getattr(self, "_video_settings", None) or VideoSettings()
+        if settings.fit != "fit" or settings.overscan_percent:
+            self._fit_source_aspect_to_surface()
+
+    def _media_options(self) -> tuple[str, ...]:
+        settings = getattr(self, "_video_settings", None) or VideoSettings()
+        options = []
+        if settings.deinterlace == "off":
+            options.append(":deinterlace=0")
+        elif settings.deinterlace != "auto":
+            options += [":deinterlace=1", f":deinterlace-mode={settings.deinterlace}"]
+        if settings.hardware_decoding == "off":
+            options.append(":avcodec-hw=none")
+        return tuple(options)
 
     def load(self, path: str | Path) -> None:
         media_path = Path(path).expanduser().resolve(strict=False)
@@ -275,6 +439,8 @@ class LibVLCBackend(PlaybackBackend):
                 f"Media file cannot be read: {media_path} ({exc})"
             ) from exc
         media = self._instance.media_new_path(str(media_path))
+        for option in self._media_options():
+            media.add_option(option)
         self._player.set_media(media)
         self._loaded_path = media_path
 
@@ -317,6 +483,8 @@ class LibVLCBackend(PlaybackBackend):
         # Audio outputs are recreated asynchronously as streams change. Keep
         # user intent through silent clips and machines without an audio device.
         self._apply_audio_settings()
+        if getattr(self, "_pending_source_size", False) and self._source_size()[0] > 0:
+            self._fit_source_aspect_to_surface()
         try:
             state = self._player.get_state()
         except Exception:
@@ -360,12 +528,9 @@ class LibVLCBackend(PlaybackBackend):
         volume = self.get_volume()
         self._transition_level = level
         self.set_volume(volume)
-        # libVLC's adjust filter supports brightness 0 (black) through 2.
-        # A single decoder fades through black; media never overlaps in time.
-        enabled = self._vlc.VideoAdjustOption.Enable
-        brightness = self._vlc.VideoAdjustOption.Brightness
-        self._player.video_set_adjust_int(enabled, int(level < 1.0))
-        self._player.video_set_adjust_float(brightness, float(level))
+        # A single decoder fades through black (adjust brightness scales with
+        # the level); the viewer's own picture levels are kept underneath.
+        self._apply_picture()
 
     def set_muted(self, muted: bool) -> None:
         self._user_muted = bool(muted)

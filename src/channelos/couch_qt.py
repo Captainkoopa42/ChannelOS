@@ -1786,6 +1786,52 @@ class CouchKeyFilter(QObject):
         start = horizon_start + minutes * 60_000
         self._shift_guide_to(start, start + offset + 1)
 
+    def _guide_at_now(self) -> bool:
+        if not self._guide_live() or self._guide_focus_ms():
+            return False
+        row_index = int(self._window.property("selectedRow"))
+        programs = self._selected_programs()
+        index = int(self._window.property("selectedProgram"))
+        return (0 <= index < len(programs) and isinstance(programs[index], dict)
+                and bool(programs[index].get("isCurrent"))) or (not programs and row_index >= 0)
+
+    @Slot()
+    def activateGuideLive(self) -> None:
+        """Guide LIVE: first press returns to now; pressed at now, watch live.
+
+        Watching live tunes the selected channel at its live point. If that
+        channel is already playing behind (or ahead of) live, it catches up.
+        """
+        if str(self._window.property("screen")) != "guide":
+            return
+        if not self._guide_at_now():
+            self._guide_to_now()
+            self._notify({"message": "Guide is at now - press LIVE again to watch live"})
+            return
+        rows = self._rows()
+        row_index = int(self._window.property("selectedRow"))
+        if not 0 <= row_index < len(rows):
+            return
+        row = rows[row_index]
+        if bool(row.get("isUnassigned")):
+            self._notify({"message": "Channel 001 is unassigned - create Channel 001 in Broadcaster to replace the static slot"})
+            return
+        channel = int(row.get("channelNumber", 0))
+        playback = self._controller.playback if isinstance(self._controller.playback, dict) else {}
+        same_channel = int(playback.get("channelNumber", -1)) == channel and not bool(playback.get("isUnassigned"))
+        # Show the native video surface before libVLC creates its output.
+        self._window.setProperty("screen", "live")
+        QApplication.processEvents()
+        if same_channel:
+            result = self._controller.goLive() if not bool(playback.get("isLive")) else {"ok": True, "message": "Watching live"}
+        else:
+            result = self._controller.tuneChannel(channel)
+        self._notify(result)
+        if not bool(result.get("ok")):
+            self._window.setProperty("screen", "guide")
+        else:
+            self._show_live_hud()
+
     def _guide_to_now(self) -> None:
         to_now = getattr(self._controller, "guideWindowToNow", None)
         self._window.setProperty("guideFocusMs", 0.0)
@@ -2299,6 +2345,9 @@ class CouchKeyFilter(QObject):
             if intent is ControlIntent.GUIDE_NOW:
                 self._guide_to_now()
                 return True
+            if intent is ControlIntent.GO_LIVE:
+                self.activateGuideLive()
+                return True
             if intent in {ControlIntent.REWIND, ControlIntent.FAST_FORWARD}:
                 self._page_guide(-180 if intent is ControlIntent.REWIND else 180)
                 return True
@@ -2648,6 +2697,7 @@ def run_qt(
     key_filter = CouchKeyFilter(controller, window)
     window.installEventFilter(key_filter)
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
+    window.guideLiveActivated.connect(key_filter.activateGuideLive)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
 
     # Keep Python-owned Qt wrappers alive for the duration of the QML window.

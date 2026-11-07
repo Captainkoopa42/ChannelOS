@@ -86,6 +86,9 @@ ApplicationWindow {
         Math.max(1, Number(settingsSnapshot.skipForwardSeconds || 30))
 
     signal homeMenuActivated(int index)
+    // Guide LIVE: first press returns the Guide to now, a second press
+    // watches the selected channel live (CouchKeyFilter.activateGuideLive).
+    signal guideLiveActivated()
     signal homeCardActivated(int index)
 
     // One authoritative lower-third mode. This prevents the bounded HUD from
@@ -125,6 +128,8 @@ ApplicationWindow {
     property real generatedAtMs: snapshot.generatedAtMs || 0
     property real horizonSpanMs: Math.max(1, horizonEndMs - horizonStartMs)
     property bool guideLiveWindow: snapshot.isLiveWindow === undefined ? true : Boolean(snapshot.isLiveWindow)
+    readonly property bool guideAtNow: guideLiveWindow && guideFocusMs <= 0
+                                       && selectedProgram === currentProgramIndex(selectedRow)
 
     function requestVisibleGuideRows() {
         if (!channelOS || typeof channelOS.requestGuideRows !== "function") return
@@ -2166,11 +2171,42 @@ ApplicationWindow {
                     color: root.textSecondary
                     font.pixelSize: 20
                 }
+                Row {
+                spacing: 18
                 Text {
+                    anchors.verticalCenter: parent.verticalCenter
                     text: guideScreen.programData.isCurrent ? "NOW PLAYING • LIVE" : (guideScreen.programData.isPast ? "EARLIER" : "UPCOMING")
                     color: guideScreen.programData.isCurrent ? root.liveRed : root.textSecondary
                     font.pixelSize: 16
                     font.weight: Font.DemiBold
+                }
+                Rectangle {
+                    id: guideLiveButton
+                    objectName: "guideLiveButton"
+                    readonly property string label: root.guideAtNow ? "●  WATCH LIVE" : "●  LIVE"
+                    width: liveLabel.implicitWidth + 36
+                    height: 34
+                    radius: 17
+                    color: liveArea.pressed ? "#7a1d1d" : root.guideAtNow ? root.liveRed : (liveArea.containsMouse ? "#3a1518" : "#2a1014")
+                    border.color: root.liveRed
+                    border.width: 2
+                    Text {
+                        id: liveLabel
+                        anchors.centerIn: parent
+                        text: guideLiveButton.label
+                        color: root.guideAtNow ? "#ffffff" : root.liveRed
+                        font.pixelSize: 15
+                        font.weight: Font.Bold
+                        font.letterSpacing: 1
+                    }
+                    MouseArea {
+                        id: liveArea
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.guideLiveActivated()
+                    }
+                }
                 }
             }
 
@@ -2598,7 +2634,7 @@ ApplicationWindow {
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 26
                 spacing: 28
-                Text { text: "G  Guide / Go to Now"; color: root.textSecondary; font.pixelSize: 15 }
+                Text { text: "L  Live (twice: watch)"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "← →  Time"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "PG UP / PG DN  3 Hours"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: ", .  Day"; color: root.textSecondary; font.pixelSize: 15 }

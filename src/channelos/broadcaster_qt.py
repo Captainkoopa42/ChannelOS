@@ -1493,6 +1493,7 @@ def run_qt(
     window.installEventFilter(key_filter)
     app.aboutToQuit.connect(lambda: window.removeEventFilter(key_filter))
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
+    window.guideLiveActivated.connect(key_filter.activateGuideLive)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
     window._channelos_key_filter = key_filter
     window._channelos_video_window = video_window

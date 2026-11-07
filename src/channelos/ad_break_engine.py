@@ -414,6 +414,7 @@ class BreakPlanStore:
     def __init__(self, database_path: str | Path, *, initialize: bool = True) -> None:
         self._plan_cache = {}
         self._plan_cache_generation = None
+        self._rotation_cache = {}
         self.path = str(database_path)
         self.portable = find_setup(database_path)
         if self.portable:
@@ -523,6 +524,44 @@ class BreakPlanStore:
         self.connection.commit()
         from .ad_plan_index import install
         install(self.connection)
+        self._install_rotation_version()
+
+    def _install_rotation_version(self) -> None:
+        """Count changes that invalidate incremental rotation counts.
+
+        Plain plan inserts are handled incrementally by rowid, so they do not
+        bump this version. Everything else that can change rotation counts —
+        rewritten or deleted plans, retirements and airing history — does,
+        from any connection, and is undone with the transaction that made it.
+        """
+        statements = ["""
+            -- content_cuts() looks plans up by this JSON field once per program;
+            -- without an index every lookup parsed every stored plan.
+            CREATE INDEX IF NOT EXISTS idx_ad_plan_metadata_cut_target
+                ON ad_plan_metadata(json_extract(payload, '$.cut_target_occurrence_id'));
+            -- preceding_program_end() runs once per program during catch-up
+            -- and sorted the whole channel clock without this index.
+            CREATE INDEX IF NOT EXISTS idx_ad_program_clock_content_end
+                ON ad_program_clock(channel_number, content_end);
+            CREATE TABLE IF NOT EXISTS ad_rotation_version (
+                singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+                value INTEGER NOT NULL
+            );
+            INSERT OR IGNORE INTO ad_rotation_version VALUES (1, 0);
+        """]
+        watched = (("ad_break_plans", ("UPDATE", "DELETE")),
+                   ("ad_retired_plans", ("INSERT", "UPDATE", "DELETE")),
+                   ("ad_break_history", ("INSERT", "UPDATE", "DELETE")))
+        for table, events in watched:
+            for event in events:
+                statements.append(f"""
+                    CREATE TRIGGER IF NOT EXISTS cos_rotation_{table}_{event.lower()}
+                    AFTER {event} ON {table} BEGIN
+                        UPDATE ad_rotation_version SET value = value + 1 WHERE singleton = 1;
+                    END;""")
+        self.connection.executescript("\n".join(statements))
+        self.connection.commit()
+        self._rotation_cache.clear()
 
     def _sync_plan_index(self, *, channel_number=None, plan_id=None):
         from .ad_plan_index import sync
@@ -925,23 +964,71 @@ class BreakPlanStore:
 
         A future Guide projection and a live tune must make identical rotation
         decisions. Reservations are intentionally distinct from the airing ledger.
+
+        Catch-up asks for counts at steadily later times while committing one
+        plan per step. Re-reading every earlier plan each time made a long
+        catch-up quadratic, so counts are extended incrementally: new plans are
+        found by rowid and newly covered time by the (channel, scheduled_at)
+        index. Any other change to plans, retirements or history (see
+        ``ad_rotation_version``) forces a full recount, as does an open
+        transaction, so uncommitted or rolled-back rows are never cached.
         """
+        channel = int(channel_number)
+        through = _utc(before).isoformat()
+        if self.connection.in_transaction:
+            return self._rotation_counts_full(channel, through)
+        try:
+            version = self.connection.execute(
+                "SELECT value FROM ad_rotation_version WHERE singleton = 1").fetchone()[0]
+        except sqlite3.OperationalError:
+            # Opened without schema initialization: no version, no cache.
+            return self._rotation_counts_full(channel, through)
+        max_rowid = self.connection.execute(
+            "SELECT COALESCE(MAX(rowid), 0) FROM ad_break_plans").fetchone()[0]
+        cached = self._rotation_cache.get(channel)
+        if (cached is None or cached["version"] != version
+                or max_rowid < cached["max_rowid"] or through < cached["through"]):
+            counts = self._rotation_counts_full(channel, through)
+            self._rotation_cache[channel] = {"version": version, "max_rowid": max_rowid,
+                                             "through": through, "counts": dict(counts)}
+            return counts
+        counts = cached["counts"]
+        if max_rowid > cached["max_rowid"]:
+            # Plans inserted since the last call that fall inside the range
+            # already counted. Later ones are picked up by the range below.
+            self._add_plan_counts(counts, self.connection.execute(
+                "SELECT payload FROM ad_break_plans WHERE rowid > ? AND channel_number = ? "
+                "AND scheduled_at < ? AND plan_id NOT IN (SELECT plan_id FROM ad_retired_plans)",
+                (cached["max_rowid"], channel, cached["through"])))
+        if through > cached["through"]:
+            self._add_plan_counts(counts, self.connection.execute(
+                "SELECT payload FROM ad_break_plans WHERE channel_number = ? "
+                "AND scheduled_at >= ? AND scheduled_at < ? "
+                "AND plan_id NOT IN (SELECT plan_id FROM ad_retired_plans)",
+                (channel, cached["through"], through)))
+        cached.update(max_rowid=max_rowid, through=through)
+        return dict(counts)
+
+    @staticmethod
+    def _add_plan_counts(result: dict[str, int], rows) -> None:
+        for (payload,) in rows:
+            for segment in json.loads(payload):
+                if segment.get("event_type", "advertisement") != "advertisement":
+                    continue
+                asset_id = segment["asset_id"]
+                result[asset_id] = result.get(asset_id, 0) + 1
+
+    def _rotation_counts_full(self, channel_number: int, before: str) -> dict[str, int]:
         result = {str(asset): int(count) for asset, count in self.connection.execute("""
             SELECT h.asset_id, COUNT(*) FROM ad_break_history h
             JOIN ad_retired_plans r ON h.plan_id = r.plan_id
             JOIN ad_break_plans p ON p.plan_id = h.plan_id WHERE p.channel_number = ?
             GROUP BY h.asset_id
         """, (channel_number,))}
-        for (payload,) in self.connection.execute(
+        self._add_plan_counts(result, self.connection.execute(
             "SELECT payload FROM ad_break_plans WHERE channel_number = ? "
             "AND scheduled_at < ? AND plan_id NOT IN (SELECT plan_id FROM ad_retired_plans) ORDER BY scheduled_at, plan_id",
-            (int(channel_number), _utc(before).isoformat()),
-        ):
-            for segment in json.loads(payload):
-                if segment.get("event_type", "advertisement") != "advertisement":
-                    continue
-                asset_id = segment["asset_id"]
-                result[asset_id] = result.get(asset_id, 0) + 1
+            (channel_number, before)))
         return result
 
     def save_program_clock(self, occurrence_id: str, channel_number: int, *,

@@ -796,7 +796,7 @@ Item {
             ScriptAction { script: bootPreview.close() }
         }
         contentItem: BootScreen {
-            loadingStyle: String(settingsRoot.preferences.loadingStyle || "classic")
+            loadingStyle: String(settingsRoot.preferences.loadingStyle || "tv")
             showStatic: String(settingsRoot.preferences.bootVideo || "static") !== "off"
             reducedMotion: Boolean(settingsRoot.preferences.reducedMotion)
             progress: bootPreview.fake

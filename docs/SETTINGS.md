@@ -204,7 +204,7 @@ Settings → Extras controls what you see while ChannelOS starts.
   full-width bar along the bottom with a percentage), or *Dancing TV* (the app
   icon hops to a beat, its antennas spring, the power light blinks, and the
   guide rows on its screen light up as startup progresses). Reduced Motion
-  shows the fill bar instead of the dancing TV.
+  shows the fill bar instead of the dancing TV. Dancing TV is the default.
 - **Preview Startup** runs the chosen style through a full boot without
   restarting.
 

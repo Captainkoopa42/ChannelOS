@@ -47,7 +47,7 @@ def test_settings_round_trip_to_separate_json_file(tmp_path) -> None:
         "key_bindings": {},
         "boot_video_file": "",
         "boot_video_sound": True,
-        "loading_style": "classic",
+        "loading_style": "tv",
         "background_artwork_during_playback": True,
         "controller_enabled": False,
         "display_mode": "windowed",

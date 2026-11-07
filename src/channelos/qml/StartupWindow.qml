@@ -33,7 +33,7 @@ Window {
 
     BootScreen {
         anchors.fill: parent
-        loadingStyle: String(startupWindow.boot.loadingStyle || "classic")
+        loadingStyle: String(startupWindow.boot.loadingStyle || "tv")
         showStatic: String(startupWindow.boot.video || "static") === "static"
                     || (startupWindow.boot.video === "custom" && !startupWindow.videoPlaying)
         reducedMotion: Boolean(startupWindow.boot.reducedMotion)

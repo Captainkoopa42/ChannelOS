@@ -78,7 +78,7 @@ ApplicationWindow {
         visible: opacity > 0
         opacity: wanted ? 1 : 0
         Behavior on opacity { NumberAnimation { duration: 420 } }
-        loadingStyle: String(root.settingsSnapshot.loadingStyle || "classic")
+        loadingStyle: String(root.settingsSnapshot.loadingStyle || "tv")
         showStatic: String(root.settingsSnapshot.bootVideo || "static") !== "off"
         reducedMotion: Boolean(root.settingsSnapshot.reducedMotion)
         progress: Number(root.startupState.progress || 0)

@@ -97,7 +97,7 @@ class CouchSettings:
     boot_video: str = "static"
     boot_video_file: str = ""
     boot_video_sound: bool = True
-    loading_style: str = "classic"
+    loading_style: str = "tv"
     # Controller tab. Bindings hold only changes from the defaults, as sorted
     # (control, action) pairs so the settings object stays immutable.
     controller_layout: str = "auto"
@@ -254,9 +254,9 @@ class CouchSettings:
         boot_video_file = Path(str(values.get("boot_video_file", "") or "")).name
         if boot_video not in BOOT_VIDEO_CHOICES or (boot_video == "custom" and not boot_video_file):
             boot_video = "static"
-        loading_style = str(values.get("loading_style", "classic"))
+        loading_style = str(values.get("loading_style", "tv"))
         if loading_style not in LOADING_STYLE_CHOICES:
-            loading_style = "classic"
+            loading_style = "tv"
 
         from .controller_layouts import LAYOUT_CHOICES, clean_bindings, clean_key_bindings
         controller_layout = str(values.get("controller_layout", "auto"))

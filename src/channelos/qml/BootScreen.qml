@@ -7,7 +7,7 @@ Item {
     id: boot
     objectName: "bootScreen"
 
-    property string loadingStyle: "classic"   // classic | bar | tv
+    property string loadingStyle: "tv"   // classic | bar | tv (dancing TV is the default)
     property bool showStatic: true
     property bool reducedMotion: false
     property real progress: 0

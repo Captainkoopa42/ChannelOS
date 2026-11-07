@@ -24,9 +24,9 @@ def test_boot_settings_persist_and_fall_back(tmp_path: Path) -> None:
     # Custom without a file, or unknown values, fall back to the first-boot defaults.
     assert CouchSettings.from_mapping({"boot_video": "custom"}).boot_video == "static"
     broken = CouchSettings.from_mapping({"boot_video": "laser", "loading_style": "spin", "boot_video_file": "../../x.mp4"})
-    assert (broken.boot_video, broken.loading_style) == ("static", "classic")
+    assert (broken.boot_video, broken.loading_style) == ("static", "tv")
     assert CouchSettings.from_mapping({"boot_video_file": "../../x.mp4", "boot_video": "custom"}).boot_video_file == "x.mp4"
-    assert CouchSettings().boot_video == "static" and CouchSettings().loading_style == "classic"
+    assert CouchSettings().boot_video == "static" and CouchSettings().loading_style == "tv"
 
 
 def test_boot_preferences_read_before_the_setup_opens(tmp_path: Path) -> None:
@@ -66,9 +66,10 @@ def test_boot_video_import_cycle_and_preview(tmp_path: Path) -> None:
         cycle = [controller.adjustSetting("bootVideo", 1)["message"] for _ in range(3)]
         assert cycle == ["Boot video: Off", "Boot video: TV Static", "Boot video: My Video"]
         assert controller.adjustSetting("bootVideoSound", 1)["message"] == "Boot video sound: Off"
+        assert controller.settings["loadingStyleLabel"] == "Dancing TV", "the dancing TV is the default"
+        assert controller.adjustSetting("loadingStyle", 1)["message"] == "Loading style: Classic"
         assert controller.adjustSetting("loadingStyle", 1)["message"] == "Loading style: Fill Bar"
         assert controller.adjustSetting("loadingStyle", 1)["message"] == "Loading style: Dancing TV"
-        assert controller.settings["loadingStyleLabel"] == "Dancing TV"
     finally:
         controller.stop()
 

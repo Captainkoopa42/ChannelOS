@@ -315,9 +315,8 @@ Item {
         }
     }
 
-    Rectangle {
+    ThemeBackdrop {
         anchors.fill: parent
-        color: appBackground
     }
 
     Rectangle {

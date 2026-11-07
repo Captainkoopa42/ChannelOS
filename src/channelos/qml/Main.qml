@@ -90,8 +90,15 @@ ApplicationWindow {
     // The saved theme drives every screen sharing this engine (Theme.qml).
     Binding {
         target: Theme
+        property: "spec"
+        value: channelOS && channelOS.themeSpec ? channelOS.themeSpec : ({})
+    }
+    Binding {
+        target: Theme
         property: "name"
-        value: channelOS && channelOS.settings && channelOS.settings.theme
+        value: channelOS && channelOS.themeSpec && channelOS.themeSpec.name
+               ? String(channelOS.themeSpec.name)
+               : channelOS && channelOS.settings && channelOS.settings.theme
                ? String(channelOS.settings.theme) : "channelos"
     }
     // Guide LIVE: first press returns the Guide to now, a second press
@@ -738,9 +745,8 @@ ApplicationWindow {
         }
     }
 
-    Rectangle {
+    ThemeBackdrop {
         anchors.fill: parent
-        color: root.appBackground
     }
 
     // Native libVLC presentation surface.

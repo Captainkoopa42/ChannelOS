@@ -390,6 +390,8 @@ def validate_package_root(package_root: Path) -> None:
         package_root / "_internal" / "channelos" / "qml" / "PlannerDatePicker.qml",
         package_root / "_internal" / "channelos" / "qml" / "PlannerMediaBin.qml",
         package_root / "_internal" / "channelos" / "qml" / "Theme.qml",
+        package_root / "_internal" / "channelos" / "qml" / "ThemeBackdrop.qml",
+        package_root / "_internal" / "channelos" / "qml" / "ThemeBuilder.qml",
         package_root / "_internal" / "channelos" / "qml" / "qmldir",
         package_root / "_internal" / "tzdata" / "zoneinfo" / "America" / "Los_Angeles",
     )

@@ -230,7 +230,11 @@ class CouchSettings:
             video[name] = value if value in choices and not isinstance(value, bool) else default
 
         theme = str(values.get("theme", "channelos")).strip().lower()
-        if theme not in THEME_CHOICES:
+        # Built-in themes, or a custom theme id from the Theme Builder.
+        if theme not in THEME_CHOICES and not (
+            theme.startswith("custom-") and 8 <= len(theme) <= 40
+            and theme[7:].replace("-", "").isalnum()
+        ):
             theme = "channelos"
 
         return cls(

@@ -162,6 +162,8 @@ def test_package_validation_compares_every_frozen_file(tmp_path: Path) -> None:
         "_internal/channelos/qml/PlannerDatePicker.qml",
         "_internal/channelos/qml/PlannerMediaBin.qml",
         "_internal/channelos/qml/Theme.qml",
+        "_internal/channelos/qml/ThemeBackdrop.qml",
+        "_internal/channelos/qml/ThemeBuilder.qml",
         "_internal/channelos/qml/qmldir",
         "_internal/tzdata/zoneinfo/America/Los_Angeles",
     )

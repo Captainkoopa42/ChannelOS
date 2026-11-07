@@ -1658,9 +1658,8 @@ Item {
             onActivated: studioRoot.applyDraft()
         }
 
-        Rectangle {
+        ThemeBackdrop {
             anchors.fill: parent
-            color: studioRoot.appBackground
         }
 
         Rectangle {

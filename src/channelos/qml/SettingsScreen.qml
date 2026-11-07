@@ -48,7 +48,8 @@ Item {
         { title: "Brightness", detail: "Picture brightness for every program." },
         { title: "Contrast", detail: "Picture contrast for every program." },
         { title: "Color Saturation", detail: "Picture color intensity for every program." },
-        { title: "Theme", detail: "Change the look of ChannelOS." },
+        { title: "Theme", detail: "Change the look of ChannelOS. Your own themes from the Theme Builder appear here too." },
+        { title: "Theme Builder", detail: "Make your own theme: pick every color, add a wallpaper image, and preview it live." },
         { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
         { title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
         { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, 30 seconds forward, the default picture and theme." },
@@ -57,6 +58,10 @@ Item {
 
     // Rows before firstAction change a value; the rest run an action.
     readonly property int firstAction: 21
+    readonly property bool themeBuilderOpen: themeBuilder.visible
+
+    function openThemeBuilder() { themeBuilder.openBuilder() }
+    function handleThemeBuilderIntent(intent) { themeBuilder.handleIntent(String(intent)) }
     readonly property var videoNames: ({
         12: "videoAspectRatio", 13: "videoFit", 14: "videoOverscan", 15: "videoDeinterlace",
         16: "videoHardwareDecoding", 17: "videoBrightness", 18: "videoContrast", 19: "videoSaturation"
@@ -148,7 +153,7 @@ Item {
             return String(preferences[videoNames[index]] || "Auto")
         if (index === 20)
             return String(preferences.themeName || "ChannelOS")
-        if (index === 21)
+        if (index === 22)
             return cacheUsageLabel()
         return "Standard"
     }
@@ -198,19 +203,25 @@ Item {
 
     function activateAction(index) {
         if (index === 21) {
+            openThemeBuilder()
+        } else if (index === 22) {
             showResult(typeof channelOS.beginArtworkCacheClear === "function"
                        ? channelOS.beginArtworkCacheClear() : channelOS.clearArtworkCache())
-        } else if (index === 22) {
-            showResult(channelOS.openDiagnosticLogs())
         } else if (index === 23) {
+            showResult(channelOS.openDiagnosticLogs())
+        } else if (index === 24) {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
-        } else if (index === 24) {
+        } else if (index === 25) {
             portableSetupDialog.open()
         }
     }
 
     function handleControllerIntent(intent: string): void {
+        if (themeBuilder.visible) {
+            themeBuilder.handleIntent(intent)
+            return
+        }
         if (portableSetupDialog.visible) {
             portableSetupDialog.handleControllerIntent(intent)
             return
@@ -248,9 +259,8 @@ Item {
         }
     }
 
-    Rectangle {
+    ThemeBackdrop {
         anchors.fill: parent
-        color: Theme.c("#050c15")
     }
 
     Timer {
@@ -522,10 +532,12 @@ Item {
                     Text {
                         anchors.centerIn: parent
                         text: settingRow.index === 21
-                              ? "Clear • " + settingsRoot.cacheUsageLabel()
+                              ? "Open Theme Builder"
                               : settingRow.index === 22
-                              ? "Open Log Folder"
+                              ? "Clear • " + settingsRoot.cacheUsageLabel()
                               : settingRow.index === 23
+                              ? "Open Log Folder"
+                              : settingRow.index === 24
                               ? "Restore Standard Defaults"
                               : "Copy / Open Setup"
                         color: Theme.c("#f4f7fb")
@@ -590,5 +602,9 @@ Item {
     PortableSetupDialog {
         id: portableSetupDialog
         parent: Overlay.overlay
+    }
+
+    ThemeBuilder {
+        id: themeBuilder
     }
 }

@@ -10,7 +10,18 @@ QtObject {
 
     property string name: "channelos"
     readonly property var names: ["channelos", "chromespace"]
-    readonly property bool light: name === "chromespace"
+    // A Theme Builder theme (or live preview): its full colour map and
+    // wallpaper, computed in Python from the theme's role colours.
+    property var spec: ({})
+    readonly property var custom: spec && spec.palette && spec.name === name
+                                  && String(name).indexOf("custom-") === 0 ? spec.palette : null
+    readonly property string wallpaper: custom && spec.wallpaper ? String(spec.wallpaper) : ""
+    readonly property string wallpaperFit: spec && spec.wallpaperFit ? String(spec.wallpaperFit) : "fill"
+    readonly property real wallpaperOpacity: spec && spec.wallpaperOpacity ? Number(spec.wallpaperOpacity) / 100 : 1
+    // Background behind every screen; always opaque (the wallpaper sits on it).
+    readonly property color base: Qt.rgba(Qt.color(c("#050c15")).r, Qt.color(c("#050c15")).g,
+                                          Qt.color(c("#050c15")).b, 1)
+    readonly property bool light: Qt.color(c("#081625")).hslLightness > 0.5
 
     // ChromeSpace: Chrome's light surfaces and tab-strip grey with MySpace's
     // navy blue and orange highlights. Generated from the ChannelOS palette
@@ -179,7 +190,7 @@ QtObject {
     }
 
     function c(hex) {
-        var palette = palettes[name]
+        var palette = custom || palettes[name]
         if (!palette)
             return hex
         var mapped = palette[String(hex).toLowerCase()]

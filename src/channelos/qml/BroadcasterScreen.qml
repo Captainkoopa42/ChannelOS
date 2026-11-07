@@ -456,9 +456,8 @@ Item {
             onActivated: broadcasterRoot.saveDraft()
         }
 
-        Rectangle {
+        ThemeBackdrop {
             anchors.fill: parent
-            color: broadcasterRoot.appBackground
         }
 
         Rectangle {

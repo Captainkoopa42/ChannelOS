@@ -471,7 +471,7 @@ Item {
         }
     }
 
-    Rectangle { anchors.fill: parent; color: planner.embedded ? "transparent" : planner.bg }
+    ThemeBackdrop { anchors.fill: parent; visible: !planner.embedded }
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: planner.embedded ? 0 : 20

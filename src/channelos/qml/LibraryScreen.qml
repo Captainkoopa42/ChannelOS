@@ -657,9 +657,8 @@ Item {
         onActivated: libraryRoot.handleBack()
     }
 
-    Rectangle {
+    ThemeBackdrop {
         anchors.fill: parent
-        color: appBackground
     }
 
     Rectangle {

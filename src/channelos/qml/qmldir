@@ -1,6 +1,7 @@
 # Types in this directory. With a qmldir present, implicit imports expose only
 # the types listed here: add new QML files below (tests check this).
 singleton Theme 1.0 Theme.qml
+ThemeBackdrop 1.0 ThemeBackdrop.qml
 AdMediaBin 1.0 AdMediaBin.qml
 AdSettingsEditor 1.0 AdSettingsEditor.qml
 BroadcastPlannerScreen 1.0 BroadcastPlannerScreen.qml
@@ -23,3 +24,4 @@ PortableDriveNotice 1.0 PortableDriveNotice.qml
 PortableSetupDialog 1.0 PortableSetupDialog.qml
 SettingsScreen 1.0 SettingsScreen.qml
 StartupWindow 1.0 StartupWindow.qml
+ThemeBuilder 1.0 ThemeBuilder.qml

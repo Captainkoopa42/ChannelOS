@@ -144,6 +144,28 @@ Fill and Stretch follow the video window's size. Crops wait until the decoder
 reports the source size, then apply without restarting the program. Unknown or
 hand-edited values fall back to the defaults.
 
-## Theme
+## Theme and Theme Builder
 
-`Theme` switches the whole interface look (ChannelOS, ChromeSpace).
+`Theme` switches the whole interface look: ChannelOS, ChromeSpace, and any
+theme you build.
+
+**Theme Builder** (Settings → Theme Builder) creates your own themes:
+
+- **Colors.** Twelve roles: background, panels, buttons and cards, borders,
+  text, secondary text, accent, highlight and focus, selection, live and
+  alerts, success, and warning. Each has a color picker (hue, color and light
+  sliders plus a swatch board) or a hex field. Every screen derives from these
+  roles, so a light or dark set of roles both work. Text on accent fills and on
+  selections automatically switches to whichever color reads best.
+- **Wallpaper.** Choose any PNG, JPEG, WebP, BMP or GIF. It is copied into the
+  setup's `themes/images` folder, so it travels with a portable drive. Fit it
+  as fill, fit, tile or center, and set image opacity. Panel opacity (40–100 %)
+  lets the wallpaper show through the panels, MySpace-style.
+- **Live preview.** The whole app shows the draft while you edit. Closing
+  without saving puts your current theme back.
+- **Save** keeps the theme; **Save & Use** also switches to it. Built-in themes
+  are never changed: editing one saves your own copy. Deleting the theme in use
+  returns to ChannelOS.
+
+On-screen displays drawn over video keep the dark broadcast style in every
+theme, so they stay readable on any picture.

@@ -210,7 +210,7 @@ Item {
                 source: boot.mascotBase + "antenna_left.png"
                 anchors.fill: parent
                 smooth: true
-                mipmap: true
+                mipmap: false
                 transform: Rotation {
                     origin.x: 240 * dance.unit
                     origin.y: 110 * dance.unit
@@ -221,7 +221,7 @@ Item {
                 source: boot.mascotBase + "antenna_right.png"
                 anchors.fill: parent
                 smooth: true
-                mipmap: true
+                mipmap: false
                 transform: Rotation {
                     origin.x: 272 * dance.unit
                     origin.y: 110 * dance.unit
@@ -232,7 +232,7 @@ Item {
                 source: boot.mascotBase + "body.png"
                 anchors.fill: parent
                 smooth: true
-                mipmap: true
+                mipmap: false
             }
             // Screen rows: dim until progress reaches them, then light up.
             Repeater {

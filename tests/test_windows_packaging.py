@@ -171,6 +171,7 @@ def test_package_validation_compares_every_frozen_file(tmp_path: Path) -> None:
         "_internal/channelos/qml/ProfileEditor.qml",
         "_internal/channelos/qml/PinPad.qml",
         "_internal/channelos/assets/mascot/body.png",
+        "_internal/channelos/assets/static/noise0.png",
         "_internal/channelos/assets/mascot/antenna_left.png",
         "_internal/channelos/assets/mascot/antenna_right.png",
         "_internal/channelos/qml/ThemeBackdrop.qml",

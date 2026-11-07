@@ -173,12 +173,15 @@ Popup {
             width: parent.width
             spacing: 12
             Text {
+                id: oskLabel
+                width: 120
+                elide: Text.ElideRight
                 text: osk.label.length > 0 ? osk.label : "Typing"
                 color: Theme.c("#9fb0c2"); font.pixelSize: 14
                 anchors.verticalCenter: parent.verticalCenter
             }
             Rectangle {
-                width: parent.width - 220
+                width: parent.width - oskLabel.width - oskHint.width - 24
                 height: 40
                 radius: 8
                 color: Theme.c("#050c15")
@@ -197,6 +200,7 @@ Popup {
                 }
             }
             Text {
+                id: oskHint
                 text: "X ⌫   Y space   LB/RB cursor"
                 color: Theme.c("#70869c"); font.pixelSize: 12
                 anchors.verticalCenter: parent.verticalCenter

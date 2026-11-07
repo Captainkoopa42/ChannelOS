@@ -68,7 +68,7 @@ Item {
         { tab: "extras", key: "loadingStyle", title: "Loading Style", detail: "Classic, a fill bar along the bottom, or the dancing ChannelOS TV. Reduced Motion uses the fill bar." },
         { tab: "extras", key: "bootPreview", action: "Preview", title: "Preview Startup", detail: "Watch the loading style without restarting." },
         { tab: "extras", key: "portable", action: "Copy / Open Setup", title: "Portable Setup & Backup", detail: "Copy channels, the media index, ad configuration and history to a drive as a backup or to take with you, or open a setup you copied earlier." },
-        { tab: "controller", key: "controllerLayout", title: "Controller Layout", detail: "Which controller the mapper draws. Automatic matches the one plugged in: Xbox, PlayStation, Nintendo, GameCube, N64, retro pads and more." },
+        { tab: "controller", key: "controllerLayout", title: "Controller Layout", detail: "Which controller the Button Mapper draws. Automatic matches the one plugged in." },
         { tab: "controller", key: "buttonMapper", action: "Open Button Mapper", title: "Button Mapper", detail: "See your controller and choose what every button does, like Steam's controller settings." },
         { tab: "controller", key: "keyboardMapper", action: "Open Keyboard Mapper", title: "Keyboard Mapper", detail: "Choose which keys do what. Esc is always Back and number keys always tune channels." },
         { tab: "controller", key: "dedicatedController", title: "Dedicated Controller Mode", detail: "For the couch: selecting any text box opens an on-screen keyboard you type on with the controller." },
@@ -454,7 +454,7 @@ Item {
             anchors.margins: 38
             spacing: 8
             Text {
-                text: "CURRENT PROFILE"
+                text: "PERFORMANCE PROFILE"
                 color: Theme.c("#42adff")
                 font.pixelSize: 13
                 font.weight: Font.Bold
@@ -503,11 +503,13 @@ Item {
             anchors.right: settingsTitle.right
             anchors.top: settingsTitle.bottom
             anchors.topMargin: 4
-            text: settingsRoot.currentTab === 1
-                  ? "Picture and sound for Live TV, On Demand and the Home preview. Changes save automatically."
-                  : settingsRoot.currentTab === 2
-                  ? "Make ChannelOS look your way, and back up or carry your whole setup. Changes save automatically."
-                  : "How ChannelOS looks on screen, responds to controls and handles artwork. Changes save automatically."
+            text: ({
+                general: "How ChannelOS looks on screen, responds to controls and handles artwork. Changes save automatically.",
+                media: "Picture and sound for Live TV, On Demand and the Home preview. Changes save automatically.",
+                extras: "Make ChannelOS look your way, and back up or carry your whole setup. Changes save automatically.",
+                controller: "Set up any controller your way, remap keys, and type from the couch. Changes save automatically.",
+                profiles: "Kids, Daycare and Lobby lock ChannelOS to what you choose. Leaving one needs the PIN."
+            })[settingsRoot.tabs[settingsRoot.currentTab].key]
             color: Theme.c("#9fb0c2")
             font.pixelSize: 16
             elide: Text.ElideRight

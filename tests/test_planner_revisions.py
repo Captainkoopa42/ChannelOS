@@ -11,6 +11,57 @@ from test_planner_runtime import planner_channel,START
 from test_runtime import build_resolved_channel
 
 
+def test_ad_boundary_closes_cycle_even_with_subsecond_observations(tmp_path):
+    owned=build_resolved_channel(tmp_path,[4,4])
+    ads=build_resolved_channel(tmp_path,[1],channel_number=12)
+    rules=planner_rules(cycle={'action':'once'})
+    rules['start_at']=(START+timedelta(hours=12)).isoformat()
+    rules['groups'][0]['asset_ids']=[m.asset.asset_id for m in owned.media]
+    rules['windows'][0].update(start='12:00',end='13:00',bracket_minutes=1)
+    raw=channel_to_mapping(owned.definition)
+    raw.update(schema_version='0.7',programming={'mode':'planner','planner':rules})
+    settings=AdvertisingDefinition(enabled=True,setup_mode='after_show',play_order='sequential',
+        asset_ids=tuple(m.asset.asset_id for m in ads.media))
+    channel=replace(owned,definition=replace(ChannelDefinition.from_mapping(raw),advertising=settings),ad_media=ads.media)
+    store=RuntimeStore(tmp_path/'runtime.db')
+    epoch=START+timedelta(hours=12)
+    runtime=ChannelRuntime.open(channel,store,now=epoch)
+    try:
+        for seconds,expected in [(0.4,'program'),(4.2,'advertisement'),(60.4,'program'),
+                                 (64.2,'advertisement'),(65.1,'offair')]:
+            assert runtime.broadcast_at(epoch+timedelta(seconds=seconds)).origin==expected
+        with store.connect() as connection:
+            closed=connection.execute('SELECT closed_at FROM planner_cycles').fetchall()
+            completed=connection.execute('SELECT completed_at FROM planner_completions').fetchall()
+        assert [row[0] for row in closed]==[(epoch+timedelta(seconds=65)).isoformat()]
+        assert [row[0] for row in completed]==[(epoch+timedelta(seconds=64)).isoformat()]
+    finally:
+        runtime.break_store.close()
+
+
+def test_safe_future_revision_activates_at_a_subsecond_observed_boundary(tmp_path):
+    owned=build_resolved_channel(tmp_path,[4,4])
+    rules=planner_rules(cycle={'action':'once'})
+    epoch=START+timedelta(hours=12)
+    rules['start_at']=epoch.isoformat()
+    rules['groups'][0]['asset_ids']=[m.asset.asset_id for m in owned.media]
+    rules['windows'][0].update(start='12:00',end='13:00',bracket_minutes=1)
+    raw=channel_to_mapping(owned.definition)
+    raw.update(schema_version='0.7',programming={'mode':'planner','planner':rules})
+    channel=replace(owned,definition=ChannelDefinition.from_mapping(raw))
+    store=RuntimeStore(tmp_path/'runtime.db')
+    observed=epoch+timedelta(seconds=3.2)
+    ChannelRuntime.open(channel,store,now=observed)
+    rules['edit_effect']='safe_future'
+    rules['groups'][0]['name']='Edited collection'
+    staged=ChannelRuntime.open(replace(channel,definition=ChannelDefinition.from_mapping(raw)),store,now=observed)
+    assert staged.timeline.activation==epoch+timedelta(seconds=4)
+    assert staged.broadcast_at(epoch+timedelta(seconds=4.1)).origin=='offair'
+    with store.connect() as connection:
+        status=connection.execute('SELECT status FROM planner_revisions WHERE revision=?',(staged.timeline.revision,)).fetchone()[0]
+    assert status=='active'
+
+
 def test_future_media_replacement_uses_each_revisions_own_source_pool(tmp_path):
     channel=planner_channel(tmp_path)
     replacement=build_resolved_channel(tmp_path,[3600],channel_number=12)

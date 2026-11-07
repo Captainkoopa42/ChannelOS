@@ -411,9 +411,14 @@ class PlannerTimeline:
             segment_source_offset_seconds=segment.source_offset)
 
     def reconcile(self, now, *, follow_revisions=True, stop_at=None):
-        if self._next_reconcile and self._last_reconciled and self._last_reconciled<=now<self._next_reconcile:
+        crossed_activation = self._last_reconciled is not None and self._last_reconciled<self.activation<=now
+        if self._next_reconcile and self._last_reconciled and self._last_reconciled<=now<self._next_reconcile and not crossed_activation:
             return
-        if self._last_reconciled and now < self._last_reconciled+timedelta(seconds=1):
+        # Coalesce status polls only while no segment/revision boundary is due.
+        # A short ad or transition must still earn its completion immediately.
+        if self._last_reconciled and now < self._last_reconciled+timedelta(seconds=1) and not crossed_activation and (
+            self._next_reconcile is None or now<self._next_reconcile
+        ):
             return
         previous = self._revision_at(now) if follow_revisions else None
         if previous:
@@ -421,6 +426,7 @@ class PlannerTimeline:
             previous.bind_break_store(self.break_store)
             previous.observe_unavailable(now)
             previous.reconcile(now)
+            self._next_reconcile = previous._next_reconcile
             self._last_reconciled = now
             return
         if now<self.activation:
@@ -482,6 +488,10 @@ class PlannerTimeline:
                 self.break_store.reconcile_completed(self.number,through=now)
             if plan.end>now:
                 boundaries = [value for s in plan.segments for value in (s.starts_at,s.ends_at) if value>now]
+                # A partial-day checkpoint can retain the active break and a
+                # pending cycle closure without repeating their segments here.
+                boundaries.extend(value for value in (compiler.last_end,compiler.resume_at,compiler.ready_at,compiler.restart_at)
+                                  if value is not None and value>now)
                 boundaries.extend(at for _,_,at in plan.completions if at>now)
                 boundaries.extend(datetime.fromisoformat(c['end']) for c in plan.closed_cycles if datetime.fromisoformat(c['end'])>now)
                 if plan.next_change and plan.next_change>now:

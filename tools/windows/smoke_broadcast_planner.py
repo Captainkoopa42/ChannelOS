@@ -80,14 +80,15 @@ def run(vlc_dir):
                     assert GuideService((runtime,)).now_next(7,at=at).now.asset_id==decision.viewer_selection.media.asset.asset_id
                 observed.append({'at':second,'event':expected,'offset':decision.viewer_selection.offset_seconds})
             with store.connect() as connection:
-                assert connection.execute('SELECT COUNT(*) FROM planner_cycles').fetchone()[0]==1
-                assert connection.execute('SELECT COUNT(*) FROM planner_completions').fetchone()[0]==1
+                ledger={'cycles':connection.execute('SELECT COUNT(*) FROM planner_cycles').fetchone()[0],
+                        'completions':connection.execute('SELECT COUNT(*) FROM planner_completions').fetchone()[0]}
+                assert ledger=={'cycles':1,'completions':1},{'ledger':ledger,'events':observed}
         finally:
             session.stop()
             backend._player.release(); backend._instance.release()
             runtime.break_store.close()
     window.close()
-    print(json.dumps({'nativePlannerPlayback':'passed','simulatedBroadcastTimestamps':True,'events':observed}))
+    print(json.dumps({'nativePlannerPlayback':'passed','simulatedBroadcastTimestamps':True,'ledger':ledger,'events':observed}))
 
 
 if __name__=='__main__':

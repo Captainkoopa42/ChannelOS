@@ -8,7 +8,12 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, QThread, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Property, Qt, QThread, QTimer, QUrl, Signal, Slot
+
+# Worker results must reach the GUI thread. Queued explicitly: an automatic
+# connection to a Python slot ran `ready` on the setup thread on Windows, which
+# then built the main window off the GUI thread and deadlocked.
+QUEUED = Qt.ConnectionType.QueuedConnection
 from PySide6.QtGui import QWindow
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication
@@ -207,10 +212,10 @@ def install_startup_support(module):
             thread.setObjectName('ChannelOS startup')
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
-            worker.first.connect(self._startup_first)
-            worker.metadata.connect(self._startup_metadata)
-            worker.completed.connect(self._startup_remaining)
-            worker.failed.connect(self._startup_failed)
+            worker.first.connect(self._startup_first, QUEUED)
+            worker.metadata.connect(self._startup_metadata, QUEUED)
+            worker.completed.connect(self._startup_remaining, QUEUED)
+            worker.failed.connect(self._startup_failed, QUEUED)
             worker.finished.connect(thread.quit)
             worker.finished.connect(worker.deleteLater)
             thread.finished.connect(self._startup_finished)
@@ -496,11 +501,11 @@ def launch(module, paths, db, state_db, channels_dir, *, windowed=False):
     thread = QThread(app)
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
-    worker.ready.connect(control.ready)
-    worker.failed.connect(control.failed)
+    worker.ready.connect(control.ready, QUEUED)
+    worker.failed.connect(control.failed, QUEUED)
     worker.finished.connect(thread.quit)
     worker.finished.connect(worker.deleteLater)
-    thread.finished.connect(control.finished)
+    thread.finished.connect(control.finished, QUEUED)
     app._channelos_bootstrap = (engine, window, control, worker, thread, boot_video_window)
     thread.start(QThread.Priority.LowPriority)
     if not owns_application: return 0

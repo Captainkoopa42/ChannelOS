@@ -411,7 +411,7 @@ def test_threaded_backend_starts_off_the_gui_thread_and_samples() -> None:
         return Slow()
 
     begin = clock.monotonic()
-    backend = controller_input.ThreadedBackend(factory)
+    backend = controller_input.ThreadedBackend(factory, start_delay=0)
     assert clock.monotonic() - begin < 0.04, "creation never blocks the caller"
     assert backend.read_first() is None
     assert backend.started.wait(2)

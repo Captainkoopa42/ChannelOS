@@ -564,7 +564,10 @@ class SDLBackend:
             # Positional buttons: Nintendo's A (east) stays "east" so one binding
             # table fits every brand. Read input while the window is focused only
             # (ChannelOS also gates on focus), and never grab the screen saver.
+            # Windows.Gaming.Input is skipped: it is slow to start and adds
+            # nothing over SDL's XInput, HIDAPI and DirectInput drivers here.
             for hint, value in (("SDL_HINT_GAMECONTROLLER_USE_BUTTON_LABELS", b"0"),
+                                ("SDL_HINT_JOYSTICK_WGI", b"0"),
                                 ("SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS", b"1"),
                                 ("SDL_HINT_VIDEO_ALLOW_SCREENSAVER", b"1")):
                 name = getattr(sdl2, hint, None)
@@ -645,9 +648,12 @@ class ThreadedBackend:
     ACTIVE_INTERVAL = 0.008
     IDLE_INTERVAL = 0.25
 
-    def __init__(self, factory: Callable[[], ControllerBackend | None]) -> None:
+    START_DELAY = 2.0
+
+    def __init__(self, factory: Callable[[], ControllerBackend | None], *, start_delay: float | None = None) -> None:
         import threading
         self._factory = factory
+        self._start_delay = self.START_DELAY if start_delay is None else float(start_delay)
         self._latest: ControllerReading | None = None
         self._requested_at = time.monotonic()
         self._stopping = threading.Event()
@@ -657,6 +663,11 @@ class ThreadedBackend:
         self._thread.start()
 
     def _run(self) -> None:
+        # Let ChannelOS open its window and first channel before SDL starts
+        # enumerating devices (it competes for the CPU and disk on slow PCs).
+        if self._stopping.wait(self._start_delay):
+            self.started.set()
+            return
         try:
             self.backend = self._factory()
         except Exception:

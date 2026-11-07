@@ -6,8 +6,9 @@ Implementation starts from the verified Windows RC4 source
 `54447f26c36f26cd63b8774abfc206e3380026fe`; its 551-test compatibility baseline
 and performance work remain the release baseline.
 
-The Planner is a third authoring path. Classic Builder and Manual Studio remain
-valid. Portable definitions are the authoring authority; ChannelRuntime remains
+The Planner is a third authoring path, reached as the **Planner** tab of Channel
+Studio (after Day / Week / Month; see `STUDIO_INTEGRATION.md`). Classic Builder
+and Manual Studio remain valid. Portable definitions are the authoring authority; ChannelRuntime remains
 the playout/Guide authority. The same deterministic planner compiler serves live
 playout and read-only forecasts. Drafts never advance Broadcast/Viewer Clocks,
 progression, ad viewing, or completion/cycle history.

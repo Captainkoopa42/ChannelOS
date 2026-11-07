@@ -147,11 +147,8 @@ Item {
             return
 
         var channel = selectedChannel()
-        if (String(channel.mode) === "planner") {
-            openPlanner(channel.channelNumber)
-            return
-        }
-        if (String(channel.mode) === "calendar") {
+        // Planner channels live in Studio's Planner tab.
+        if (String(channel.mode) === "planner" || String(channel.mode) === "calendar") {
             openStudio(channel.channelNumber)
             return
         }
@@ -175,12 +172,6 @@ Item {
             addDraftSource(channelSources[i])
 
         channelNameField.forceActiveFocus()
-    }
-
-    function openPlanner(channelNumber) {
-        if (!hostWindow) return
-        hostWindow.plannerChannelNumber = Number(channelNumber || 0)
-        hostWindow.screen = "planner"
     }
 
     function openStudio(channelNumber) {
@@ -697,25 +688,14 @@ Item {
                     spacing: 12
 
                     ChannelButton {
-                        text: "New Planner"
-                        width: (parent.width - 72) / 7
-                        onClicked: broadcasterRoot.openPlanner(0)
-                    }
-                    ChannelButton {
-                        text: "Open Planner"
-                        width: (parent.width - 72) / 7
-                        enabled: broadcasterRoot.channels.length > 0
-                        onClicked: broadcasterRoot.openPlanner(broadcasterRoot.selectedChannel().channelNumber)
-                    }
-                    ChannelButton {
                         text: "New in Studio"
-                        width: (parent.width - 72) / 7
+                        width: (parent.width - 48) / 5
                         onClicked: broadcasterRoot.openStudio(0)
                     }
 
                     ChannelButton {
                         text: "Open Studio"
-                        width: (parent.width - 72) / 7
+                        width: (parent.width - 48) / 5
                         enabled: broadcasterRoot.channels.length > 0
                         onClicked: broadcasterRoot.openStudio(
                                        broadcasterRoot.selectedChannel().channelNumber)
@@ -723,27 +703,26 @@ Item {
 
                     ChannelButton {
                         text: "Classic New"
-                        width: (parent.width - 72) / 7
+                        width: (parent.width - 48) / 5
                         onClicked: broadcasterRoot.beginCreate()
                     }
 
                     ChannelButton {
                         text: broadcasterRoot.channels.length
-                              && broadcasterRoot.selectedChannel().mode === "planner"
-                              ? "Edit Planner"
-                              : broadcasterRoot.channels.length
-                              && broadcasterRoot.selectedChannel().mode === "calendar"
+                              && (broadcasterRoot.selectedChannel().mode === "calendar"
+                                  || broadcasterRoot.selectedChannel().mode === "planner")
                               ? "Studio Channel"
                               : "Classic Edit"
-                        width: (parent.width - 72) / 7
+                        width: (parent.width - 48) / 5
                         enabled: broadcasterRoot.channels.length > 0
                                  && broadcasterRoot.selectedChannel().mode !== "calendar"
+                                 && broadcasterRoot.selectedChannel().mode !== "planner"
                         onClicked: broadcasterRoot.beginEdit()
                     }
 
                     ChannelButton {
                         text: "Delete Channel"
-                        width: (parent.width - 72) / 7
+                        width: (parent.width - 48) / 5
                         enabled: broadcasterRoot.editorMode === "list"
                                  && broadcasterRoot.canDeleteSelectedChannel()
                         destructive: true

@@ -156,6 +156,8 @@ class CouchActions:
             approximate_start_ms,
             at=reference,
         )
+        if program.programming_mode == "offair":
+            raise GuideError("Nothing aired here: this channel's schedule starts later")
         if program.start_utc > reference:
             raise GuideError("future Guide programs cannot be played before they air")
 

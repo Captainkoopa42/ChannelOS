@@ -330,15 +330,16 @@ def main(argv: list[str] | None = None) -> int:
         library = MediaLibrary(args.db)
         store = RuntimeStore(args.state_db)
         opened: list[ChannelRuntime] = []
+        generated_at = utc_now()
         try:
             for path in args.paths:
                 resolved = _resolve_or_report(path, library)
                 if resolved is None:
                     return 3
-                opened.append(ChannelRuntime.open(resolved, store))
+                # One clock for opening and projecting: a new channel begins now.
+                opened.append(ChannelRuntime.open(resolved, store, now=generated_at))
 
             service = GuideService(tuple(opened))
-            generated_at = utc_now()
             start = args.from_time or generated_at
             end = start + timedelta(hours=float(args.hours))
             horizon = service.horizon(start, end, generated_at=generated_at)

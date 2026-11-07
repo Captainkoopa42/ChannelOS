@@ -7,6 +7,9 @@ from .runtime import require_aware_utc, utc_now
 
 
 DEFAULT_GUIDE_HOURS = 3.0
+# How far the Guide may be paged from the current half hour, either way.
+GUIDE_REACH = timedelta(days=14)
+GUIDE_STEP = timedelta(minutes=30)
 RESERVED_DEFAULT_CHANNEL = 1
 RESERVED_DEFAULT_DISPLAY = "001"
 
@@ -27,6 +30,13 @@ def _floor_to_half_hour(value: datetime) -> datetime:
     return current.replace(minute=minute, second=0, microsecond=0)
 
 
+def clamp_guide_start(start: datetime, reference: datetime) -> datetime:
+    """Align a requested Guide window start to the grid and the paging reach."""
+    live = _floor_to_half_hour(reference)
+    requested = _floor_to_half_hour(require_aware_utc(start))
+    return max(live - GUIDE_REACH, min(live + GUIDE_REACH, requested))
+
+
 def _program_view(program: GuideProgram) -> dict[str, object]:
     return {
         "scheduleId": program.schedule_id,
@@ -40,6 +50,7 @@ def _program_view(program: GuideProgram) -> dict[str, object]:
         "isPast": bool(program.is_past),
         "isFuture": bool(program.is_future),
         "isUnassigned": False,
+        "isOffAir": program.programming_mode == "offair",
         "breakMarkers": [{"breakId": marker.break_id,
                           "startMs": _epoch_milliseconds(marker.start_utc),
                           "endMs": _epoch_milliseconds(marker.end_utc)}
@@ -108,7 +119,7 @@ def _display_segments(programs: tuple[GuideProgram, ...]) -> list[dict[str, obje
     while index < len(programs):
         first = programs[index]
 
-        if first.duration_seconds > SHORT_FORM_PROGRAM_SECONDS:
+        if first.duration_seconds > SHORT_FORM_PROGRAM_SECONDS or first.programming_mode == "offair":
             segments.append(
                 {
                     "title": first.display_label,
@@ -119,6 +130,7 @@ def _display_segments(programs: tuple[GuideProgram, ...]) -> list[dict[str, obje
                     "lastProgramIndex": index,
                     "isCluster": False,
                     "isCurrent": bool(first.is_current),
+                    "isOffAir": first.programming_mode == "offair",
                     "breakMarkers": _program_view(first)["breakMarkers"],
                 }
             )
@@ -135,7 +147,7 @@ def _display_segments(programs: tuple[GuideProgram, ...]) -> list[dict[str, obje
         while index < len(programs):
             candidate = programs[index]
 
-            if candidate.duration_seconds > SHORT_FORM_PROGRAM_SECONDS:
+            if candidate.duration_seconds > SHORT_FORM_PROGRAM_SECONDS or candidate.programming_mode == "offair":
                 break
 
             # Never visually bridge a real schedule gap.
@@ -187,6 +199,7 @@ def build_couch_snapshot(
     *,
     at: datetime | None = None,
     guide_hours: float = DEFAULT_GUIDE_HOURS,
+    start: datetime | None = None,
     prepared_rows=None,
     pending_numbers=(),
     failed_numbers=(),
@@ -196,7 +209,9 @@ def build_couch_snapshot(
         raise ValueError("guide_hours must be greater than zero")
 
     reference = require_aware_utc(at or utc_now())
-    start = _floor_to_half_hour(reference)
+    live_start = _floor_to_half_hour(reference)
+    # The Guide window may be paged away from now; the clock stays live.
+    start = live_start if start is None else clamp_guide_start(start, reference)
     end = start + timedelta(hours=float(guide_hours))
     horizon = (service.horizon(start, end, generated_at=reference) if prepared_rows is None
                else GuideHorizon(start, end, reference, tuple(prepared_rows)))
@@ -258,5 +273,9 @@ def build_couch_snapshot(
         "generatedAtMs": _epoch_milliseconds(reference),
         "horizonStartMs": _epoch_milliseconds(start),
         "horizonEndMs": _epoch_milliseconds(end),
+        "liveStartMs": _epoch_milliseconds(live_start),
+        "earliestStartMs": _epoch_milliseconds(live_start - GUIDE_REACH),
+        "latestStartMs": _epoch_milliseconds(live_start + GUIDE_REACH),
+        "isLiveWindow": start == live_start,
         "rows": rows,
     }

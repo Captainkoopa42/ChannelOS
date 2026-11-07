@@ -34,6 +34,9 @@ ApplicationWindow {
     property int selectedProgram: 0
     property int guideSelectionChannel: 0
     property string guideSelectionScheduleId: ""
+    // A time (ms) the Guide selection follows while browsing away from now;
+    // 0 means "follow what is airing now".
+    property real guideFocusMs: 0
     property bool publishingGuideRows: false
     property real guideScrollY: 0
     property int guidePublication: 0
@@ -121,6 +124,7 @@ ApplicationWindow {
     property real horizonEndMs: snapshot.horizonEndMs || 1
     property real generatedAtMs: snapshot.generatedAtMs || 0
     property real horizonSpanMs: Math.max(1, horizonEndMs - horizonStartMs)
+    property bool guideLiveWindow: snapshot.isLiveWindow === undefined ? true : Boolean(snapshot.isLiveWindow)
 
     function requestVisibleGuideRows() {
         if (!channelOS || typeof channelOS.requestGuideRows !== "function") return
@@ -147,7 +151,27 @@ ApplicationWindow {
         return rows[rowIndex].programs || []
     }
 
+    function programIndexAt(rowIndex, ms) {
+        var programs = programsForRow(rowIndex)
+        var best = programs.length > 0 ? 0 : -1
+        var distance = -1
+        for (var i = 0; i < programs.length; ++i) {
+            var start = Number(programs[i].startMs || 0)
+            var end = Number(programs[i].endMs || 0)
+            if (start <= ms && ms < end)
+                return i
+            var gap = Math.min(Math.abs(start - ms), Math.abs(end - ms))
+            if (distance < 0 || gap < distance) {
+                best = i
+                distance = gap
+            }
+        }
+        return best
+    }
+
     function currentProgramIndex(rowIndex) {
+        if (guideFocusMs > 0)
+            return programIndexAt(rowIndex, guideFocusMs)
         var programs = programsForRow(rowIndex)
         for (var i = 0; i < programs.length; ++i) {
             if (programs[i].isCurrent)
@@ -429,6 +453,21 @@ ApplicationWindow {
         if (hours === 0)
             hours = 12
         return hours + ":" + (minutes < 10 ? "0" : "") + minutes + " " + suffix
+    }
+
+    function guideDayLabel(ms) {
+        if (!ms)
+            return ""
+        var day = new Date(ms)
+        day.setHours(0, 0, 0, 0)
+        var today = new Date(generatedAtMs || Date.now())
+        today.setHours(0, 0, 0, 0)
+        var delta = Math.round((day.getTime() - today.getTime()) / 86400000)
+        var name = delta === 0 ? "TODAY"
+                 : delta === 1 ? "TOMORROW"
+                 : delta === -1 ? "YESTERDAY"
+                 : day.toLocaleDateString(Qt.locale(), "dddd").toUpperCase()
+        return name + "  " + formatDate(ms)
     }
 
     function formatDate(ms) {
@@ -2285,8 +2324,9 @@ ApplicationWindow {
                 anchors.left: parent.left
                 anchors.leftMargin: 28
                 anchors.verticalCenter: parent.verticalCenter
-                text: "TODAY  " + root.formatDate(root.generatedAtMs)
-                color: root.textPrimary
+                objectName: "guideDayLabel"
+                text: root.guideDayLabel(root.horizonStartMs || root.generatedAtMs)
+                color: root.guideLiveWindow ? root.textPrimary : "#ffb84a"
                 font.pixelSize: 17
                 font.weight: Font.DemiBold
             }
@@ -2304,7 +2344,7 @@ ApplicationWindow {
                         x: index * (parent.width / 6) - (index === 6 ? width : 0)
                         anchors.verticalCenter: parent.verticalCenter
                         text: root.formatClock(root.horizonStartMs + index * 30 * 60 * 1000)
-                        color: index === 0 ? root.accentBright : root.textPrimary
+                        color: index === 0 && root.guideLiveWindow ? root.accentBright : root.textPrimary
                         font.pixelSize: 17
                     }
                 }
@@ -2334,6 +2374,10 @@ ApplicationWindow {
                 width: guideList.width
                 height: 76
                 property var rowData: modelData
+                // The delegate's `index` is a context value, not a property of
+                // this Item: nested delegates must read it through rowIndex
+                // (channelRow.index is always undefined in Qt 6).
+                readonly property int rowIndex: index
 
                 Rectangle {
                     id: channelCell
@@ -2399,9 +2443,9 @@ ApplicationWindow {
                         model: channelRow.rowData.displaySegments || []
 
                         delegate: Rectangle {
+                            objectName: "guideProgramSegment"
                             property bool rowSelected:
-                                channelRow.ListView.view
-                                && channelRow.ListView.view.currentIndex === channelRow.index
+                                channelRow.rowIndex === root.selectedRow
 
                             property bool containsSelection:
                                 root.selectedProgram >= modelData.firstProgramIndex
@@ -2421,11 +2465,13 @@ ApplicationWindow {
                             x: Math.max(0, rawX) + 1
                             y: 3
 
+                            // Programs that began before the window are cut at
+                            // its left edge rather than shifted right.
                             width: Math.max(
                                 1,
                                 Math.min(
                                     programArea.width - x,
-                                    rawWidth - 2
+                                    rawX + rawWidth - x - 1
                                 )
                             )
 
@@ -2435,7 +2481,7 @@ ApplicationWindow {
                             color: selectedSegment
                                    ? "#146ad1"
                                    : (
-                                       modelData.isUnassigned
+                                       (modelData.isUnassigned || modelData.isOffAir)
                                        ? "#17202a"
                                        : (
                                            modelData.isCurrent
@@ -2551,9 +2597,11 @@ ApplicationWindow {
                 anchors.left: parent.left
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.leftMargin: 26
-                spacing: 36
+                spacing: 28
                 Text { text: "G  Guide / Go to Now"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "← →  Time"; color: root.textSecondary; font.pixelSize: 15 }
+                Text { text: "PG UP / PG DN  3 Hours"; color: root.textSecondary; font.pixelSize: 15 }
+                Text { text: ", .  Day"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "↑ ↓  Channels"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "ENTER  Select"; color: root.textSecondary; font.pixelSize: 15 }
                 Text { text: "I  Info"; color: root.textSecondary; font.pixelSize: 15 }

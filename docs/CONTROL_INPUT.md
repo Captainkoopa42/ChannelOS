@@ -76,7 +76,7 @@ remain available when the switch is off.
 | View / Back | `GUIDE` | Open the Guide |
 | Menu / Start | `HOME` | Open Home |
 | Left / Right bumper | `CHANNEL_DOWN / CHANNEL_UP` | Change live channel |
-| Left / Right trigger | `SKIP_BACK / SKIP_FORWARD` | Seek by the configured distance |
+| Left / Right trigger | `SKIP_BACK / SKIP_FORWARD` | Seek by the configured distance; one day back / ahead in the Guide |
 | Left-stick click | `GO_LIVE` | Return the Viewer Clock to live |
 | Right-stick click | `PREVIOUS_CHANNEL` | Return to the previous channel |
 | Right stick up / down | `VOLUME_UP / VOLUME_DOWN` | Adjust volume with held repeat |
@@ -126,7 +126,11 @@ Existing keyboard behavior remains available:
 - Enter/Return/Space -> `SELECT`,
 - Escape/Backspace/consumer Back -> `BACK`,
 - digits -> `DIGIT 0` through `DIGIT 9`,
-- `G` or a consumer Guide key -> `GUIDE`,
+- `G` or a consumer Guide key -> `GUIDE` (inside the Guide: back to now),
+- Home -> `GUIDE_NOW`,
+- Page Up / Page Down and media rewind / fast-forward -> `REWIND` / `FAST_FORWARD`
+  (3 hours in the Guide),
+- `,` / `.` -> `SKIP_BACK` / `SKIP_FORWARD` (one day in the Guide),
 - `H` -> `HOME`,
 - `I` or a consumer Info key -> `INFO`,
 - `S` or a consumer Settings key -> `SETTINGS`,

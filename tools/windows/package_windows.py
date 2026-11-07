@@ -387,6 +387,8 @@ def validate_package_root(package_root: Path) -> None:
         package_root / "_internal" / "channelos" / "qml" / "AdSources.js",
         package_root / "_internal" / "channelos" / "qml" / "BroadcastPlannerScreen.qml",
         package_root / "_internal" / "channelos" / "qml" / "PlannerDraft.js",
+        package_root / "_internal" / "channelos" / "qml" / "PlannerDatePicker.qml",
+        package_root / "_internal" / "channelos" / "qml" / "PlannerMediaBin.qml",
         package_root / "_internal" / "tzdata" / "zoneinfo" / "America" / "Los_Angeles",
     )
     missing = [str(path.relative_to(package_root)) for path in required if not path.exists()]

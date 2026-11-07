@@ -256,3 +256,66 @@ def test_best_fit_finds_exact_combination_greedy_misses():
     assert {item.asset_id for item in selected} == {"part-one", "part-two"}
     assert sum(item.duration_seconds for item in selected) == 100
     assert engine.select(candidates, 100, strategy="best_fit", seed="stable") == selected
+
+
+def test_incremental_rotation_counts_always_match_a_full_recount(tmp_path):
+    """Catch-up asks for counts at steadily later times; the incremental path
+    must equal a full recount after every kind of change, from any connection."""
+    import random
+    import sqlite3
+
+    rng = random.Random(1907)
+    store = BreakPlanStore(tmp_path / "breaks.db")
+    other = sqlite3.connect(tmp_path / "breaks.db")
+    base = datetime(2026, 10, 1, 12, tzinfo=UTC)
+    assets = [f"ad-{i}" for i in range(6)]
+    committed = []
+
+    def check(channel, at):
+        expected = store._rotation_counts_full(channel, at.isoformat())
+        assert store.rotation_counts(channel, before=at) == expected
+
+    cursor = base
+    for step in range(400):
+        channel = rng.choice((7, 8))
+        action = rng.random()
+        if action < 0.55:
+            at = base + timedelta(minutes=rng.randint(0, 600))
+            plan = BreakPlan(f"plan-{step}", f"opp-{step}", f"occ-{step}", channel, at, 30,
+                             tuple(PlannedSegment(rng.choice(assets), 10 * i, 0, 10) for i in range(3)),
+                             "least_played", "strict_fit")
+            committed.append(store.commit(plan))
+        elif action < 0.65 and committed:
+            plan = rng.choice(committed)
+            store.record_aired(plan.plan_id, 0, plan.segments[0].asset_id, aired_at=plan.scheduled_at)
+        elif action < 0.72 and committed:
+            plan = rng.choice(committed)
+            other.execute("INSERT OR IGNORE INTO ad_retired_plans VALUES (?, ?)",
+                          (plan.plan_id, plan.scheduled_at.isoformat()))
+            other.commit()
+        elif action < 0.76 and committed:
+            plan = committed.pop(rng.randrange(len(committed)))
+            other.execute("DELETE FROM ad_break_history WHERE plan_id = ?", (plan.plan_id,))
+            other.execute("DELETE FROM ad_retired_plans WHERE plan_id = ?", (plan.plan_id,))
+            other.execute("DELETE FROM ad_break_plans WHERE plan_id = ?", (plan.plan_id,))
+            other.commit()
+        elif action < 0.80:
+            # A write that is rolled back must leave no trace in the counts.
+            store.connection.execute("BEGIN IMMEDIATE")
+            store.connection.execute(
+                "INSERT INTO ad_break_plans VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (f"ghost-{step}", f"ghost-opp-{step}", "ghost", channel, cursor.isoformat(), 30,
+                 "least_played", "strict_fit",
+                 '[{"asset_id": "ad-0", "start_offset_seconds": 0, "source_offset_seconds": 0, '
+                 '"duration_seconds": 10}]', base.isoformat()))
+            check(channel, cursor + timedelta(minutes=1))
+            store.connection.rollback()
+        # Mostly forward like catch-up, sometimes backward like a live tune.
+        if rng.random() < 0.85:
+            cursor += timedelta(minutes=rng.randint(0, 8))
+        else:
+            cursor = base + timedelta(minutes=rng.randint(0, 600))
+        check(channel, cursor)
+        check(15 - channel, cursor)
+    other.close()
+    store.close()

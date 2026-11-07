@@ -29,7 +29,7 @@ def test_shared_channel_button_covers_interaction_and_semantic_states() -> None:
 @pytest.mark.parametrize(
     ("filename", "expected_count"),
     [
-        ("BroadcasterScreen.qml", 19),
+        ("BroadcasterScreen.qml", 17),  # New/Open Planner moved into Studio
         ("LibraryManagerScreen.qml", 9),
         ("LibraryScreen.qml", 4),
     ],

@@ -98,3 +98,42 @@ def test_selected_guide_program_is_highlighted_and_follows_selection() -> None:
         root.close()
         engine.deleteLater()
         app.processEvents()
+
+
+def _find(item, name):
+    for child in item.childItems():
+        if child.objectName() == name:
+            return child
+        found = _find(child, name)
+        if found is not None:
+            return found
+    return None
+
+
+def test_guide_header_names_the_day_being_browsed_and_cuts_early_programs() -> None:
+    app = QGuiApplication.instance() or QGuiApplication([])
+    controller, engine, _video, root = _guide(app)
+    try:
+        label = _find(root.contentItem(), "guideDayLabel")
+        assert label.property("text").startswith("TODAY")
+        snapshot = dict(controller._snapshot)
+        snapshot.update(horizonStartMs=START_MS + 24 * HOUR_MS + HOUR_MS // 2,
+                        horizonEndMs=START_MS + 27 * HOUR_MS + HOUR_MS // 2, isLiveWindow=False)
+        snapshot["rows"] = [_row(1)]
+        for program in snapshot["rows"][0]["programs"] + snapshot["rows"][0]["displaySegments"]:
+            program["startMs"] += 24 * HOUR_MS
+            program["endMs"] += 24 * HOUR_MS
+        controller._snapshot = snapshot
+        controller.snapshotChanged.emit()
+        _pump(app)
+        assert not label.property("text").startswith(("TODAY", "YESTERDAY"))
+        # The first program began half an hour before the window: it is drawn
+        # from the left edge to its own end, not shifted to the right.
+        segment = next(s for s in _segments(root.contentItem())
+                       if s.property("broadcastSegment")["scheduleId"] == "ch1-p0")
+        area = segment.parentItem().width()
+        assert abs(segment.property("width") - area / 6) < 3
+    finally:
+        root.close()
+        engine.deleteLater()
+        app.processEvents()

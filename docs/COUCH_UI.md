@@ -133,6 +133,32 @@ Very short captures are grouped only in the **visual projection**.
 
 The underlying Guide still retains and selects exact scheduled occurrences.
 
+#### Browsing time
+
+The Guide reaches **14 days back and 14 days ahead** of now, in half-hour steps:
+
+| Input | Effect |
+| --- | --- |
+| Left / Right | Move between programs; past the first or last program the window scrolls to the neighbouring program |
+| Page Up / Page Down, media rewind / fast-forward | Page 3 hours |
+| `,` / `.`, triggers, media previous / next | Jump one day |
+| Home, `G` inside the Guide | Back to now |
+
+Away from now the header names the day being shown (TOMORROW, a weekday and
+date) in amber, the "now" marker hides, and Up/Down keep the selected time
+column instead of snapping to the program airing now. Selecting a future program
+explains that it has not aired yet instead of leaving the Guide.
+
+Every channel type stays exact across the whole reach. Sequential and shuffle
+timelines are arithmetic. Planner channels read committed occurrences without
+writing. Ad-enabled channels commit their immutable break plans forward in
+bounded half-hour slices (one Qt task each), so the far window equals what will
+actually air without blocking the UI. Before a channel's schedule began, the
+Guide shows one honest **Off air** block, never invented programs.
+
+The incremental Guide keeps the four most recently viewed windows, so paging
+back and forth reuses rows instead of projecting them again.
+
 ### Live television
 
 Live television is full-screen native video.

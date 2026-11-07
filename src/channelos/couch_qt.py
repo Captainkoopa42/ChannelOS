@@ -20,7 +20,7 @@ from .artwork import MediaArtworkCache
 from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
-from .couch_model import build_couch_snapshot
+from .couch_model import GUIDE_REACH, _floor_to_half_hour, build_couch_snapshot, clamp_guide_start
 from .diagnostics import LOG_DIRECTORY_ENV
 from .guide import GuideError, GuideService
 from .library import IndexedMedia, MediaLibrary
@@ -145,6 +145,9 @@ class CouchController(QObject):
         self._index_library_cards()
         self._library_revision = self._library_projection_revision()
         self._on_demand_view: dict[str, object] = {"active": False}
+        # None follows the current half hour; otherwise the Guide window stays
+        # on this absolute start while the user browses other times.
+        self._guide_anchor = None
         self._snapshot = self._build_guide_snapshot()
         self._playback: dict[str, object] = {"active": False}
         self._home_television = self._build_home_television_view()
@@ -338,7 +341,51 @@ class CouchController(QObject):
         self.homeTelevisionChanged.emit()
 
     def _build_guide_snapshot(self):
-        return build_couch_snapshot(self._service)
+        now = utc_now()
+        return build_couch_snapshot(self._service, at=now, start=self._guide_window_start(now))
+
+    def _guide_window_start(self, now):
+        live = _floor_to_half_hour(now)
+        anchor = getattr(self, "_guide_anchor", None)
+        if anchor is None:
+            return live
+        start = clamp_guide_start(anchor, now)
+        if start == live:
+            # Browsing back to the present follows the clock again.
+            self._guide_anchor = None
+        return start
+
+    def reset_guide_window(self) -> None:
+        """Return the Guide to now without rebuilding (callers refresh)."""
+        self._guide_anchor = None
+
+    @Slot(float, result="QVariantMap")
+    def shiftGuideWindow(self, minutes: float) -> dict[str, object]:
+        """Page the Guide window by whole half hours within the two-week reach."""
+        now = utc_now()
+        current = self._guide_window_start(now)
+        requested = current + timedelta(minutes=float(minutes))
+        start = clamp_guide_start(requested, now)
+        clamped = start != _floor_to_half_hour(requested)
+        self._guide_anchor = None if start == _floor_to_half_hour(now) else start
+        if start != current:
+            self._snapshot = self._build_guide_snapshot()
+            self.snapshotChanged.emit()
+        result = {"ok": start != current, "clamped": clamped,
+                  "startMs": int(start.timestamp() * 1000), "isLive": self._guide_anchor is None}
+        if clamped:
+            days = int(GUIDE_REACH.total_seconds() // 86400)
+            result["message"] = f"The Guide shows {days} days back and ahead"
+        return result
+
+    @Slot(result="QVariantMap")
+    def guideWindowToNow(self) -> dict[str, object]:
+        moved = self._guide_anchor is not None
+        self._guide_anchor = None
+        if moved:
+            self._snapshot = self._build_guide_snapshot()
+            self.snapshotChanged.emit()
+        return {"ok": True, "moved": moved}
 
     @Slot()
     def refreshLibrary(self) -> None:
@@ -1500,6 +1547,10 @@ class CouchKeyFilter(QObject):
             Qt.Key.Key_Enter: ControlIntent.SELECT,
             Qt.Key.Key_Space: ControlIntent.SELECT,
             Qt.Key.Key_Home: ControlIntent.GUIDE_NOW,
+            Qt.Key.Key_PageUp: ControlIntent.REWIND,
+            Qt.Key.Key_PageDown: ControlIntent.FAST_FORWARD,
+            Qt.Key.Key_Comma: ControlIntent.SKIP_BACK,
+            Qt.Key.Key_Period: ControlIntent.SKIP_FORWARD,
             Qt.Key.Key_L: ControlIntent.GO_LIVE,
             Qt.Key.Key_P: ControlIntent.PREVIOUS_CHANNEL,
             Qt.Key.Key_A: ControlIntent.ADD_MEDIA_SOURCE,
@@ -1517,6 +1568,8 @@ class CouchKeyFilter(QObject):
             "Key_Exit": ControlIntent.BACK,
             "Key_MediaPrevious": ControlIntent.SKIP_BACK,
             "Key_MediaNext": ControlIntent.SKIP_FORWARD,
+            "Key_MediaRewind": ControlIntent.REWIND,
+            "Key_MediaFastForward": ControlIntent.FAST_FORWARD,
             "Key_PowerOff": ControlIntent.POWER,
             "Key_HomePage": ControlIntent.HOME,
         }
@@ -1605,10 +1658,40 @@ class CouchKeyFilter(QObject):
         programs = rows[row_index].get("programs", [])
         if not isinstance(programs, list):
             return -1
+        focus = self._guide_focus_ms()
+        if focus:
+            return self._program_index_at(programs, focus)
         for index, program in enumerate(programs):
             if isinstance(program, dict) and bool(program.get("isCurrent")):
                 return index
         return 0 if programs else -1
+
+    @staticmethod
+    def _program_index_at(programs: list, focus_ms: float) -> int:
+        """Index of the program airing at ``focus_ms``, else the nearest one."""
+        best, distance = (0 if programs else -1), None
+        for index, program in enumerate(programs):
+            if not isinstance(program, dict):
+                continue
+            start = float(program.get("startMs", 0))
+            end = float(program.get("endMs", 0))
+            if start <= focus_ms < end:
+                return index
+            gap = min(abs(start - focus_ms), abs(end - focus_ms))
+            if distance is None or gap < distance:
+                best, distance = index, gap
+        return best
+
+    def _guide_focus_ms(self) -> float:
+        try:
+            return float(self._window.property("guideFocusMs") or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _set_guide_focus(self, focus_ms: float) -> None:
+        self._window.setProperty("guideFocusMs", float(focus_ms))
+        # The time focus, not a remembered program, decides the next selection.
+        self._window.setProperty("guideSelectionScheduleId", "")
 
     def _select_row(self, row_index: int) -> None:
         rows = self._rows()
@@ -1632,17 +1715,85 @@ class CouchKeyFilter(QObject):
 
         self._select_row(0)
 
-    def _select_program_delta(self, delta: int) -> None:
+    def _selected_programs(self) -> list:
         rows = self._rows()
         row_index = int(self._window.property("selectedRow"))
         if not 0 <= row_index < len(rows):
-            return
+            return []
         programs = rows[row_index].get("programs", [])
-        if not isinstance(programs, list) or not programs:
+        return programs if isinstance(programs, list) else []
+
+    def _guide_live(self) -> bool:
+        return bool(self._controller.snapshot.get("isLiveWindow", True))
+
+    def _select_program_delta(self, delta: int) -> None:
+        programs = self._selected_programs()
+        if not programs:
             return
         current = int(self._window.property("selectedProgram"))
-        selected = max(0, min(len(programs) - 1, current + delta))
-        self._window.setProperty("selectedProgram", selected)
+        target = current + delta
+        if not 0 <= target < len(programs):
+            self._scroll_guide_edge(programs, delta)
+            return
+        self._window.setProperty("selectedProgram", target)
+        if not self._guide_live():
+            # Away from now, Up/Down keep this column instead of jumping to "now".
+            program = programs[target]
+            start = float(program.get("startMs", 0)) if isinstance(program, dict) else 0.0
+            self._window.setProperty("guideFocusMs", max(start, self._horizon_ms()[0]) + 1)
+
+    def _horizon_ms(self) -> tuple[float, float]:
+        snapshot = self._controller.snapshot
+        return float(snapshot.get("horizonStartMs", 0)), float(snapshot.get("horizonEndMs", 0))
+
+    def _shift_guide_to(self, start_ms: float, focus_ms: float) -> bool:
+        shift = getattr(self._controller, "shiftGuideWindow", None)
+        if shift is None:
+            return False
+        horizon_start, _horizon_end = self._horizon_ms()
+        minutes = (start_ms - horizon_start) / 60_000
+        self._set_guide_focus(focus_ms)
+        result = shift(minutes)
+        if not bool(result.get("ok")):
+            if result.get("message"):
+                self._notify({"message": str(result["message"])})
+            return False
+        self._select_row(int(self._window.property("selectedRow")))
+        return True
+
+    def _scroll_guide_edge(self, programs: list, delta: int) -> None:
+        """Left past the first or Right past the last program pages time."""
+        half_hour = 1_800_000
+        horizon_start, horizon_end = self._horizon_ms()
+        if delta < 0:
+            first = programs[0] if isinstance(programs[0], dict) else {}
+            focus = min(float(first.get("startMs", horizon_start)), horizon_start) - 1
+            # Show the earlier program near the right, keeping context visible.
+            start = min(horizon_start - half_hour, (focus - 2 * 3_600_000) // half_hour * half_hour)
+        else:
+            last = programs[-1] if isinstance(programs[-1], dict) else {}
+            focus = max(float(last.get("endMs", horizon_end)), horizon_end) + 1
+            start = max(horizon_start + half_hour, (focus - 3_600_000) // half_hour * half_hour)
+        self._shift_guide_to(start, focus)
+
+    def _page_guide(self, minutes: float) -> None:
+        horizon_start, _horizon_end = self._horizon_ms()
+        programs = self._selected_programs()
+        index = int(self._window.property("selectedProgram"))
+        offset = 0.0
+        if 0 <= index < len(programs) and isinstance(programs[index], dict):
+            offset = max(0.0, float(programs[index].get("startMs", horizon_start)) - horizon_start)
+        start = horizon_start + minutes * 60_000
+        self._shift_guide_to(start, start + offset + 1)
+
+    def _guide_to_now(self) -> None:
+        to_now = getattr(self._controller, "guideWindowToNow", None)
+        self._window.setProperty("guideFocusMs", 0.0)
+        self._window.setProperty("guideSelectionScheduleId", "")
+        if to_now is not None:
+            to_now()
+        row_index = int(self._window.property("selectedRow"))
+        self._window.setProperty("selectedProgram", self._current_program_index(row_index))
 
     def _library_items(self) -> list[dict[str, object]]:
         items = self._controller.librarySnapshot.get("items", [])
@@ -1753,6 +1904,10 @@ class CouchKeyFilter(QObject):
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
         self._window.setProperty("infoVisible", False)
+        reset = getattr(self._controller, "reset_guide_window", None)
+        if reset is not None:
+            reset()
+        self._window.setProperty("guideFocusMs", 0.0)
         self._controller.refresh()
         self._window.setProperty("screen", "guide")
         self._select_guide_anchor()
@@ -1952,10 +2107,9 @@ class CouchKeyFilter(QObject):
 
         if intent is ControlIntent.GUIDE:
             if screen == "guide":
+                # G inside the Guide is "Go to Now": back to the live window.
                 self._controller.refresh()
-                self._select_row(
-                    int(self._window.property("selectedRow"))
-                )
+                self._guide_to_now()
                 return True
             return self._open_guide()
 
@@ -2143,8 +2297,13 @@ class CouchKeyFilter(QObject):
                 self._select_program_delta(1)
                 return True
             if intent is ControlIntent.GUIDE_NOW:
-                row_index = int(self._window.property("selectedRow"))
-                self._window.setProperty("selectedProgram", self._current_program_index(row_index))
+                self._guide_to_now()
+                return True
+            if intent in {ControlIntent.REWIND, ControlIntent.FAST_FORWARD}:
+                self._page_guide(-180 if intent is ControlIntent.REWIND else 180)
+                return True
+            if intent in {ControlIntent.SKIP_BACK, ControlIntent.SKIP_FORWARD}:
+                self._page_guide(-1440 if intent is ControlIntent.SKIP_BACK else 1440)
                 return True
             if intent is ControlIntent.SELECT:
                 rows = self._rows()
@@ -2161,6 +2320,15 @@ class CouchKeyFilter(QObject):
                             )
                         }
                     )
+                    return True
+                programs = self._selected_programs()
+                program_index = int(self._window.property("selectedProgram"))
+                program = programs[program_index] if 0 <= program_index < len(programs) else {}
+                if isinstance(program, dict) and bool(program.get("isOffAir")):
+                    self._notify({"message": "Nothing aired here - this channel's schedule starts later"})
+                    return True
+                if isinstance(program, dict) and bool(program.get("isFuture")):
+                    self._notify({"message": "That program hasn't aired yet - press Home for Now"})
                     return True
 
                 # Make the native video target visible before libVLC creates its

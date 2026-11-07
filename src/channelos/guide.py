@@ -239,6 +239,33 @@ def _parent_program_with_breaks(
     )
 
 
+def _schedule_begins(runtime: ChannelRuntime) -> datetime | None:
+    """Start of an arithmetic channel timeline, before which nothing aired."""
+    programming = getattr(runtime.channel.definition, "programming", None)
+    if getattr(programming, "mode", None) not in ("sequential", "shuffle"):
+        return None
+    return getattr(runtime, "epoch_utc", None)
+
+
+def _before_schedule(runtime: ChannelRuntime, start: datetime, end: datetime,
+                     begins: datetime, reference: datetime) -> GuideProgram:
+    return GuideProgram(
+        schedule_id=f"channelos:before-schedule:{runtime.channel_number}:{int(begins.timestamp())}",
+        channel_number=runtime.channel_number,
+        asset_id="",
+        display_label="Off air",
+        start_utc=start,
+        end_utc=end,
+        duration_seconds=(end - start).total_seconds(),
+        programming_mode="offair",
+        explanation=(f"This channel's current schedule begins at {begins.isoformat()}.",
+                     "Nothing aired here under it."),
+        is_current=start <= reference < end,
+        is_past=end <= reference,
+        is_future=start > reference,
+    )
+
+
 def _selection_after_boundary(runtime: ChannelRuntime, boundary: datetime) -> BroadcastSelection:
     """Select the program beginning at a known end boundary without float-edge ambiguity."""
     return runtime.project_at(require_aware_utc(boundary) + _BOUNDARY_EPSILON)
@@ -343,6 +370,14 @@ class GuideService:
     @staticmethod
     def iter_programs(runtime, start, end, reference):
         """Yield authoritative occurrences so Qt can budget Guide preparation."""
+        begins = _schedule_begins(runtime)
+        if begins is not None and start < begins:
+            # Sequential and shuffle timelines are arithmetic from their start
+            # time and would otherwise invent programs that never aired.
+            yield _before_schedule(runtime, start, min(end, begins), begins, reference)
+            if end <= begins:
+                return
+            start = begins
         selection = runtime.project_at(start)
 
         while True:

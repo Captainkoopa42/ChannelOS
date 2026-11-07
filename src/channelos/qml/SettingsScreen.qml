@@ -357,7 +357,7 @@ Item {
                     required property var modelData
                     readonly property bool current: index === settingsRoot.currentTab
                     objectName: "settingsTab_" + modelData.key
-                    width: parent.width
+                    width: parent ? parent.width : 0
                     height: 68
                     radius: 7
                     color: current ? Theme.c("#12396a") : tabMouse.containsMouse ? Theme.c("#10283f") : "transparent"

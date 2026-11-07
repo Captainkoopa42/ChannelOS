@@ -116,7 +116,7 @@ Item {
                     delegate: Rectangle {
                         required property int index
                         width: 16; height: 16; radius: 8
-                        anchors.verticalCenter: parent.verticalCenter
+                        y: 3
                         color: index < pad.entered.length ? Theme.c("#42adff") : "transparent"
                         border.color: Theme.c("#42adff")
                         border.width: 2

@@ -57,6 +57,7 @@ def run(*, skip_video=False, vlc_dir=None):
             nonlocal stage
             ticks.append(time.perf_counter())
             window = getattr(app, '_channelos_window', None)
+            controller = getattr(window, '_channelos_controller', None) if window is not None else None
             try:
                 assert time.perf_counter() - start < 45, 'Startup smoke timed out'
                 if window is None:
@@ -120,15 +121,23 @@ def run(*, skip_video=False, vlc_dir=None):
                     timer.stop()
                     app.quit()
             except Exception as exc:
-                item=getattr(window,'_channelos_planner_item',None) if window else None
-                detail={'stage':stage,'plannerFeedback':item.property('feedback') if item else None,
-                        'plannerLoaded':item.property('loaded') if item else None,
-                        'plannerWorker':controller._planner_state if window else None,
-                        'plannerSerial':item.property('serial') if item else None,
-                        'plannerPreviewPending':item.property('pendingPreview') if item else None,
-                        'plannerPreviewCurrent':item.property('previewCurrent') if item else None}
-                errors.append(str(exc)+' '+json.dumps(detail))
+                # Always stop: a failure while describing the failure must not
+                # leave the loop running until the CI job is cancelled.
                 timer.stop()
+                try:
+                    item=getattr(window,'_channelos_planner_item',None) if window else None
+                    detail={'stage':stage,'mainWindow':window is not None,
+                            'startupState':dict(controller.startupState) if controller else None,
+                            'playback':{k: v for k, v in dict(controller.playback).items()
+                                        if isinstance(v, (str, int, float, bool))} if controller else None,
+                            'screen':window.property('screen') if window else None,
+                            'statusMessage':window.property('statusMessage') if window else None,
+                            'plannerFeedback':item.property('feedback') if item else None,
+                            'plannerLoaded':item.property('loaded') if item else None,
+                            'plannerWorker':getattr(controller,'_planner_state',None) if controller else None}
+                    errors.append(str(exc)+' '+json.dumps(detail, default=str))
+                except Exception as inner:
+                    errors.append(f'{exc} (details unavailable: {inner})')
                 app.quit()
         timer.timeout.connect(check)
         timer.start()

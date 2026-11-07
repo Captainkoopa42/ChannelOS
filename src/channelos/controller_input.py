@@ -299,7 +299,7 @@ class XInputBackend:
     def __init__(self, library: object, *, library_name: str) -> None:
         self._library = library
         self.library_name = library_name
-        self._get_state = getattr(library, "XInputGetState")
+        self._get_state = library.XInputGetState
         self._get_state.argtypes = [ctypes.c_ulong, ctypes.POINTER(_XInputState)]
         self._get_state.restype = ctypes.c_ulong
         self._preferred_user_index: int | None = None

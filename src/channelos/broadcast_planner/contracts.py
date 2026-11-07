@@ -7,7 +7,6 @@ import math
 import re
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
-from typing import Any
 from .timezones import get_zone
 
 

@@ -14,7 +14,7 @@ from .ad_breaks import PlannedAd
 from .ad_break_engine import (
     BreakPlan, BreakPlanStore, PlannedSegment, ProgramOccurrence,
 )
-from .ad_scheduling import calendar_gap_policy, eligible_media, program_opportunities, snapshot_segments, select_segments, indexed_media_for_segment
+from .ad_scheduling import calendar_gap_policy, eligible_media, program_opportunities, select_segments, indexed_media_for_segment
 from .library import IndexedMedia
 from .models import AdvertisingDefinition, CalendarBlockDefinition
 from .resolve import ResolvedChannel
@@ -1883,7 +1883,6 @@ class ChannelRuntime:
             )
             if base.program_started_at > instant:
                 return
-            occurrence_id = self._program_occurrence_id(base)
             previous_end = self.break_store.preceding_program_end(self.channel_number, base.program_started_at, scope=self.signature)
             actual_start = previous_end or base.program_started_at
             if actual_start > instant:

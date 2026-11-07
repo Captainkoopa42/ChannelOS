@@ -20,7 +20,7 @@ from .library_view import add_source_information, build_library_view
 from .media_resilience import _resolved_runtime
 from .performance import operation
 from .resolve import MediaResolutionIndex
-from .runtime import RuntimeStore, TelevisionRuntime, utc_now
+from .runtime import RuntimeStore, TelevisionRuntime
 from .runtime_jobs import adopt_runtime, release_runtime
 
 logger = logging.getLogger(__name__)

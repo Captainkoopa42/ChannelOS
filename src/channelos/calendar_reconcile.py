@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 def occurrence_id(channel: int, asset_id: str, start: datetime) -> str:

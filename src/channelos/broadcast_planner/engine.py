@@ -5,7 +5,6 @@ Producing a future occurrence does not constitute an airing.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import math
 import time

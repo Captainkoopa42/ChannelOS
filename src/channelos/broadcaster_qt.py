@@ -36,7 +36,6 @@ from .broadcaster import (
 from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
-from .couch_model import build_couch_snapshot
 from .couch_qt import (
     CouchController,
     CouchKeyFilter,
@@ -46,8 +45,7 @@ from .guide import GuideError, GuideService
 from .library import MediaLibrary, normalize_path
 from .models import ChannelValidationError
 from .playback import NativeVideoSurface, PlaybackError
-from .resolve import resolve_channel
-from .runtime import ChannelRuntime, ChannelRuntimeError, RuntimeStore, TelevisionRuntime
+from .runtime import ChannelRuntimeError, RuntimeStore, TelevisionRuntime
 from .scanner import MediaScanner, ScanCancelled, ScanProgress, ScanSummary
 
 logger = logging.getLogger(__name__)

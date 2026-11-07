@@ -7,6 +7,8 @@
 > ChannelOS interface and uses Jellyfin invisibly as an optional inbound library,
 > metadata, and playback backend. See
 > [JELLYFIN_BACKEND_MASTER_PLAN.md](JELLYFIN_BACKEND_MASTER_PLAN.md).
+> The household server and setup-sync plan is in
+> [JELLYFIN_HOUSEHOLD_SERVER.md](JELLYFIN_HOUSEHOLD_SERVER.md).
 
 **Status:** Experimental source-tree proof
 

@@ -7,6 +7,7 @@
 **Target branch:** `ChannelOS-for-Jellyfin`  
 **Jellyfin baseline reviewed:** Server 10.11.11  
 **Relationship:** Optional inbound media-source integration; not a Jellyfin UI replacement for ChannelOS
+**Household plan:** [JELLYFIN_HOUSEHOLD_SERVER.md](JELLYFIN_HOUSEHOLD_SERVER.md) maps guided server setup, local-first matching through a companion plugin, and setup sync across devices on top of this plan
 
 ---
 
@@ -132,6 +133,11 @@ For a same-PC server, ChannelOS should detect that Jellyfin is installed and rep
 explicit setting may allow ChannelOS to request that the local server start with
 ChannelOS, but ChannelOS must not silently install, reconfigure, elevate, or take
 ownership of Jellyfin.
+
+The household plan adds an opt-in guided setup that can install Jellyfin and the
+ChannelOS Companion plugin for users who have no server, with every step shown and
+confirmed. That is consistent with this rule: nothing is done silently, and an
+existing server is never taken over.
 
 For a remote server, ChannelOS cannot start the machine or service. It should retain
 the cached catalog, show the named server as offline, retry sensibly, and allow the
@@ -527,6 +533,10 @@ Potential evidence, strongest first:
 4. strong provider identity plus matching edition, duration, and technical evidence.
 
 Title-only matching is never sufficient for automatic merging.
+
+Jellyfin does not publish file hashes through its API. The household plan's ChannelOS
+Companion plugin supplies evidence 2 (an exact content hash) by hashing server files
+in the background.
 
 When equivalence is trusted, one `CatalogAsset` may have both local and Jellyfin
 locations. Local-first playback can then be applied safely.

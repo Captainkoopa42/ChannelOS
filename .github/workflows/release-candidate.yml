@@ -4,8 +4,12 @@ name: release
 # builds, tests and smoke-checks the Windows package for that exact commit and
 # attaches the zip and its checksum to the release. A pushed tag with no
 # release yet gets a pre-release with docs/releases/<tag>.md as its notes.
+# Updating this workflow on the V2 branch also publishes Beta 1 after all
+# checks pass, so publication does not require creating a tag by hand.
 on:
   push:
+    branches: ["feature/v2-live-video-audit-themes"]
+    paths: [".github/workflows/release-candidate.yml"]
     tags: ["v*"]
   release:
     types: [published]
@@ -14,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: channelos-release-${{ github.ref_name }}
+  group: channelos-release-${{ github.ref_type == 'branch' && 'v2.0.0-beta.1' || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -29,7 +33,7 @@ jobs:
     permissions:
       contents: write
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_TAG: ${{ github.ref_type == 'branch' && 'v2.0.0-beta.1' || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -48,6 +52,8 @@ jobs:
           with zipfile.ZipFile(path) as archive:
               bom = json.loads(archive.read('ChannelOS/PACKAGE-BOM.json'))
           assert bom['product']['git_commit'] == os.environ['GITHUB_SHA'], bom['product']
+          if tag == 'v2.0.0-beta.1':
+              assert bom['product']['version'] == '2.0.0b1', bom['product']
           digest = hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
           pathlib.Path('release-output/SHA256SUMS.txt').write_text(f'{digest}  {path.name}\n')
           notes = pathlib.Path(f'docs/releases/{tag}.md').read_text()
@@ -61,11 +67,20 @@ jobs:
         run: |
           zip="release-output/$(cat release-output/ZIP)"
           title="$(head -n 1 docs/releases/$RELEASE_TAG.md | sed 's/^# //')"
+          if [ "$RELEASE_TAG" = "v2.0.0-beta.1" ]; then
+            title="ChannelOS V2 Beta 1"
+          fi
+          # Never move a published tag or replace another commit's package.
+          tagged_commit="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG" "refs/tags/$RELEASE_TAG^{}" | awk '{sha=$1} END {print sha}')"
+          if [ -n "$tagged_commit" ] && [ "$tagged_commit" != "$GITHUB_SHA" ]; then
+            echo "::error::Release tag already points to a different commit: $tagged_commit"
+            exit 1
+          fi
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             # Made on github.com: attach the download to it.
             gh release upload "$RELEASE_TAG" "$zip" release-output/SHA256SUMS.txt --clobber
             gh release view "$RELEASE_TAG"
           else
             gh release create "$RELEASE_TAG" "$zip" release-output/SHA256SUMS.txt \
-              --verify-tag --prerelease --title "$title" --notes-file release-output/RELEASE-NOTES.md
+              --target "$GITHUB_SHA" --prerelease --title "$title" --notes-file release-output/RELEASE-NOTES.md
           fi

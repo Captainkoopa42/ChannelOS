@@ -1,0 +1,84 @@
+name: Update V2 Beta 1 release page
+
+on:
+  push:
+    branches: ["release/v2-beta-1-page-20261108"]
+    paths:
+      - .github/workflows/update-v2-release-page.yml
+      - docs/releases/v2.0.0-beta.1-page.md
+
+permissions:
+  contents: read
+
+concurrency:
+  group: channelos-v2-beta-1-release-description
+  cancel-in-progress: false
+
+jobs:
+  update-description:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v2.0.0-beta.1
+      RELEASE_COMMIT: 4b5bb89a294e05fd6f1cf52bc3c6f68c77e36323
+      PAGE_FILE: docs/releases/v2.0.0-beta.1-page.md
+      PREVIOUS_BODY_SHA256: ee185362a1b8ca560a8896cdf7435c4bb5463fbf306fa44181af11f8f88a1910
+      PAGE_SHA256: 2b6ee5190ae21a2fd8ff7e9dbaaaabce01d438a5cf7a8a88c482a5ceec3421e5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the existing release and approved page
+        id: check
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > /tmp/release-before.json
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > /tmp/tag-before.json
+          python - <<'PY'
+          import hashlib, json, os, pathlib, re
+          release = json.loads(pathlib.Path('/tmp/release-before.json').read_text())
+          tag = json.loads(pathlib.Path('/tmp/tag-before.json').read_text())
+          assert release['id'] == 438528150
+          assert release['name'] == 'ChannelOS V2 Beta 1'
+          assert release['tag_name'] == os.environ['RELEASE_TAG']
+          assert release['prerelease'] and not release['draft']
+          assert tag['object']['type'] == 'commit'
+          assert tag['object']['sha'] == os.environ['RELEASE_COMMIT']
+          page = pathlib.Path(os.environ['PAGE_FILE']).read_text()
+          page_digest = hashlib.sha256(page.encode()).hexdigest()
+          assert page_digest == os.environ['PAGE_SHA256']
+          images = re.findall(r'<img\s+src="([^"]+)"', page)
+          assert len(images) == 9
+          image_root = 'https://raw.githubusercontent.com/Captainkoopa42/ChannelOS/18dfce104415e7396a498362454e5569cb71cf61/docs/images/v2/'
+          assert all(url.startswith(image_root) for url in images)
+          previous_digest = hashlib.sha256((release.get('body') or '').encode()).hexdigest()
+          assert previous_digest in (os.environ['PREVIOUS_BODY_SHA256'], page_digest), 'Release description changed; review before updating it.'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('update=' + str(previous_digest != page_digest).lower() + '\n')
+          PY
+      - name: Update only the release description
+        if: steps.check.outputs.update == 'true'
+        shell: bash
+        run: gh release edit "$RELEASE_TAG" --notes-file "$PAGE_FILE"
+      - name: Verify the notes and preserve release metadata and downloads
+        shell: bash
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > /tmp/release-after.json
+          gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > /tmp/tag-after.json
+          python - <<'PY'
+          import json, os, pathlib
+          before = json.loads(pathlib.Path('/tmp/release-before.json').read_text())
+          after = json.loads(pathlib.Path('/tmp/release-after.json').read_text())
+          page = pathlib.Path(os.environ['PAGE_FILE']).read_text()
+          assert after['body'] == page, 'Published notes do not match the checked page.'
+          for key in ('id', 'name', 'tag_name', 'target_commitish', 'draft', 'prerelease', 'html_url', 'published_at'):
+              assert before[key] == after[key], key
+          def assets(release):
+              return sorted((a['id'], a['name'], a['size'], a.get('digest')) for a in release['assets'])
+          assert assets(before) == assets(after), 'Release downloads changed.'
+          tag = json.loads(pathlib.Path('/tmp/tag-after.json').read_text())
+          assert tag['object']['sha'] == os.environ['RELEASE_COMMIT']
+          print('Updated product page; release title, pre-release status, tag and downloads are unchanged.')
+          print(after['html_url'])
+          PY

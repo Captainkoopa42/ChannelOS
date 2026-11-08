@@ -23,6 +23,8 @@ RUNTIME_LOCK_PATH = PACKAGING_ROOT / "runtime-lock.json"
 SPEC_PATH = PACKAGING_ROOT / "ChannelOS.spec"
 REQUIRED_VLC_FILES = ("libvlc.dll", "libvlccore.dll")
 RUNTIME_DOWNLOAD_ATTEMPTS = 3
+# The public name of this build (archive, release tag and notes).
+RELEASE_LABEL = "2.0.0-beta.1"
 PACKAGE_LICENSE_DOCUMENTS = (
     "LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
@@ -39,6 +41,8 @@ PYTHON_COMPONENTS = (
     "PyYAML",
     "tzdata",
     "python-vlc",
+    "PySDL2",
+    "pysdl2-dll",
 )
 EFFECTIVE_LICENSES = {
     "channelos": "MPL-2.0",
@@ -50,6 +54,8 @@ EFFECTIVE_LICENSES = {
     "pyyaml": "MIT",
     "tzdata": "Apache-2.0",
     "python-vlc": "LGPL-2.1-or-later",
+    "pysdl2": "CC0-1.0 OR Zlib",
+    "pysdl2-dll": "MPL-2.0 packaging; bundled SDL2.dll is Zlib",
 }
 PROJECT_URLS = {
     "channelos": "https://github.com/Captainkoopa42/ChannelOS",
@@ -61,6 +67,8 @@ PROJECT_URLS = {
     "pyyaml": "https://pyyaml.org/",
     "tzdata": "https://github.com/python/tzdata",
     "python-vlc": "https://wiki.videolan.org/PythonBinding",
+    "pysdl2": "https://github.com/py-sdl/py-sdl2",
+    "pysdl2-dll": "https://github.com/py-sdl/py-sdl2/tree/master/sdl2dll",
 }
 
 
@@ -117,7 +125,7 @@ def download_locked_runtime(lock: dict[str, Any], cache_directory: Path) -> Path
         try:
             request = urllib.request.Request(
                 lock["download_url"],
-                headers={"User-Agent": "ChannelOS-Windows-Packager/0.0.7"},
+                headers={"User-Agent": f"ChannelOS-Windows-Packager/{RELEASE_LABEL}"},
             )
             with urllib.request.urlopen(request, timeout=120) as response:
                 with temporary.open("wb") as output:
@@ -279,7 +287,7 @@ def copy_release_documents(package_root: Path) -> None:
         output = licenses / Path(relative).name
         shutil.copy2(source, output)
 
-    for relative in ("docs/releases/v0.0.7-rc.1.md", "docs/releases/WINDOWS_0.0.7_ACCEPTANCE.md"):
+    for relative in (f"docs/releases/v{RELEASE_LABEL}.md", "docs/releases/WINDOWS_0.0.7_ACCEPTANCE.md"):
         target = package_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(PROJECT_ROOT / relative, target)
@@ -389,6 +397,23 @@ def validate_package_root(package_root: Path) -> None:
         package_root / "_internal" / "channelos" / "qml" / "PlannerDraft.js",
         package_root / "_internal" / "channelos" / "qml" / "PlannerDatePicker.qml",
         package_root / "_internal" / "channelos" / "qml" / "PlannerMediaBin.qml",
+        package_root / "_internal" / "channelos" / "qml" / "Theme.qml",
+        package_root / "_internal" / "channelos" / "qml" / "BootScreen.qml",
+        package_root / "_internal" / "channelos" / "qml" / "OnScreenKeyboard.qml",
+        package_root / "_internal" / "sdl2dll" / "dll" / "SDL2.dll",
+        package_root / "_internal" / "channelos" / "qml" / "ControllerDiagram.qml",
+        package_root / "_internal" / "channelos" / "qml" / "ControllerMapper.qml",
+        package_root / "_internal" / "channelos" / "qml" / "KeyboardMapper.qml",
+        package_root / "_internal" / "channelos" / "qml" / "ProfileEditor.qml",
+        package_root / "_internal" / "channelos" / "qml" / "PinPad.qml",
+        package_root / "_internal" / "channelos" / "assets" / "mascot" / "body.png",
+        package_root / "_internal" / "channelos" / "assets" / "static" / "noise0.png",
+        package_root / "_internal" / "channelos" / "assets" / "sound" / "boot_poppie.ogg",
+        package_root / "_internal" / "channelos" / "assets" / "mascot" / "antenna_left.png",
+        package_root / "_internal" / "channelos" / "assets" / "mascot" / "antenna_right.png",
+        package_root / "_internal" / "channelos" / "qml" / "ThemeBackdrop.qml",
+        package_root / "_internal" / "channelos" / "qml" / "ThemeBuilder.qml",
+        package_root / "_internal" / "channelos" / "qml" / "qmldir",
         package_root / "_internal" / "tzdata" / "zoneinfo" / "America" / "Los_Angeles",
     )
     missing = [str(path.relative_to(package_root)) for path in required if not path.exists()]
@@ -509,7 +534,7 @@ def build_package(output_directory: Path, supplied_nupkg: Path | None = None) ->
     write_bom(package_root, lock, nupkg, vlc_inventory)
     validate_package_root(package_root)
 
-    archive_base = output_directory / "ChannelOS-0.0.7-windows-x64"
+    archive_base = output_directory / f"ChannelOS-{RELEASE_LABEL}-windows-x64"
     archive = Path(shutil.make_archive(str(archive_base), "zip", output_directory, "ChannelOS"))
     return archive
 

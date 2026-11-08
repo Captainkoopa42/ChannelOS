@@ -201,7 +201,6 @@ def _parent_program_with_breaks(
                            end_utc=plan.scheduled_at + timedelta(seconds=plan.duration_seconds),
                            duration_seconds=plan.duration_seconds, is_advertisement=True)
         label = media.location.path.stem
-        duration = float(media.asset.duration_seconds or 0.0)
         explanation = (
             f"Channel {runtime.channel_number}",
             "program interrupted by an advertisement break",
@@ -215,7 +214,6 @@ def _parent_program_with_breaks(
         base_end = selection.program_ends_at
         parent_id = event.event_id
         label = media.location.path.stem
-        duration = selection.program.duration_seconds
         explanation = _explanation(runtime, selection)
         schedule_id = event.event_id
 

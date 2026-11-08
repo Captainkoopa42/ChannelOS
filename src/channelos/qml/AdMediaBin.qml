@@ -48,25 +48,25 @@ Item {
     }
     ColumnLayout {
         anchors.fill: parent; spacing: 10
-        Label { objectName: "adBinCount"; text: bin.clipCount + " selected ads in " + bin.groups.length + " sources"; color: "#9fb0c2"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
-        Label { visible: bin.readOnly; text: "Managed by advanced placements. Edit their sources in Profiles."; color: "#ffb84a"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
+        Label { objectName: "adBinCount"; text: bin.clipCount + " selected ads in " + bin.groups.length + " sources"; color: Theme.c("#9fb0c2"); font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
+        Label { visible: bin.readOnly; text: "Managed by advanced placements. Edit their sources in Profiles."; color: Theme.c("#ffb84a"); font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
         ChannelTextField { id: search; objectName: "adBinSearch"; Layout.fillWidth: true; placeholderText: "Search selected ads…" }
-        Label { text: "ADD INDEXED SOURCE"; color: "#9fb0c2"; font.pixelSize: 10 }
+        Label { text: "ADD INDEXED SOURCE"; color: Theme.c("#9fb0c2"); font.pixelSize: 10 }
         RowLayout {
             Layout.fillWidth: true; spacing: 5; enabled: !bin.readOnly
             ChannelComboBox { id: sourcePicker; objectName: "adBinSourcePicker"; Layout.fillWidth: true; model: bin.sourceOptions; ToolTip.visible: hovered; ToolTip.text: currentText }
             ChannelButton { text: "Add"; enabled: sourcePicker.count > 0; onClicked: { var path = sourcePicker.currentText; if (!bin.sources.some(function(value) { return AdSources.key(value) === AdSources.key(path) })) { var next = bin.sources.slice(); next.push(path); bin.sourcesEdited(next) } } }
             ChannelButton { text: "Clear"; enabled: bin.sources.length > 0 || bin.assetIds.length > 0; onClicked: { bin.sourcesEdited([]); bin.exclusionsEdited(bin.assetIds.slice()) } }
         }
-        Label { text: "Expand a source to choose clips. Sequential follows this source and clip order."; color: "#9fb0c2"; font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
+        Label { text: "Expand a source to choose clips. Sequential follows this source and clip order."; color: Theme.c("#9fb0c2"); font.pixelSize: 11; Layout.fillWidth: true; wrapMode: Text.Wrap }
         ListView {
             id: list; objectName: "adBinList"; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; spacing: 7; model: bin.rows()
             ScrollBar.vertical: ScrollBar { }
-            Label { anchors.centerIn: parent; width: parent.width - 16; visible: bin.groups.length === 0; text: "No ad sources selected.\nAdd an indexed source above."; color: "#9fb0c2"; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter }
+            Label { anchors.centerIn: parent; width: parent.width - 16; visible: bin.groups.length === 0; text: "No ad sources selected.\nAdd an indexed source above."; color: Theme.c("#9fb0c2"); wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter }
             delegate: Rectangle {
                 id: card; required property var modelData
                 width: list.width; height: modelData.source ? 68 : Math.max(62, clipChoice.implicitHeight + 16)
-                color: "#0d2035"; border.color: "#1a3550"; radius: 7
+                color: Theme.c("#0d2035"); border.color: Theme.c("#1a3550"); radius: 7
                 RowLayout {
                     anchors.fill: parent; anchors.margins: 6; visible: card.modelData.source; spacing: 5
                     ChannelButton {
@@ -74,8 +74,8 @@ Item {
                         onClicked: { var next = Object.assign({}, bin.expanded); next[card.modelData.path] = !next[card.modelData.path]; bin.expanded = next }
                         contentItem: Column {
                             spacing: 4
-                            Text { width: parent.width; text: (card.modelData.open ? "▾  " : "▸  ") + card.modelData.name + " · " + bin.selection.counts[card.modelData.path] + "/" + card.modelData.count; color: "#f4f7fb"; font.pixelSize: 12; elide: Text.ElideRight }
-                            Text { width: parent.width; text: card.modelData.path || "Fixed selection"; color: "#9fb0c2"; font.pixelSize: 10; elide: Text.ElideMiddle }
+                            Text { width: parent.width; text: (card.modelData.open ? "▾  " : "▸  ") + card.modelData.name + " · " + bin.selection.counts[card.modelData.path] + "/" + card.modelData.count; color: Theme.c("#f4f7fb"); font.pixelSize: 12; elide: Text.ElideRight }
+                            Text { width: parent.width; text: card.modelData.path || "Fixed selection"; color: Theme.c("#9fb0c2"); font.pixelSize: 10; elide: Text.ElideMiddle }
                         }
                         ToolTip.visible: hovered; ToolTip.text: String(card.modelData.path || card.modelData.name)
                     }

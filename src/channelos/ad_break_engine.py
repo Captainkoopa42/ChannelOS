@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 from .portable import PortableConnection, decode_tree, find_setup, path_tree
+from .storage import use_normal_sync_for_wal
 
 Strategy = Literal[
     "best_fit", "largest", "smallest", "sequential",
@@ -423,6 +424,7 @@ class BreakPlanStore:
         self.connection.portable = self.portable
         self.connection.execute("PRAGMA busy_timeout = 5000")
         self.connection.execute("PRAGMA foreign_keys = ON")
+        use_normal_sync_for_wal(self.connection)
         if initialize:
             self._initialize()
 

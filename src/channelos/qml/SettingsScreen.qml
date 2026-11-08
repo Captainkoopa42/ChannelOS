@@ -27,24 +27,88 @@ Item {
         })
     readonly property string displayMode:
         channelOS ? String(channelOS.displayMode || "fullscreen") : "fullscreen"
-    readonly property var settingsRows: [
-        { title: "Performance Profile", detail: "Standard preserves full artwork behavior. Lightweight reduces optional background work." },
-        { title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
-        { title: "Audio Output", detail: "Choose System Default, speakers, headphones, or another destination exposed by VLC." },
-        { title: "Volume", detail: "The volume ChannelOS uses now and on its next launch." },
-        { title: "Muted", detail: "Remember whether ChannelOS should start muted." },
-        { title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
-        { title: "Skip Forward", detail: "How far Right/Fast Forward jumps during Live TV and On Demand." },
-        { title: "Generate Video Thumbnails", detail: "Use FFmpeg when no local sidecar image or cached thumbnail exists." },
-        { title: "Generated Artwork Cache", detail: "Limit only ChannelOS-generated thumbnails. Zero means unlimited." },
-        { title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
-        { title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
-        { title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
-        { title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
-        { title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
-        { title: "Reset Defaults", detail: "Restore System Default audio, Fullscreen, Standard mode, controller input, volume 100%, sound on, 10 seconds back, and 30 seconds forward." },
-        { title: "Portable Setup", detail: "Copy channels, the existing media index, ad configuration and history to a drive, or open a prior setup and save changes there." }
+    // Settings are grouped into tabs. Each row has a key; "action" rows run
+    // something, every other row cycles a value with Left/Right or - / +.
+    readonly property var tabs: [
+        { key: "general", title: "General", detail: "Display, controls, performance and artwork" },
+        { key: "media", title: "Video & Audio", detail: "Picture, sound and output device" },
+        { key: "extras", title: "Extras", detail: "Themes, startup and portable setups" },
+        { key: "controller", title: "Controller", detail: "Controllers, button and keyboard mapping, couch typing" },
+        { key: "profiles", title: "Profiles", detail: "Kids, Daycare and Lobby modes with a PIN lock" }
     ]
+    readonly property var allRows: [
+        { tab: "general", key: "displayMode", title: "Display Mode", detail: "Switch ChannelOS between fullscreen television and a normal desktop window." },
+        { tab: "general", key: "performanceProfile", title: "Performance Profile", detail: "Standard preserves full artwork behavior. Lightweight reduces optional background work." },
+        { tab: "general", key: "reducedMotion", title: "Reduced Motion", detail: "Remove shelf and artwork fades for a calmer, lighter interface." },
+        { tab: "controller", key: "controllerEnabled", title: "Controller Input", detail: "Accept controller commands only while ChannelOS has focus. Turn this off to disable controller polling entirely." },
+        { tab: "general", key: "skipBack", title: "Skip Back", detail: "How far Left/Rewind jumps during Live TV and On Demand." },
+        { tab: "general", key: "skipForward", title: "Skip Forward", detail: "How far Right/Fast Forward jumps during Live TV and On Demand." },
+        { tab: "general", key: "generateVideoThumbnails", title: "Generate Video Thumbnails", detail: "Use FFmpeg when no local sidecar image or cached thumbnail exists." },
+        { tab: "general", key: "artworkCacheLimit", title: "Generated Artwork Cache", detail: "Limit only ChannelOS-generated thumbnails. Zero means unlimited." },
+        { tab: "general", key: "backgroundArtworkDuringPlayback", title: "Artwork During Playback", detail: "Allow optional thumbnail generation while Live TV or On Demand is playing." },
+        { tab: "general", key: "clearArtwork", action: "clear", title: "Clear Generated Artwork", detail: "Delete generated thumbnails only. Media and sidecar images remain untouched." },
+        { tab: "general", key: "logs", action: "Open Log Folder", title: "Diagnostic Logs", detail: "Open the folder containing rotating app and fatal-crash logs you can share for debugging." },
+        { tab: "general", key: "reset", action: "Restore Defaults", title: "Reset Defaults", detail: "Restore every setting on every tab to its default: audio, display, controls, picture and theme." },
+        { tab: "media", key: "audioOutput", title: "Audio Output", detail: "Choose System Default, speakers, headphones, or another destination exposed by VLC." },
+        { tab: "media", key: "volume", title: "Volume", detail: "The volume ChannelOS uses now and on its next launch." },
+        { tab: "media", key: "muted", title: "Muted", detail: "Remember whether ChannelOS should start muted." },
+        { tab: "media", key: "videoAspectRatio", title: "Aspect Ratio", detail: "Auto uses each video's own shape. Force 4:3, 16:9, widescreen film ratios and more for mislabeled recordings." },
+        { tab: "media", key: "videoFit", title: "Picture Fit", detail: "Fit shows the whole picture with bars, Fill crops the edges to fill the screen, Stretch fills it by distorting." },
+        { tab: "media", key: "videoOverscan", title: "Overscan Trim", detail: "Trim the noisy edges found on VHS and broadcast captures, like a real TV did." },
+        { tab: "media", key: "videoDeinterlace", title: "Deinterlace", detail: "Smooth combing on interlaced recordings. Auto lets VLC decide. Applies from the next program." },
+        { tab: "media", key: "videoHardwareDecoding", title: "Hardware Decoding", detail: "Use the graphics card to decode video. Turn off if a driver shows green frames or artifacts. Applies from the next program." },
+        { tab: "media", key: "videoBrightness", title: "Brightness", detail: "Picture brightness for every program." },
+        { tab: "media", key: "videoContrast", title: "Contrast", detail: "Picture contrast for every program." },
+        { tab: "media", key: "videoSaturation", title: "Color Saturation", detail: "Picture color intensity for every program." },
+        { tab: "extras", key: "theme", title: "Theme", detail: "Change the look of ChannelOS. Themes you make in the Theme Builder appear here too." },
+        { tab: "extras", key: "themeBuilder", action: "Open Theme Builder", title: "Theme Builder", detail: "Make your own theme: pick every color, add a wallpaper image, and preview it live." },
+        { tab: "extras", key: "bootVideo", title: "Boot Video", detail: "What plays when ChannelOS starts: TV static, your own video, or nothing. Any button skips it." },
+        { tab: "extras", key: "bootVideoFile", action: "Choose Video…", title: "My Boot Video", detail: "Pick a video to play at startup, like a console boot animation. It is copied into your setup." },
+        { tab: "extras", key: "bootVideoSound", title: "Boot Video Sound", detail: "Play your boot video with sound, or silently." },
+        { tab: "extras", key: "bootSound", title: "Boot Sound", detail: "What plays while ChannelOS starts: \u201cPoppie\u201d (intro, then lead-in and chorus on repeat), your own sound, or nothing." },
+        { tab: "extras", key: "bootSoundFile", action: "Choose Sound…", title: "My Boot Sound", detail: "Pick an MP3, OGG, WAV or FLAC to play at startup instead. It repeats while loading and is copied into your setup." },
+        { tab: "extras", key: "bootSoundVolume", title: "Boot Sound Volume", detail: "How loud the boot sound plays, as a share of your main volume." },
+        { tab: "extras", key: "loadingStyle", title: "Loading Style", detail: "Classic, a fill bar along the bottom, or the dancing ChannelOS TV. Reduced Motion uses the fill bar." },
+        { tab: "extras", key: "bootPreview", action: "Preview", title: "Preview Startup", detail: "Watch the loading style without restarting." },
+        { tab: "extras", key: "portable", action: "Copy / Open Setup", title: "Portable Setup & Backup", detail: "Copy channels, the media index, ad configuration and history to a drive as a backup or to take with you, or open a setup you copied earlier." },
+        { tab: "controller", key: "controllerLayout", title: "Controller Layout", detail: "Which controller the Button Mapper draws. Automatic matches the one plugged in." },
+        { tab: "controller", key: "buttonMapper", action: "Open Button Mapper", title: "Button Mapper", detail: "See your controller and choose what every button does, like Steam's controller settings." },
+        { tab: "controller", key: "keyboardMapper", action: "Open Keyboard Mapper", title: "Keyboard Mapper", detail: "Choose which keys do what. Esc is always Back and number keys always tune channels." },
+        { tab: "controller", key: "dedicatedController", title: "Dedicated Controller Mode", detail: "For the couch: selecting any text box opens an on-screen keyboard you type on with the controller." },
+        { tab: "profiles", key: "activeProfile", title: "Switch Profile", detail: "Left/Right to choose, Select to switch. Kids, Daycare and Lobby lock until the PIN is entered." },
+        { tab: "profiles", key: "profilePin", action: "Set PIN", title: "PIN", detail: "4 to 8 digits. Needed to leave a locked profile, open Settings or close ChannelOS from one." },
+        { tab: "profiles", key: "editKids", action: "Edit…", title: "Kids", detail: "The channels you choose for your kids, with a softer volume limit. Settings and channel tools stay locked." },
+        { tab: "profiles", key: "editDaycare", action: "Edit…", title: "Daycare", detail: "Like Kids, with no On Demand or skipping: programs play as scheduled." },
+        { tab: "profiles", key: "editLobby", action: "Edit…", title: "Lobby", detail: "Starts full screen on one channel with no menus, for waiting rooms, shops and displays." }
+    ]
+    property int currentTab: 0
+    readonly property var settingsRows: allRows.filter(function(row) { return row.tab === tabs[currentTab].key })
+    readonly property bool themeBuilderOpen: themeBuilder.visible
+    // While true, directions and Select move through on-screen controls
+    // (CouchKeyFilter turns them into Tab / arrow / Space keys).
+    readonly property bool focusNavigation: themeBuilder.visible
+
+    function openThemeBuilder() { themeBuilder.openBuilder() }
+    // Profiles tab: the profile Left/Right points at before Select switches.
+    property string pendingProfile: ""
+    readonly property var profileInfo: channelOS && channelOS.profile ? channelOS.profile : ({ id: "home", name: "Home", hasPin: false })
+    readonly property var profileOrder: ["home", "kids", "daycare", "lobby"]
+    readonly property var profileTitles: ({ home: "Home", kids: "Kids", daycare: "Daycare", lobby: "Lobby" })
+    function chosenProfile() { return pendingProfile.length > 0 ? pendingProfile : String(profileInfo.id || "home") }
+    function handleDigit(digit) {
+        if (pinSetPopup.visible)
+            pinSetPad.handleIntent("DIGIT", Number(digit))
+    }
+    function handleThemeBuilderIntent(intent) { themeBuilder.handleIntent(String(intent)) }
+    function selectTab(index) {
+        currentTab = (index + tabs.length) % tabs.length
+        if (hostWindow)
+            hostWindow.settingsSelection = 0
+    }
+    function selectedRow() {
+        var index = hostWindow ? hostWindow.settingsSelection : 0
+        return settingsRows[Math.max(0, Math.min(settingsRows.length - 1, index))]
+    }
 
     anchors.fill: parent
     visible: hostWindow !== null && hostWindow.screen === "settings"
@@ -103,51 +167,42 @@ Item {
         applyDisplayMode()
     }
 
-    function valueFor(index) {
-        if (index === 0)
-            return profileLabel()
-        if (index === 1)
-            return displayModeLabel()
-        if (index === 2)
-            return String(preferences.audioOutputDeviceName || "System Default")
-        if (index === 3)
-            return (preferences.volumePercent || 0) + "%"
-        if (index === 4)
-            return preferences.muted ? "On" : "Off"
-        if (index === 5)
-            return (preferences.skipBackSeconds || 10) + " seconds"
-        if (index === 6)
-            return (preferences.skipForwardSeconds || 30) + " seconds"
-        if (index === 7)
-            return preferences.generateVideoThumbnails ? "On" : "Off"
-        if (index === 8)
-            return cacheLimitLabel()
-        if (index === 9)
-            return preferences.backgroundArtworkDuringPlayback ? "On" : "Off"
-        if (index === 10)
-            return preferences.reducedMotion ? "On" : "Off"
-        if (index === 11)
-            return preferences.controllerEnabled ? "On" : "Off"
-        if (index === 12)
-            return cacheUsageLabel()
-        return "Standard"
-    }
+    function onOff(value) { return value ? "On" : "Off" }
 
-    function settingName(index) {
-        var names = ({
-            0: "performanceProfile",
-            2: "audioOutput",
-            3: "volume",
-            4: "muted",
-            5: "skipBack",
-            6: "skipForward",
-            7: "generateVideoThumbnails",
-            8: "artworkCacheLimit",
-            9: "backgroundArtworkDuringPlayback",
-            10: "reducedMotion",
-            11: "controllerEnabled"
-        })
-        return names[index]
+    function valueFor(key) {
+        switch (key) {
+        case "performanceProfile": return profileLabel()
+        case "displayMode": return displayModeLabel()
+        case "audioOutput": return String(preferences.audioOutputDeviceName || "System Default")
+        case "volume": return (preferences.volumePercent || 0) + "%"
+        case "muted": return onOff(preferences.muted)
+        case "skipBack": return (preferences.skipBackSeconds || 10) + " seconds"
+        case "skipForward": return (preferences.skipForwardSeconds || 30) + " seconds"
+        case "generateVideoThumbnails": return onOff(preferences.generateVideoThumbnails)
+        case "artworkCacheLimit": return cacheLimitLabel()
+        case "backgroundArtworkDuringPlayback": return onOff(preferences.backgroundArtworkDuringPlayback)
+        case "reducedMotion": return onOff(preferences.reducedMotion)
+        case "controllerEnabled": return onOff(preferences.controllerEnabled)
+        case "theme": return String(preferences.themeName || "ChannelOS")
+        case "bootVideo": return String(preferences.bootVideoLabel || "TV Static")
+        case "bootVideoSound": return onOff(preferences.bootVideoSound !== false)
+        case "loadingStyle": return String(preferences.loadingStyleLabel || "Dancing TV")
+        case "bootSound": return String(preferences.bootSoundLabel || "Poppie")
+        case "bootSoundVolume": return Number(preferences.bootSoundVolume || 25) + "%"
+        case "activeProfile":
+            var chosen = chosenProfile()
+            return profileTitles[chosen] + (chosen === String(profileInfo.id) ? "  (on)" : "  — Select to switch")
+        case "profilePin": return profileInfo.hasPin ? "Set" : "Not set"
+        case "controllerLayout":
+            if (String(preferences.controllerLayout || "auto") !== "auto") return String(preferences.controllerLayoutLabel)
+            return hostWindow && hostWindow.controllerName ? "Automatic (" + hostWindow.controllerName + ")" : "Automatic"
+        case "buttonMapper": return Number(preferences.controllerRemapped || 0) > 0 ? preferences.controllerRemapped + " changed" : ""
+        case "keyboardMapper": return Number(preferences.keysRemapped || 0) > 0 ? preferences.keysRemapped + " changed" : ""
+        case "dedicatedController": return onOff(preferences.dedicatedController)
+        }
+        if (String(key).indexOf("video") === 0)
+            return String(preferences[key] || "Auto")
+        return ""
     }
 
     function showResult(result) {
@@ -162,34 +217,95 @@ Item {
         statusClearTimer.restart()
     }
 
-    function adjust(index, direction) {
-        if (index < 0 || index > 11)
+    function adjust(row, direction) {
+        if (!row || row.action)
             return
-        if (index === 1) {
+        if (row.key === "displayMode") {
             changeDisplayMode(direction)
             return
         }
-        var name = settingName(index)
-        if (typeof name === "undefined")
+        if (row.key === "activeProfile") {
+            var at = profileOrder.indexOf(chosenProfile())
+            pendingProfile = profileOrder[(at + direction + profileOrder.length) % profileOrder.length]
             return
-        showResult(channelOS.adjustSetting(name, direction))
+        }
+        showResult(channelOS.adjustSetting(row.key, direction))
     }
 
-    function activateAction(index) {
-        if (index === 12) {
+    function activateAction(row) {
+        if (!row || !row.action)
+            return
+        if (row.key === "themeBuilder") {
+            openThemeBuilder()
+        } else if (row.key === "clearArtwork") {
             showResult(typeof channelOS.beginArtworkCacheClear === "function"
                        ? channelOS.beginArtworkCacheClear() : channelOS.clearArtworkCache())
-        } else if (index === 13) {
+        } else if (row.key === "logs") {
             showResult(channelOS.openDiagnosticLogs())
-        } else if (index === 14) {
+        } else if (row.key === "reset") {
             showResult(channelOS.resetSettings())
             Qt.callLater(applyDisplayMode)
-        } else if (index === 15) {
+        } else if (row.key === "portable") {
             portableSetupDialog.open()
+        } else if (row.key === "bootVideoFile") {
+            if (typeof channelOS.chooseBootVideo === "function") {
+                var result = channelOS.chooseBootVideo()
+                if (!result.cancelled) showResult(result)
+            }
+        } else if (row.key === "bootSoundFile") {
+            if (typeof channelOS.chooseBootSound === "function") {
+                var picked = channelOS.chooseBootSound()
+                if (!picked.cancelled) showResult(picked)
+            }
+        } else if (row.key === "bootPreview") {
+            bootPreview.open()
+        } else if (row.key === "buttonMapper") {
+            controllerMapper.connectedFamily = hostWindow ? String(hostWindow.controllerFamily || "") : ""
+            controllerMapper.connectedName = hostWindow ? String(hostWindow.controllerName || "") : ""
+            controllerMapper.openMapper()
+        } else if (row.key === "keyboardMapper") {
+            keyboardMapper.openMapper()
+        } else if (row.key === "profilePin") {
+            pinSetPad.firstPin = ""
+            pinSetPad.reset()
+            pinSetPopup.open()
+        } else if (row.key.indexOf("edit") === 0) {
+            profileEditor.openFor(row.key.slice(4).toLowerCase())
         }
     }
+    function switchProfile() {
+        var target = chosenProfile()
+        var result = channelOS.activateProfile(target)
+        pendingProfile = ""
+        showResult(result)
+    }
 
-    function handleControllerIntent(intent: string): void {
+    function handleControllerIntent(intent) {
+        intent = String(intent)
+        if (bootPreview.visible) {
+            bootPreview.close()
+            return
+        }
+        if (themeBuilder.visible) {
+            themeBuilder.handleIntent(intent)
+            return
+        }
+        if (pinSetPopup.visible) {
+            pinSetPad.handleIntent(intent, -1)
+            return
+        }
+        if (controllerMapper.visible) {
+            controllerMapper.handleIntent(intent)
+            return
+        }
+        if (keyboardMapper.visible) {
+            keyboardMapper.handleIntent(intent)
+            return
+        }
+        if (profileEditor.visible) {
+            profileEditor.handleIntent(intent)
+            return
+        }
         if (portableSetupDialog.visible) {
             portableSetupDialog.handleControllerIntent(intent)
             return
@@ -200,36 +316,40 @@ Item {
             hostWindow.screen = "home"
             return
         }
+        // Shoulders, triggers, Page Up/Down and media keys switch tabs.
+        if (["CHANNEL_DOWN", "SKIP_BACK", "REWIND", "PREVIOUS"].indexOf(intent) >= 0) {
+            selectTab(currentTab - 1)
+            return
+        }
+        if (["CHANNEL_UP", "SKIP_FORWARD", "FAST_FORWARD", "NEXT"].indexOf(intent) >= 0) {
+            selectTab(currentTab + 1)
+            return
+        }
         if (intent === "UP") {
-            hostWindow.settingsSelection = Math.max(
-                        0, hostWindow.settingsSelection - 1)
+            hostWindow.settingsSelection = Math.max(0, hostWindow.settingsSelection - 1)
             return
         }
         if (intent === "DOWN") {
-            hostWindow.settingsSelection = Math.min(
-                        settingsRows.length - 1,
-                        hostWindow.settingsSelection + 1)
+            hostWindow.settingsSelection = Math.min(settingsRows.length - 1, hostWindow.settingsSelection + 1)
             return
         }
-        if (intent === "LEFT") {
-            adjust(hostWindow.settingsSelection, -1)
-            return
-        }
-        if (intent === "RIGHT") {
-            adjust(hostWindow.settingsSelection, 1)
+        var row = selectedRow()
+        if (intent === "LEFT" || intent === "RIGHT") {
+            adjust(row, intent === "LEFT" ? -1 : 1)
             return
         }
         if (intent === "SELECT") {
-            if (hostWindow.settingsSelection < 12)
-                adjust(hostWindow.settingsSelection, 1)
+            if (row && row.key === "activeProfile")
+                switchProfile()
+            else if (row && row.action)
+                activateAction(row)
             else
-                activateAction(hostWindow.settingsSelection)
+                adjust(row, 1)
         }
     }
 
-    Rectangle {
+    ThemeBackdrop {
         anchors.fill: parent
-        color: "#050c15"
     }
 
     Timer {
@@ -248,8 +368,8 @@ Item {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: Math.max(300, parent.width * 0.22)
-        color: "#071322"
-        border.color: "#1a3550"
+        color: Theme.c("#071322")
+        border.color: Theme.c("#1a3550")
         border.width: 1
 
         Column {
@@ -261,41 +381,70 @@ Item {
 
             Row {
                 spacing: 2
-                Text { text: "Channel"; color: "#f4f7fb"; font.pixelSize: 34; font.weight: Font.DemiBold }
-                Text { text: "OS"; color: "#42adff"; font.pixelSize: 34; font.weight: Font.DemiBold }
+                Text { text: "Channel"; color: Theme.c("#f4f7fb"); font.pixelSize: 34; font.weight: Font.DemiBold }
+                Text { text: "OS"; color: Theme.c("#42adff"); font.pixelSize: 34; font.weight: Font.DemiBold }
             }
 
             Item { width: 1; height: 18 }
 
-            Rectangle {
-                width: parent.width
-                height: 56
-                radius: 7
-                color: "#12396a"
-                border.color: "#42adff"
-                border.width: 2
-                Text {
-                    anchors.left: parent.left
-                    anchors.leftMargin: 18
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Settings"
-                    color: "#f4f7fb"
-                    font.pixelSize: 20
-                    font.weight: Font.DemiBold
+            Repeater {
+                model: settingsRoot.tabs
+                delegate: Rectangle {
+                    id: tabButton
+                    required property int index
+                    required property var modelData
+                    readonly property bool current: index === settingsRoot.currentTab
+                    objectName: "settingsTab_" + modelData.key
+                    width: parent ? parent.width : 0
+                    height: 68
+                    radius: 7
+                    color: current ? Theme.c("#12396a") : tabMouse.containsMouse ? Theme.c("#10283f") : "transparent"
+                    border.color: current ? Theme.c("#42adff") : "transparent"
+                    border.width: current ? 2 : 0
+                    Column {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.leftMargin: 18
+                        anchors.rightMargin: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 3
+                        Text {
+                            text: tabButton.modelData.title
+                            color: Theme.c("#f4f7fb")
+                            font.pixelSize: 19
+                            font.weight: tabButton.current ? Font.DemiBold : Font.Normal
+                        }
+                        Text {
+                            width: parent.width
+                            text: tabButton.modelData.detail
+                            color: Theme.c("#9fb0c2")
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                    }
+                    MouseArea {
+                        id: tabMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: settingsRoot.selectTab(tabButton.index)
+                    }
                 }
             }
+
+            Item { width: 1; height: 6 }
 
             Rectangle {
                 width: parent.width
                 height: 52
                 radius: 7
-                color: backMouse.containsMouse ? "#10283f" : "transparent"
+                color: backMouse.containsMouse ? Theme.c("#10283f") : "transparent"
                 Text {
                     anchors.left: parent.left
                     anchors.leftMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     text: "‹  Back to Home"
-                    color: "#9fb0c2"
+                    color: Theme.c("#9fb0c2")
                     font.pixelSize: 18
                 }
                 MouseArea {
@@ -315,22 +464,22 @@ Item {
             anchors.margins: 38
             spacing: 8
             Text {
-                text: "CURRENT PROFILE"
-                color: "#42adff"
+                text: "PERFORMANCE PROFILE"
+                color: Theme.c("#42adff")
                 font.pixelSize: 13
                 font.weight: Font.Bold
                 font.letterSpacing: 2
             }
             Text {
                 text: settingsRoot.profileLabel()
-                color: "#f4f7fb"
+                color: Theme.c("#f4f7fb")
                 font.pixelSize: 22
                 font.weight: Font.DemiBold
             }
             Text {
                 width: parent.width
                 text: "Preferences save to the active setup. Audio device selection stays on this PC. Lightweight reduces optional artwork work and motion."
-                color: "#9fb0c2"
+                color: Theme.c("#9fb0c2")
                 font.pixelSize: 14
                 wrapMode: Text.WordWrap
                 lineHeight: 1.2
@@ -352,8 +501,8 @@ Item {
             anchors.leftMargin: 44
             anchors.rightMargin: 44
             anchors.topMargin: 32
-            text: "Settings"
-            color: "#f4f7fb"
+            text: settingsRoot.tabs[settingsRoot.currentTab].title
+            color: Theme.c("#f4f7fb")
             font.pixelSize: 34
             font.weight: Font.DemiBold
         }
@@ -364,8 +513,14 @@ Item {
             anchors.right: settingsTitle.right
             anchors.top: settingsTitle.bottom
             anchors.topMargin: 4
-            text: "Choose a ready-made profile or tune individual controls. Changes save automatically."
-            color: "#9fb0c2"
+            text: ({
+                general: "How ChannelOS looks on screen, responds to controls and handles artwork. Changes save automatically.",
+                media: "Picture and sound for Live TV, On Demand and the Home preview. Changes save automatically.",
+                extras: "Make ChannelOS look your way, and back up or carry your whole setup. Changes save automatically.",
+                controller: "Set up any controller your way, remap keys, and type from the couch. Changes save automatically.",
+                profiles: "Kids, Daycare and Lobby lock ChannelOS to what you choose. Leaving one needs the PIN."
+            })[settingsRoot.tabs[settingsRoot.currentTab].key]
+            color: Theme.c("#9fb0c2")
             font.pixelSize: 16
             elide: Text.ElideRight
         }
@@ -398,8 +553,8 @@ Item {
                 width: Math.max(1, settingsList.width - 8)
                 height: 82
                 radius: 9
-                color: selected ? "#102b50" : "#0b1b2e"
-                border.color: selected ? "#42adff" : "#17324a"
+                color: selected ? Theme.c("#102b50") : Theme.c("#0b1b2e")
+                border.color: selected ? Theme.c("#42adff") : Theme.c("#17324a")
                 border.width: selected ? 2 : 1
 
                 MouseArea {
@@ -418,13 +573,13 @@ Item {
                     width: Math.max(1, parent.width - 300)
                     Text {
                         text: settingRow.modelData.title
-                        color: "#f4f7fb"
+                        color: Theme.c("#f4f7fb")
                         font.pixelSize: 18
                         font.weight: Font.DemiBold
                     }
                     Text {
                         text: settingRow.modelData.detail
-                        color: "#9fb0c2"
+                        color: Theme.c("#9fb0c2")
                         font.pixelSize: 13
                         width: parent.width
                         elide: Text.ElideRight
@@ -436,15 +591,15 @@ Item {
                     anchors.rightMargin: 18
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 8
-                    visible: settingRow.index < 12
+                    visible: !settingRow.modelData.action
 
                     Rectangle {
                         width: 38
                         height: 38
                         radius: 6
-                        color: minusMouse.containsMouse ? "#1a4d82" : "#10283f"
-                        border.color: "#1a91ff"
-                        Text { anchors.centerIn: parent; text: "−"; color: "#f4f7fb"; font.pixelSize: 22 }
+                        color: minusMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
+                        border.color: Theme.c("#1a91ff")
+                        Text { anchors.centerIn: parent; text: "−"; color: Theme.c("#f4f7fb"); font.pixelSize: 22 }
                         MouseArea {
                             id: minusMouse
                             anchors.fill: parent
@@ -452,17 +607,17 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 settingsRoot.hostWindow.settingsSelection = settingRow.index
-                                settingsRoot.adjust(settingRow.index, -1)
+                                settingsRoot.adjust(settingRow.modelData, -1)
                             }
                         }
                     }
 
                     Text {
-                        width: 156
+                        width: 196
                         anchors.verticalCenter: parent.verticalCenter
                         horizontalAlignment: Text.AlignHCenter
-                        text: settingsRoot.valueFor(settingRow.index)
-                        color: "#42adff"
+                        text: settingsRoot.valueFor(settingRow.modelData.key)
+                        color: Theme.c("#42adff")
                         font.pixelSize: 16
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
@@ -472,9 +627,9 @@ Item {
                         width: 38
                         height: 38
                         radius: 6
-                        color: plusMouse.containsMouse ? "#1a4d82" : "#10283f"
-                        border.color: "#1a91ff"
-                        Text { anchors.centerIn: parent; text: "+"; color: "#f4f7fb"; font.pixelSize: 22 }
+                        color: plusMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
+                        border.color: Theme.c("#1a91ff")
+                        Text { anchors.centerIn: parent; text: "+"; color: Theme.c("#f4f7fb"); font.pixelSize: 22 }
                         MouseArea {
                             id: plusMouse
                             anchors.fill: parent
@@ -482,7 +637,7 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 settingsRoot.hostWindow.settingsSelection = settingRow.index
-                                settingsRoot.adjust(settingRow.index, 1)
+                                settingsRoot.adjust(settingRow.modelData, 1)
                             }
                         }
                     }
@@ -495,19 +650,15 @@ Item {
                     width: 236
                     height: 42
                     radius: 6
-                    visible: settingRow.index >= 12
-                    color: actionMouse.containsMouse ? "#1a4d82" : "#10283f"
-                    border.color: "#1a91ff"
+                    visible: Boolean(settingRow.modelData.action)
+                    color: actionMouse.containsMouse ? Theme.c("#1a4d82") : Theme.c("#10283f")
+                    border.color: Theme.c("#1a91ff")
                     Text {
                         anchors.centerIn: parent
-                        text: settingRow.index === 12
+                        text: settingRow.modelData.key === "clearArtwork"
                               ? "Clear • " + settingsRoot.cacheUsageLabel()
-                              : settingRow.index === 13
-                              ? "Open Log Folder"
-                              : settingRow.index === 14
-                              ? "Restore Standard Defaults"
-                              : "Copy / Open Setup"
-                        color: "#f4f7fb"
+                              : String(settingRow.modelData.action || "")
+                        color: Theme.c("#f4f7fb")
                         font.pixelSize: 14
                         font.weight: Font.DemiBold
                         elide: Text.ElideRight
@@ -521,7 +672,7 @@ Item {
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             settingsRoot.hostWindow.settingsSelection = settingRow.index
-                            settingsRoot.activateAction(settingRow.index)
+                            settingsRoot.activateAction(settingRow.modelData)
                         }
                     }
                 }
@@ -546,6 +697,10 @@ Item {
     }
 
     Component.onCompleted: Qt.callLater(applyStartupDisplayMode)
+    // However Settings was opened (remote, click, menu), list the speakers
+    // and headphones that are available right now.
+    onVisibleChanged: if (visible && channelOS && typeof channelOS.refreshAudioOutputDevices === "function")
+                          channelOS.refreshAudioOutputDevices()
 
     Rectangle {
         id: settingsFooter
@@ -553,15 +708,15 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 50
-        color: "#071322"
-        border.color: "#1a3550"
+        color: Theme.c("#071322")
+        border.color: Theme.c("#1a3550")
         border.width: 1
         Text {
             anchors.left: parent.left
             anchors.leftMargin: 30
             anchors.verticalCenter: parent.verticalCenter
-            text: "ARROWS  Navigate / Change     ENTER  Select     F11  Display Mode     ESC / H  Home"
-            color: "#9fb0c2"
+            text: "ARROWS  Navigate / Change     ENTER  Select     PG UP / PG DN  or  LB / RB  Tabs     F11  Display Mode     ESC  Home"
+            color: Theme.c("#9fb0c2")
             font.pixelSize: 13
         }
     }
@@ -569,5 +724,123 @@ Item {
     PortableSetupDialog {
         id: portableSetupDialog
         parent: Overlay.overlay
+    }
+
+    ThemeBuilder {
+        id: themeBuilder
+    }
+
+    ControllerMapper {
+        id: controllerMapper
+        onResult: function(result) { settingsRoot.showResult(result) }
+    }
+
+    KeyboardMapper {
+        id: keyboardMapper
+        hostWindow: settingsRoot.hostWindow
+        onResult: function(result) { settingsRoot.showResult(result) }
+    }
+
+    ProfileEditor {
+        id: profileEditor
+        onSaved: function(result) { settingsRoot.showResult(result) }
+    }
+
+    // Set or change the PIN: enter it, then once more to confirm.
+    Popup {
+        id: pinSetPopup
+        objectName: "pinSetPopup"
+        parent: Overlay.overlay
+        x: 0
+        y: 0
+        width: parent ? parent.width : 1280
+        height: parent ? parent.height : 720
+        padding: 0
+        modal: true
+        closePolicy: Popup.CloseOnEscape
+        background: Item {}
+        contentItem: PinPad {
+            id: pinSetPad
+            property string firstPin: ""
+            title: firstPin.length > 0 ? "Enter the same PIN again" : (settingsRoot.profileInfo.hasPin ? "Choose a new PIN" : "Choose a PIN")
+            reason: firstPin.length > 0 ? "" : "4 to 8 digits. Keep it somewhere safe: it is the way out of Kids, Daycare and Lobby."
+            onSubmitted: function(pin) {
+                if (firstPin.length === 0) {
+                    firstPin = pin
+                    reset()
+                    return
+                }
+                if (pin !== firstPin) {
+                    firstPin = ""
+                    rejected("Those PINs did not match. Start again.")
+                    return
+                }
+                var result = channelOS.setProfilePin(pin)
+                firstPin = ""
+                if (result && result.ok) {
+                    pinSetPopup.close()
+                    settingsRoot.showResult(result)
+                } else {
+                    rejected(result ? result.message : "PIN not saved")
+                }
+            }
+            onCancelled: { firstPin = ""; pinSetPopup.close() }
+        }
+    }
+
+    // Startup preview: the chosen loading style running through a full boot.
+    Popup {
+        id: bootPreview
+        objectName: "bootPreview"
+        parent: Overlay.overlay
+        x: 0
+        y: 0
+        width: parent ? parent.width : 1280
+        height: parent ? parent.height : 720
+        padding: 0
+        modal: true
+        closePolicy: Popup.CloseOnEscape
+        property real fake: 0
+        onOpened: {
+            fake = 0
+            previewRun.restart()
+            if (channelOS && typeof channelOS.bootSoundPreview === "function") channelOS.bootSoundPreview(true)
+        }
+        onClosed: {
+            previewRun.stop()
+            if (channelOS && typeof channelOS.bootSoundPreview === "function") channelOS.bootSoundPreview(false)
+        }
+        SequentialAnimation {
+            id: previewRun
+            NumberAnimation { target: bootPreview; property: "fake"; from: 0; to: 1; duration: 5200; easing.type: Easing.InOutQuad }
+            PauseAnimation { duration: 900 }
+            ScriptAction { script: bootPreview.close() }
+        }
+        contentItem: BootScreen {
+            loadingStyle: String(settingsRoot.preferences.loadingStyle || "tv")
+            showStatic: String(settingsRoot.preferences.bootVideo || "static") !== "off"
+            reducedMotion: Boolean(settingsRoot.preferences.reducedMotion)
+            progress: bootPreview.fake
+            message: bootPreview.fake < 0.4 ? "Opening your ChannelOS setup…" : bootPreview.fake < 0.8 ? "Tuning in…" : "Loading the rest of your channels…"
+            running: bootPreview.visible
+            Text {
+                anchors.top: parent.top
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.topMargin: 28
+                visible: String(settingsRoot.preferences.bootVideo) === "custom"
+                text: "Your boot video plays first, then this"
+                color: Theme.v("#c8d4e2")
+                font.pixelSize: 16
+            }
+            Text {
+                anchors.bottom: parent.bottom
+                anchors.right: parent.right
+                anchors.margins: 24
+                text: "Preview  •  any button closes"
+                color: Theme.v("#9fb0c2")
+                font.pixelSize: 13
+            }
+            MouseArea { anchors.fill: parent; onClicked: bootPreview.close() }
+        }
     }
 }

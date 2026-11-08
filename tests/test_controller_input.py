@@ -215,6 +215,7 @@ def test_controller_threshold_validation_is_explicit() -> None:
 
 def test_non_windows_backend_is_optional(monkeypatch) -> None:
     monkeypatch.setattr("channelos.controller_input.sys.platform", "linux")
+    monkeypatch.setattr("channelos.controller_input.SDLBackend.available", staticmethod(lambda: False))
     assert XInputBackend.try_create() is None
     assert create_controller_backend() is None
 
@@ -272,3 +273,153 @@ def test_xinput_backend_normalizes_state_and_prefers_the_active_slot() -> None:
     library.XInputGetState.calls.clear()
     assert backend.read_first() is not None
     assert library.XInputGetState.calls == [2]
+
+
+# --- Remapping, capture, SDL and layouts ------------------------------------------------------
+
+from channelos.controller_layouts import (
+    CONTROL_IDS, DEFAULT_BINDINGS, FAMILIES, clean_bindings, clean_key_bindings, detect_family, effective_bindings,
+)
+
+
+def test_bindings_remap_buttons_triggers_and_right_stick() -> None:
+    mapper = GamepadIntentMapper(bindings=effective_bindings({
+        "south": "PLAY_PAUSE", "west": "NONE", "left_trigger": "MUTE", "rstick_left": "CHANNEL_DOWN"}))
+    mapper.prime(snapshot(), now=0.0)
+    assert [c.intent for c in mapper.update(snapshot(GamepadButton.SOUTH), now=0.1)] == [ControlIntent.PLAY_PAUSE]
+    assert mapper.update(snapshot(GamepadButton.WEST), now=0.2) == ()
+    assert [c.intent for c in mapper.update(snapshot(left_trigger=1.0), now=0.3)] == [ControlIntent.MUTE]
+    assert [c.intent for c in mapper.update(snapshot(right_x=-1.0), now=0.4)] == [ControlIntent.CHANNEL_DOWN]
+    # Default right stick up is still volume.
+    mapper.update(snapshot(), now=0.5)
+    assert [c.intent for c in mapper.update(snapshot(right_y=1.0), now=0.6)] == [ControlIntent.VOLUME_UP]
+    # The left stick always navigates, even if the D-pad is remapped away.
+    nav = GamepadIntentMapper(bindings=effective_bindings({"dpad_up": "NONE"}))
+    nav.prime(snapshot(), now=0.0)
+    assert nav.update(snapshot(GamepadButton.DPAD_UP), now=0.1) == ()
+    assert [c.intent for c in nav.update(snapshot(left_y=1.0), now=0.2)] == [ControlIntent.UP]
+
+
+def test_clean_bindings_drop_unknowns_and_defaults() -> None:
+    assert clean_bindings({"south": "SELECT", "east": "HOME", "nope": "HOME", "west": "EXPLODE"}) == {"east": "HOME"}
+    assert clean_bindings("junk") == {}
+    assert set(DEFAULT_BINDINGS) == set(CONTROL_IDS)
+    assert clean_key_bindings({"Key_Escape": "HOME", "Key_G": "GUIDE", "Key_F1": "SETTINGS", "Key_1": "HOME",
+                               "Key_Q": "BOGUS"}) == {"Key_F1": "SETTINGS"}
+
+
+class ScriptedBackend:
+    def __init__(self, readings):
+        self.readings = list(readings)
+
+    def read_first(self):
+        return self.readings.pop(0) if self.readings else None
+
+
+def test_capture_reports_new_presses_and_navigates_with_defaults() -> None:
+    def reading(*buttons, **axes):
+        return ControllerReading("sdl:1", "8BitDo SN30 Pro", snapshot(*buttons, **axes), family="snes")
+
+    dispatched: list[ControlCommand] = []
+    captured: list[str] = []
+    hub = ControllerInputHub(ScriptedBackend([
+        reading(), reading(GamepadButton.NORTH), reading(GamepadButton.NORTH, GamepadButton.DPAD_DOWN),
+        reading(left_trigger=1.0), reading()]), dispatched.append)
+    hub.set_bindings(effective_bindings({"dpad_down": "MUTE"}))
+    hub.poll(now=0.0)
+    assert hub.controller_family == "snes"
+    hub.set_capture(captured.append)
+    for step in range(1, 5):
+        hub.poll(now=step * 0.1)
+    assert captured == ["north", "dpad_down", "left_trigger"]
+    # Default navigation while capturing: D-pad down is Down, not the remapped Mute.
+    assert [c.intent for c in dispatched] == [ControlIntent.INFO, ControlIntent.DOWN, ControlIntent.SKIP_BACK]
+
+
+def test_sdl_backend_reads_positionally_and_detects_family() -> None:
+    class FakeSDL:
+        SDL_CONTROLLER_TYPE_PS5 = 7
+        def __init__(self):
+            for index, name in enumerate([name for name, _ in controller_input._SDL_BUTTONS]):
+                setattr(self, f"SDL_CONTROLLER_BUTTON_{name}", index)
+            for index, name in enumerate(["LEFTX", "LEFTY", "RIGHTX", "RIGHTY", "TRIGGERLEFT", "TRIGGERRIGHT"]):
+                setattr(self, f"SDL_CONTROLLER_AXIS_{name}", index)
+            self.pressed = {self.SDL_CONTROLLER_BUTTON_A, self.SDL_CONTROLLER_BUTTON_START}
+            self.axes = [0, -32768, 32767, 0, 32767, 0]
+            self.attached = True
+        def SDL_GameControllerUpdate(self): pass
+        def SDL_NumJoysticks(self): return 1
+        def SDL_IsGameController(self, index): return True
+        def SDL_GameControllerOpen(self, index): return "pad"
+        def SDL_GameControllerName(self, pad): return b"DualSense Wireless Controller"
+        def SDL_GameControllerGetType(self, pad): return 7
+        def SDL_GameControllerGetJoystick(self, pad): return "joy"
+        def SDL_JoystickInstanceID(self, joystick): return 3
+        def SDL_GameControllerGetAttached(self, pad): return self.attached
+        def SDL_GameControllerClose(self, pad): pass
+        def SDL_GameControllerGetButton(self, pad, code): return code in self.pressed
+        def SDL_GameControllerGetAxis(self, pad, axis): return self.axes[axis]
+
+    sdl = FakeSDL()
+    backend = controller_input.SDLBackend(sdl)
+    reading = backend.read_first()
+    assert reading.controller_id == "sdl:3" and reading.family == "playstation"
+    assert reading.snapshot.buttons == {GamepadButton.SOUTH, GamepadButton.MENU}
+    assert reading.snapshot.left_y == 1.0, "SDL up (negative) becomes positive up"
+    assert reading.snapshot.right_x == 1.0 and reading.snapshot.left_trigger == 1.0
+    sdl.attached = False
+    sdl.SDL_NumJoysticks = lambda: 0
+    assert backend.read_first() is None
+
+
+@pytest.mark.parametrize(("kind", "name", "family"), [
+    ("", "Mayflash GameCube Controller Adapter", "gamecube"), ("", "Nintendo Switch Online N64 Controller", "n64"),
+    ("", "8BitDo SN30 Pro", "snes"), ("", "8BitDo N30 NES", "nes"), ("", "8BitDo M30 gamepad", "genesis"),
+    ("PS4", "Wireless Controller", "playstation"), ("Switch Pro", "Pro Controller", "switch"),
+    ("Xbox One", "Controller", "xbox"), ("", "Steam Deck", "steam"), ("", "USB Gamepad", "generic"),
+])
+def test_detect_family(kind: str, name: str, family: str) -> None:
+    assert detect_family(kind, name) == family
+
+
+def test_every_layout_draws_known_controls_on_the_canvas() -> None:
+    names = set()
+    for family in FAMILIES:
+        assert family["id"] not in names
+        names.add(family["id"])
+        ids = [control["id"] for control in family["controls"]]
+        assert len(ids) == len(set(ids)), family["id"]
+        for control in family["controls"]:
+            assert control["id"] in CONTROL_IDS, (family["id"], control["id"])
+            assert 0 <= control["x"] <= 100 and 0 <= control["y"] <= 60, (family["id"], control)
+            assert control["label"]
+    assert {"xbox", "playstation", "switch", "gamecube", "n64", "snes", "nes", "genesis", "atari", "generic"} <= names
+
+
+def test_threaded_backend_starts_off_the_gui_thread_and_samples() -> None:
+    import threading
+    import time as clock
+    started_on = []
+
+    class Slow:
+        def read_first(self):
+            return ControllerReading("sdl:9", "Pad", snapshot(GamepadButton.SOUTH), family="generic")
+
+    def factory():
+        started_on.append(threading.current_thread().name)
+        clock.sleep(0.05)
+        return Slow()
+
+    begin = clock.monotonic()
+    backend = controller_input.ThreadedBackend(factory, start_delay=0)
+    assert clock.monotonic() - begin < 0.04, "creation never blocks the caller"
+    assert backend.read_first() is None
+    assert backend.started.wait(2)
+    deadline = clock.monotonic() + 2
+    reading = None
+    while reading is None and clock.monotonic() < deadline:
+        reading = backend.read_first()
+        clock.sleep(0.01)
+    backend.stop()
+    assert reading is not None and reading.controller_id == "sdl:9"
+    assert started_on == ["ChannelOS controller"]

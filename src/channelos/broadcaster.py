@@ -20,7 +20,7 @@ from .ad_catalog import (
     export_portable_channel,
 )
 from .ad_break_engine import ProgramOccurrence
-from .ad_scheduling import calendar_ad_room, calendar_gap_policy, configured_policies, eligible_media, select_segments
+from .ad_scheduling import calendar_ad_room, configured_policies, eligible_media, select_segments
 from .library import MediaLibrary, normalize_path, path_key_is_within
 from .loader import load_channel
 from .models import (

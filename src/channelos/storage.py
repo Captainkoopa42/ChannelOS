@@ -57,6 +57,7 @@ def configure_sqlite_connection(
         row = connection.execute("PRAGMA journal_mode").fetchone()
         actual_mode = "" if row is None else str(row[0]).casefold()
 
+    use_normal_sync_for_wal(connection, actual_mode)
     if requested_mode == "WAL" and actual_mode != "wal":
         warnings.warn(
             f"SQLite returned journal_mode={actual_mode or 'unknown'} for "
@@ -65,6 +66,22 @@ def configure_sqlite_connection(
             stacklevel=2,
         )
     return actual_mode
+
+
+def use_normal_sync_for_wal(connection: sqlite3.Connection, journal_mode: str | None = None) -> None:
+    """In WAL mode, sync at checkpoints rather than on every commit.
+
+    SQLite documents synchronous=NORMAL as corruption-safe with WAL; a power
+    loss can drop only the most recent commits. ChannelOS commits many small
+    transactions (each committed ad plan, viewing checkpoints), and per-commit
+    fsync dominated ad catch-up time. Other journal modes keep FULL.
+    """
+
+    if journal_mode is None:
+        row = connection.execute("PRAGMA journal_mode").fetchone()
+        journal_mode = "" if row is None else str(row[0]).casefold()
+    if journal_mode == "wal":
+        connection.execute("PRAGMA synchronous = NORMAL")
 
 
 def _validate_identifier(value: str) -> str:

@@ -40,6 +40,17 @@ def test_settings_round_trip_to_separate_json_file(tmp_path) -> None:
     assert json.loads(path.read_text(encoding="utf-8")) == {
         "artwork_cache_limit_mb": 0,
         "audio_output_device_id": "headphones-id",
+        "boot_sound": "poppie",
+        "boot_sound_file": "",
+        "boot_sound_volume": 25,
+        "boot_video": "static",
+        "controller_bindings": {},
+        "controller_layout": "auto",
+        "dedicated_controller": False,
+        "key_bindings": {},
+        "boot_video_file": "",
+        "boot_video_sound": True,
+        "loading_style": "tv",
         "background_artwork_during_playback": True,
         "controller_enabled": False,
         "display_mode": "windowed",
@@ -50,9 +61,31 @@ def test_settings_round_trip_to_separate_json_file(tmp_path) -> None:
         "reduced_motion": False,
         "skip_back_seconds": 15,
         "skip_forward_seconds": 60,
+        "theme": "channelos",
         "thumbnail_width": 640,
+        "video_aspect_ratio": "auto",
+        "video_brightness": 100,
+        "video_contrast": 100,
+        "video_deinterlace": "auto",
+        "video_fit": "fit",
+        "video_hardware_decoding": "auto",
+        "video_overscan_percent": 0,
+        "video_saturation": 100,
         "volume_percent": 65,
     }
+
+
+def test_video_settings_persist_and_reject_unknown_values(tmp_path) -> None:
+    store = SettingsStore(tmp_path / "settings.json")
+    saved = CouchSettings(video_aspect_ratio="4:3", video_fit="fill", video_overscan_percent=4,
+                          video_deinterlace="yadif2x", video_hardware_decoding="off",
+                          video_brightness=110, video_contrast=90, video_saturation=130, theme="chromespace")
+    store.save(saved)
+    assert store.load() == saved
+    assert store.load().video.aspect_ratio == "4:3"
+    broken = CouchSettings.from_mapping({"video_aspect_ratio": "7:3", "video_overscan_percent": 5,
+                                         "video_brightness": True, "theme": "neon"})
+    assert broken.video == CouchSettings().video and broken.theme == "channelos"
 
 
 def test_invalid_or_corrupt_settings_fall_back_safely(tmp_path) -> None:

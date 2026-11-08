@@ -36,7 +36,6 @@ from .broadcaster import (
 from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
 from .couch_actions import CouchActions
-from .couch_model import build_couch_snapshot
 from .couch_qt import (
     CouchController,
     CouchKeyFilter,
@@ -46,8 +45,7 @@ from .guide import GuideError, GuideService
 from .library import MediaLibrary, normalize_path
 from .models import ChannelValidationError
 from .playback import NativeVideoSurface, PlaybackError
-from .resolve import resolve_channel
-from .runtime import ChannelRuntime, ChannelRuntimeError, RuntimeStore, TelevisionRuntime
+from .runtime import ChannelRuntimeError, RuntimeStore, TelevisionRuntime
 from .scanner import MediaScanner, ScanCancelled, ScanProgress, ScanSummary
 
 logger = logging.getLogger(__name__)
@@ -627,7 +625,7 @@ class BroadcasterCouchController(CouchController):
         if not hasattr(self._actions, 'replace_lineup'):
             return self._reload_lineup_full(replacement_channel_number=replacement_channel_number)
         from .media_resilience import _resolved_runtime
-        previous = dict(self._actions.runtime.channels)
+        previous = getattr(self._actions, "full_channels", None) or self._actions.runtime.channels
         definitions = {record.channel_number: record.definition for record in self._broadcaster.records}
         changed = {number for number, definition in definitions.items()
                    if self._lineup_definitions.get(number) != definition}
@@ -654,7 +652,7 @@ class BroadcasterCouchController(CouchController):
             combined.update({number: runtime for number, runtime in replacements.items() if runtime is not None})
             service = GuideService(tuple(combined.values()), definitions=tuple(definitions.values()))
             self._actions.replace_lineup(service, tuple(combined.values()))
-            self._service = service
+            self._service = self._actions.service  # profile-filtered
             self._lineup_definitions = definitions
             self._lineup_library_revision = self._library.revision()
         except Exception:
@@ -718,6 +716,9 @@ class BroadcasterCouchController(CouchController):
         actions.set_audio_output_device(
             self._settings.audio_output_device_id or None
         )
+        actions.set_video_settings(self._settings.video)
+        if getattr(self._actions, "_surface_size", None):
+            actions.set_surface_size(*self._actions._surface_size)
         if self._video_surface is not None:
             actions.attach_video_surface(self._video_surface)
 
@@ -737,11 +738,13 @@ class BroadcasterCouchController(CouchController):
         # object and presentation target above has been accepted.
         previous_actions = self._actions
         previous_actions.stop()
-        for runtime in previous_actions.runtime.channels.values():
+        for runtime in getattr(previous_actions, "full_channels", previous_actions.runtime.channels).values():
             if runtime.break_store is not None:
                 runtime.break_store.close()
 
-        self._service = service
+        if hasattr(actions, "set_channel_filter"):
+            actions.set_channel_filter(self._profile_channel_filter())
+        self._service = actions.service
         self._actions = actions
         self._snapshot = self._build_guide_snapshot()
         self._home_television = self._build_home_television_view()
@@ -1253,6 +1256,9 @@ class BroadcasterKeyFilter(CouchKeyFilter):
         )
 
     def dispatch_command(self, command: ControlCommand) -> bool:
+        # Profile locks and the PIN pad come before any screen handling.
+        if self._profile_guard(command):
+            return True
         notice = getattr(self._window, '_channelos_portable_notice', None)
         if notice is not None and notice.isVisible():
             self._invoke_overlay(notice, command.intent)
@@ -1270,6 +1276,8 @@ class BroadcasterKeyFilter(CouchKeyFilter):
                     focus.inherits(value) for value in ('QQuickComboBox','QQuickSpinBox','QQuickListView')))
                 arrows = {ControlIntent.UP:Qt.Key.Key_Up,ControlIntent.DOWN:Qt.Key.Key_Down,ControlIntent.LEFT:Qt.Key.Key_Left,ControlIntent.RIGHT:Qt.Key.Key_Right}
                 modifiers = Qt.KeyboardModifier.NoModifier
+                if command.intent is ControlIntent.SELECT and self.open_keyboard_for_focus():
+                    return True
                 if command.intent is ControlIntent.SELECT:
                     key = Qt.Key.Key_Return if self._text_entry_has_focus() or direct else Qt.Key.Key_Space
                 elif direct:
@@ -1313,7 +1321,11 @@ class BroadcasterKeyFilter(CouchKeyFilter):
             return self._invoke_overlay(item, command.intent)
         if screen == "studio" and command.intent in overlay_intents:
             return self._invoke_overlay(self._studio_item, command.intent)
-        return super().dispatch_command(command)
+        self._profile_checked = True  # already guarded above
+        try:
+            return super().dispatch_command(command)
+        finally:
+            self._profile_checked = None
 
     @staticmethod
     def _text_entry_has_focus() -> bool:
@@ -1493,6 +1505,13 @@ def run_qt(
     window.installEventFilter(key_filter)
     app.aboutToQuit.connect(lambda: window.removeEventFilter(key_filter))
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
+    window.guideLiveActivated.connect(key_filter.activateGuideLive)
+    window.pinSubmitted.connect(key_filter.submitPin)
+    # Fill and stretch follow the video surface's shape.
+    def report_video_size(*_args) -> None:
+        controller.setVideoSurfaceSize(video_window.width(), video_window.height())
+    video_window.widthChanged.connect(report_video_size)
+    video_window.heightChanged.connect(report_video_size)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
     window._channelos_key_filter = key_filter
     window._channelos_video_window = video_window
@@ -1509,6 +1528,7 @@ def run_qt(
         ),
     )
     window._channelos_controller_input = controller_input
+    controller.attach_controller_input(controller_input)
 
     playback_timer = QTimer(window)
     playback_timer.setInterval(250)

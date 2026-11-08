@@ -54,6 +54,7 @@ class QtControllerInput(QObject):
 
         self._window.setProperty("controllerConnected", False)
         self._window.setProperty("controllerName", "")
+        self._window.setProperty("controllerFamily", "")
 
         app = QGuiApplication.instance()
         if application_active is None and app is not None:
@@ -62,6 +63,23 @@ class QtControllerInput(QObject):
     @property
     def available(self) -> bool:
         return self._hub is not None
+
+    @property
+    def family(self) -> str:
+        return self._hub.controller_family if self._hub is not None else ""
+
+    @property
+    def name(self) -> str:
+        return self._hub.controller_name if self._hub is not None else ""
+
+    def set_bindings(self, bindings) -> None:
+        if self._hub is not None:
+            self._hub.set_bindings(bindings)
+
+    def set_capture(self, callback) -> None:
+        """Button mapper: report raw presses (see ControllerInputHub.set_capture)."""
+        if self._hub is not None:
+            self._hub.set_capture(callback)
 
     @property
     def connected(self) -> bool:
@@ -75,6 +93,9 @@ class QtControllerInput(QObject):
 
     def stop(self) -> None:
         self._timer.stop()
+        stop_backend = getattr(self._backend, "stop", None)
+        if callable(stop_backend):
+            stop_backend()
 
     @staticmethod
     def _default_application_active() -> bool:
@@ -121,6 +142,7 @@ class QtControllerInput(QObject):
     def _connection_changed(self, connected: bool, name: str) -> None:
         self._window.setProperty("controllerConnected", connected)
         self._window.setProperty("controllerName", name if connected else "")
+        self._window.setProperty("controllerFamily", self.family if connected else "")
         message = (
             f"{name} connected"
             if connected

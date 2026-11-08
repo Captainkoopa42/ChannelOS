@@ -1,7 +1,8 @@
 # ChannelOS Control-Intent Boundary
 
-**Status:** Native Windows couch-controller adapter implemented; real-machine
-controller validation pending
+**Status:** SDL2 and XInput controller backends, remappable buttons and keys, and
+an on-screen keyboard implemented; real-machine validation per controller family
+pending
 
 ChannelOS does not attach television behavior directly to a keyboard,
 controller, USB remote, transport, or storefront.
@@ -31,12 +32,19 @@ The same rule applies to `SELECT`, `BACK`, `PLAY_PAUSE`, `CHANNEL_UP`, `GUIDE`,
 `HOME`, and every other command. Controller support therefore does not create a
 second set of television rules.
 
-## Native Windows controller support
+## Controller backends
 
-The couch launcher now discovers and hot-plugs Xbox-compatible controllers
-through the XInput API already supplied by Windows. No controller package,
-driver, Steamworks SDK, native DLL, or new Python dependency is bundled by this
-feature.
+ChannelOS reads controllers through **SDL2** (PySDL2 plus SDL2.dll on Windows)
+when it is available, and falls back to the Windows **XInput** API otherwise.
+SDL's community controller database maps hundreds of pads to one *positional*
+layout: Xbox, PlayStation (DualShock and DualSense), Switch Pro and Joy-Con
+pairs, Steam Deck, GameCube and N64 adapters, 8BitDo and other retro pads, and
+generic USB gamepads. Buttons are read by position, never by the letter printed
+on them, so Nintendo's A (the east button) is "east" like Xbox's B. One binding
+table therefore fits every brand.
+
+`CHANNELOS_CONTROLLER_BACKEND=xinput` forces the XInput path for diagnosis.
+If SDL can't load, controllers still work through XInput (Xbox-compatible pads).
 
 ChannelOS polls the active controller at approximately 60 Hz. When no
 controller is present, discovery backs off to one check every 1.5 seconds so
@@ -51,7 +59,7 @@ On focus return it primes a fresh controller sample before dispatch resumes, so
 using the same controller in a game or another application cannot also move the
 ChannelOS interface in the background.
 
-Only the first available XInput controller controls the couch UI in this slice.
+Only the first available controller controls the couch UI.
 Disconnecting it does not interrupt playback or keyboard control. The optional
 adapter can be disabled for diagnosis before launch:
 
@@ -124,7 +132,7 @@ Existing keyboard behavior remains available:
 
 - arrow keys -> `UP`, `DOWN`, `LEFT`, `RIGHT`,
 - Enter/Return/Space -> `SELECT`,
-- Escape/Backspace/consumer Back -> `BACK`,
+- Escape/consumer Back -> `BACK` (Backspace only edits text, so typing never leaves a screen),
 - digits -> `DIGIT 0` through `DIGIT 9`,
 - `G` or a consumer Guide key -> `GUIDE` (inside the Guide: back to now),
 - Home -> `GUIDE_NOW`,
@@ -139,6 +147,32 @@ Existing keyboard behavior remains available:
 - consumer Channel Up/Down keys -> channel intents,
 - `L` -> `GO_LIVE`,
 - `P` -> `PREVIOUS_CHANNEL`.
+
+## Remapping, layouts and couch typing
+
+**Settings → Controller** holds the controls (see [SETTINGS.md](SETTINGS.md)):
+
+- **Button Mapper:** draws the controller family and lets every button, both
+  triggers, the stick clicks, the right-stick directions, paddles and the
+  touchpad do any action. *Find a Button* jumps to whatever you press. While
+  the mapper is open the controller navigates with the default layout, and the
+  left stick always navigates everywhere, so a remap can never strand anyone.
+- **Controller Layout:** Automatic picks the drawing from SDL's controller type
+  and name (`controller_layouts.detect_family`); any family can be chosen
+  instead. Families: Xbox, PlayStation, Nintendo Switch, GameCube, N64, SNES,
+  NES, Genesis/Mega Drive, Dreamcast, Atari joystick, Steam Deck/Controller and
+  Generic.
+- **Keyboard Mapper:** give any key any action. Esc is always Back and 0–9
+  always tune channels. Media keys are listed too.
+- **Dedicated Controller Mode:** selecting a text box (Select on a focused box,
+  or a click) opens the on-screen keyboard. It types into that box without
+  taking focus, so a real keyboard keeps working. A types, X deletes, Y adds a
+  space, LB/RB move the cursor, and Back or Done closes it.
+
+Bindings are saved in `settings.json` as changes from the defaults
+(`controller_bindings`, `key_bindings`), so a portable setup keeps them.
+
+Backspace is not Back: it only edits text, so typing can never leave a screen.
 
 ## Behavioral rules
 
@@ -162,9 +196,7 @@ This slice does not yet claim:
 - Windows real-machine validation with Xbox and Steam-emulated controllers,
 - native Linux/SteamOS gamepad discovery,
 - multiple simultaneous couch controllers,
-- user-editable bindings or controller glyph switching,
 - vibration/rumble,
-- an on-screen text keyboard,
 - the future local phone/web remote transport,
 - an external IPC/control-intent protocol.
 

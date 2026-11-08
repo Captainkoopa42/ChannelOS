@@ -124,3 +124,144 @@ Settings remain separate from channel/ad policy. In 0.0.6, leaving playback for
 Settings cancels pending numeric tuning. An unavailable lineup can still reach
 Library, Broadcaster and Settings. Physical speaker/headphone and controller
 checks are recorded separately in [Windows acceptance](releases/WINDOWS_0.0.6_ACCEPTANCE.md).
+
+
+## Tabs
+
+Settings has five tabs, chosen in the sidebar or with Page Up / Page Down,
+the controller shoulder buttons or triggers (they wrap around):
+
+- **General**: display mode, performance profile, reduced motion, controller
+  input, skip distances, artwork generation and cache, diagnostic logs, reset.
+- **Video & Audio**: audio output, volume, mute, and every picture setting.
+- **Extras**: theme, Theme Builder, startup video and loading style, and
+  Portable Setup & Backup.
+- **Controller**: controller input, layout, Button Mapper, Keyboard Mapper and
+  Dedicated Controller Mode.
+- **Profiles**: switch profile, the PIN, and the Kids, Daycare and Lobby editors.
+
+Rows are keyed by name in `SettingsScreen.qml`, which also owns keyboard and
+controller navigation for this screen.
+
+## Video
+
+Picture settings apply to Live TV, On Demand and the Home preview, and save with
+the other preferences.
+
+| Setting | Choices | Notes |
+| --- | --- | --- |
+| Aspect Ratio | Auto, 16:9, 4:3, 21:9, 2.35:1, 1.85:1, 16:10, 5:4, 1:1 | Auto uses each video's own shape; force one for mislabeled recordings |
+| Picture Fit | Fit, Fill, Stretch | Fit letterboxes, Fill crops edges to the screen's shape, Stretch distorts to fill |
+| Overscan Trim | Off, 2, 4, 6, 8 % | Trims every edge, for VHS and broadcast captures |
+| Deinterlace | Auto, Off, Yadif, Yadif 2x, Bob, Blend, Linear | From the next program |
+| Hardware Decoding | Auto (GPU), Off (CPU) | From the next program; turn off for driver artifacts |
+| Brightness / Contrast / Color Saturation | 50-150 % | Stack with channel fades |
+
+Fill and Stretch follow the video window's size. Crops wait until the decoder
+reports the source size, then apply without restarting the program. Unknown or
+hand-edited values fall back to the defaults.
+
+## Theme and Theme Builder
+
+`Theme` switches the whole interface look: ChannelOS, ChromeSpace, and any
+theme you build.
+
+**Theme Builder** (Settings → Theme Builder) creates your own themes:
+
+- **Colors.** Twelve roles: background, panels, buttons and cards, borders,
+  text, secondary text, accent, highlight and focus, selection, live and
+  alerts, success, and warning. Each has a color picker (hue, color and light
+  sliders plus a swatch board) or a hex field. Every screen derives from these
+  roles, so a light or dark set of roles both work. Text on accent fills and on
+  selections automatically switches to whichever color reads best.
+- **Wallpaper.** Choose any PNG, JPEG, WebP, BMP or GIF. It is copied into the
+  setup's `themes/images` folder, so it travels with a portable drive. Fit it
+  as fill, fit, tile or center, and set image opacity. Panel opacity (40–100 %)
+  lets the wallpaper show through the panels, MySpace-style.
+- **Live preview.** The whole app shows the draft while you edit. Closing
+  without saving puts your current theme back.
+- **Save** keeps the theme; **Save & Use** also switches to it. Built-in themes
+  are never changed: editing one saves your own copy. Deleting the theme in use
+  returns to ChannelOS.
+
+On-screen displays drawn over video keep the dark broadcast style in every
+theme, so they stay readable on any picture.
+
+## Startup
+
+Settings → Extras controls what you see while ChannelOS starts.
+
+- **Boot Video**: *TV Static* (the first-boot default), *My Video*, or *Off*.
+  The video plays on every launch while the setup opens behind it, so it never
+  adds waiting time. Any key, click or tap skips it. If the setup is ready first,
+  the video still plays to its end (or until skipped); if the video ends first,
+  the loading style takes over. Videos are capped at two minutes on screen.
+- **My Boot Video**: choose any video VLC plays (MP4, MKV, WebM, MOV, ...; up to
+  500 MB). It is copied into the setup's `boot` folder, so it travels with a
+  portable drive. A missing or unplayable file falls back to TV Static.
+- **Boot Video Sound**: play it with or without sound.
+- **Loading Style**: *Classic* (wordmark and progress line), *Fill Bar* (a
+  full-width bar along the bottom with a percentage), or *Dancing TV* (the app
+  icon hops to a beat, its antennas spring, the power light blinks, and the
+  guide rows on its screen light up as startup progresses). Reduced Motion
+  shows the fill bar instead of the dancing TV. Dancing TV is the default.
+- **Boot Sound**: *Poppie* (default), *My Sound*, or *Off*. Poppie plays its
+  intro, then its lead-in and chorus, repeating seamlessly for as long as
+  start-up takes. Once the first channel is ready it fades out over one bar
+  from the next bar line. A custom boot video's own sound replaces it.
+- **My Boot Sound**: choose an MP3, OGG, WAV or FLAC (up to 50 MB) to play
+  instead. It is copied into the setup's `boot` folder and repeats whole while
+  loading.
+- **Boot Sound Volume**: 5–100% of your main volume, 25% by default. Nothing
+  plays while muted.
+- **Preview Startup** runs the chosen style through a full boot without
+  restarting.
+
+Progress is real: opening the setup, then the first channel, then the rest of
+the lineup. The loading screen stays up in the main window until the first
+channel is ready, then fades into Home.
+
+## Profiles
+
+The **Profiles** tab turns ChannelOS into a different set for a different
+room. Each profile chooses which channels exist, what the viewer can do, how
+loud it can go and, for Lobby, the channel it starts on.
+
+| Profile | Meant for | Defaults |
+| --- | --- | --- |
+| Home | You | Everything open. Never locked. |
+| Kids | Children at home | Only the channels you check. Guide and On Demand on. Volume limit 70%. |
+| Daycare | Groups of kids | Only the checked channels, no On Demand, no skipping: programs play as scheduled. Volume limit 60%. |
+| Lobby | Waiting rooms, shops, displays | Starts full screen on one channel. No Home, Guide, On Demand or channel changes. |
+
+- **PIN.** Set a 4 to 8 digit PIN first. Kids, Daycare and Lobby are locked:
+  leaving them, opening Settings or channel management, or closing ChannelOS
+  asks for it on an on-screen number pad that works with a remote, a
+  controller (arrows and Select), number keys or a mouse. The right PIN
+  returns to Home. The PIN is stored as a salted PBKDF2 hash in
+  `profiles.json` beside `settings.json`, so a portable setup keeps its
+  profiles.
+- **Edit.** Each locked profile has an editor: check its channels, switch the
+  Guide, On Demand, channel changing and skipping on or off, pick a volume
+  limit and (Lobby) the channel it starts on. Settings and channel management
+  always stay behind the PIN.
+- **Switch.** On *Switch Profile*, Left/Right chooses and Select switches. The
+  active profile is remembered across restarts, so a Lobby screen boots
+  straight back into its channel.
+- **On Demand** in Kids shows the whole library; turn it off for a profile
+  that should only see its channels.
+- The PIN locks ChannelOS itself. For a dedicated kiosk PC, pair Lobby with
+  Windows' assigned access so the computer also opens only ChannelOS.
+
+## Controller
+
+| Row | What it does |
+| --- | --- |
+| Controller Input | Turn controller reading on or off. Keyboard and mouse always work. |
+| Controller Layout | Which controller is drawn. Automatic matches the one plugged in. |
+| Button Mapper | A drawing of your controller with every button; pick what each one does. |
+| Keyboard Mapper | Every action with its keys; select one and press a key to add it. |
+| Dedicated Controller Mode | Text boxes open an on-screen keyboard for couch typing. |
+
+See [CONTROL_INPUT.md](CONTROL_INPUT.md) for supported controllers and the
+safety rules (left stick always navigates, Esc is always Back).

@@ -8,25 +8,25 @@ TextArea {
     rightPadding: 12
     topPadding: 10
     bottomPadding: 10
-    color: enabled ? "#f4f7fb" : "#607489"
-    placeholderTextColor: "#7f93a8"
-    selectionColor: "#1a91ff"
-    selectedTextColor: "#ffffff"
+    color: enabled ? Theme.c("#f4f7fb") : Theme.c("#607489")
+    placeholderTextColor: Theme.c("#7f93a8")
+    selectionColor: Theme.c("#1a91ff")
+    selectedTextColor: Theme.c("#ffffff")
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
 
     background: Rectangle {
         radius: 6
         color: !channelArea.enabled
-               ? "#091522"
+               ? Theme.c("#091522")
                : channelArea.activeFocus
-               ? "#12396a"
+               ? Theme.c("#12396a")
                : channelArea.hovered
-               ? "#142634" : "#111f2c"
+               ? Theme.c("#142634") : Theme.c("#111f2c")
         border.color: !channelArea.enabled
-                      ? "#14283b"
+                      ? Theme.c("#14283b")
                       : channelArea.activeFocus
-                      ? "#42adff" : "#294158"
+                      ? Theme.c("#42adff") : Theme.c("#294158")
         border.width: channelArea.activeFocus ? 2 : 1
 
         Behavior on color {

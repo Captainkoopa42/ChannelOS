@@ -48,6 +48,12 @@ class FakeReloadActions:
     def set_audio_output_device(self, device_id: str | None) -> None:
         return None
 
+    def set_video_settings(self, settings) -> None:
+        self.video_settings = settings
+
+    def set_surface_size(self, width: int, height: int) -> None:
+        self.surface_size = (width, height)
+
     def attach_video_surface(self, surface: NativeVideoSurface) -> None:
         return None
 

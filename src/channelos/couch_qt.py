@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
@@ -10,8 +11,8 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Property, QEvent, QTimer, QUrl, Signal, Slot, Qt, SIGNAL
-from PySide6.QtGui import QDesktopServices, QGuiApplication, QWindow
+from PySide6.QtCore import Q_ARG, QMetaObject, QObject, Property, QCoreApplication, QEvent, QTimer, QUrl, Signal, Slot, Qt, SIGNAL
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QKeyEvent, QWindow
 from PySide6.QtQml import QQmlApplicationEngine, QQmlComponent
 from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
@@ -19,6 +20,10 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QProgressDialog
 from .artwork import MediaArtworkCache
 from .control import ControlCommand, ControlIntent
 from .controller_qt import QtControllerInput
+from .controller_layouts import (
+    ACTION_IDS, ACTION_LABELS, ACTIONS, DEFAULT_BINDINGS, DEFAULT_KEYS, FAMILIES, FIXED_KEYS, KEY_ACTION_IDS,
+    LAYOUT_CHOICES, clean_bindings, clean_key_bindings, effective_bindings, family_by_id, key_label,
+)
 from .couch_actions import CouchActions
 from .couch_model import GUIDE_REACH, _floor_to_half_hour, build_couch_snapshot, clamp_guide_start
 from .diagnostics import LOG_DIRECTORY_ENV
@@ -41,17 +46,64 @@ from .runtime import (
     utc_now,
 )
 from .settings import (
+    BOOT_SOUND_CHOICES,
     ARTWORK_CACHE_LIMIT_CHOICES_MB,
+    BOOT_VIDEO_CHOICES,
+    LOADING_STYLE_CHOICES,
     PERFORMANCE_PROFILES,
     SKIP_BACK_CHOICES,
     SKIP_FORWARD_CHOICES,
+    THEME_CHOICES,
+    VIDEO_SETTING_CHOICES,
     CouchSettings,
     SettingsStore,
 )
 from .television import TelevisionSession
+from .profiles import PROFILE_IDS, PROFILE_NAMES, VOLUME_LIMITS, ProfileStore, valid_pin
+from .themes import (
+    CUSTOM_PREFIX,
+    PRESETS,
+    ROLE_HINTS,
+    ROLE_LABELS,
+    ROLE_NAMES,
+    CustomTheme,
+    ThemeStore,
+    derive_palette,
+)
 from .window_startup import NativeWindowSnapshot, NativeWindowStartupGate
 
 logger = logging.getLogger(__name__)
+
+# Settings-screen name -> (CouchSettings field, readable label).
+VIDEO_SETTING_NAMES = {
+    "videoAspectRatio": ("video_aspect_ratio", "Aspect ratio"),
+    "videoFit": ("video_fit", "Picture fit"),
+    "videoOverscan": ("video_overscan_percent", "Overscan trim"),
+    "videoDeinterlace": ("video_deinterlace", "Deinterlace"),
+    "videoHardwareDecoding": ("video_hardware_decoding", "Hardware decoding"),
+    "videoBrightness": ("video_brightness", "Brightness"),
+    "videoContrast": ("video_contrast", "Contrast"),
+    "videoSaturation": ("video_saturation", "Saturation"),
+}
+VIDEO_VALUE_LABELS = {
+    "auto": "Auto", "fit": "Fit (letterbox)", "fill": "Fill (crop edges)", "stretch": "Stretch",
+    "off": "Off", "yadif": "Yadif", "yadif2x": "Yadif 2x", "bob": "Bob", "blend": "Blend", "linear": "Linear",
+}
+THEME_LABELS = {"channelos": "ChannelOS", "chromespace": "ChromeSpace"}
+BOOT_VIDEO_LABELS = {"static": "TV Static", "custom": "My Video", "off": "Off"}
+BOOT_SOUND_LABELS = {"poppie": "Poppie", "custom": "My Sound", "off": "Off"}
+LOADING_STYLE_LABELS = {"classic": "Classic", "bar": "Fill Bar", "tv": "Dancing TV"}
+BOOT_VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".wmv", ".mpg", ".mpeg", ".gif"}
+
+
+def video_value_label(field: str, value: object) -> str:
+    if field == "video_overscan_percent":
+        return "Off" if not value else f"{value}%"
+    if field in {"video_brightness", "video_contrast", "video_saturation"}:
+        return f"{value}%"
+    if field == "video_hardware_decoding":
+        return "Auto (GPU)" if value == "auto" else "Off (CPU)"
+    return VIDEO_VALUE_LABELS.get(str(value), str(value))
 
 
 def _resolved_audio_output_rows(
@@ -100,6 +152,10 @@ class CouchController(QObject):
     libraryArtworkResolved = Signal(str, str, bool)
     onDemandChanged = Signal()
     settingsChanged = Signal()
+    themeChanged = Signal()
+    themesChanged = Signal()
+    profileChanged = Signal()
+    controllerButtonPressed = Signal(str)
 
     def __init__(
         self,
@@ -162,6 +218,16 @@ class CouchController(QObject):
                 host_data_directory() / 'portable-devices' / (self._library.portable.setup_id + '.json'),
             )
         self._settings = self._settings_store.load()
+        self._theme_store = ThemeStore(self._settings_store.path.parent / "themes")
+        self._profile_store = ProfileStore(self._settings_store.path.parent / "profiles.json")
+        self._profiles = self._profile_store.load()
+        if self._profile_channel_filter() is not None:
+            self._actions.set_channel_filter(self._profile_channel_filter())
+            self._service = self._actions.service
+        self._theme_preview: dict[str, object] | None = None
+        self._theme_palette_cache: dict[str, dict[str, str]] = {}
+        if self._settings.theme.startswith("custom-") and self._theme_store.get(self._settings.theme) is None:
+            self._settings = replace(self._settings, theme="channelos")
         selected_audio_device = self._settings.audio_output_device_id
         self._audio_output_devices: list[dict[str, object]] = [
             {
@@ -180,6 +246,8 @@ class CouchController(QObject):
             )
         self._actions.set_audio_output_device(selected_audio_device or None)
         self._on_demand.set_audio_output_device(selected_audio_device or None)
+        self._actions.set_video_settings(self._settings.video)
+        self._on_demand.set_video_settings(self._settings.video)
         cache_stats = None if getattr(self, '_defer_initial_views', False) else self._artwork_cache.stats()
         self._artwork_cache_bytes = 0 if cache_stats is None else cache_stats.size_bytes
         self._artwork_cache_files = 0 if cache_stats is None else cache_stats.file_count
@@ -252,6 +320,28 @@ class CouchController(QObject):
             "ffmpegThreads": self._settings.ffmpeg_threads,
             "artworkCacheBytes": self._artwork_cache_bytes,
             "artworkCacheFiles": self._artwork_cache_files,
+            **{
+                name: video_value_label(field, getattr(self._settings, field))
+                for name, (field, _label) in VIDEO_SETTING_NAMES.items()
+            },
+            "theme": self._settings.theme,
+            "themeName": self._theme_name(self._settings.theme),
+            "bootVideo": self._settings.boot_video,
+            "bootVideoLabel": BOOT_VIDEO_LABELS[self._settings.boot_video],
+            "bootVideoFile": self._settings.boot_video_file,
+            "bootVideoSound": self._settings.boot_video_sound,
+            "loadingStyle": self._settings.loading_style,
+            "loadingStyleLabel": LOADING_STYLE_LABELS[self._settings.loading_style],
+            "bootSound": self._settings.boot_sound,
+            "bootSoundLabel": BOOT_SOUND_LABELS[self._settings.boot_sound],
+            "bootSoundFile": self._settings.boot_sound_file,
+            "bootSoundVolume": self._settings.boot_sound_volume,
+            "controllerLayout": self._settings.controller_layout,
+            "controllerLayoutLabel": "Automatic" if self._settings.controller_layout == "auto"
+                                     else family_by_id(self._settings.controller_layout)["name"],
+            "controllerRemapped": len(self._settings.controller_bindings),
+            "keysRemapped": len(self._settings.key_bindings),
+            "dedicatedController": self._settings.dedicated_controller,
         }
 
     def _audio_output_device_name(self) -> str:
@@ -292,6 +382,11 @@ class CouchController(QObject):
 
         try:
             discovered = self._actions.list_audio_output_devices()
+            if not discovered:
+                # Nothing could be listed (no audio output yet): keep the saved
+                # choice instead of resetting it to System Default.
+                self.settingsChanged.emit()
+                return {"ok": True, "message": "", "settings": self.settings}
             devices, effective_device_id = _resolved_audio_output_rows(
                 discovered,
                 self._settings.audio_output_device_id,
@@ -1151,6 +1246,11 @@ class CouchController(QObject):
         self._muted = settings.muted
         if (previous.generate_video_thumbnails, previous.thumbnail_width, previous.background_artwork_during_playback) != (settings.generate_video_thumbnails, settings.thumbnail_width, settings.background_artwork_during_playback):
             self._artwork_unavailable.clear()
+        if (previous.controller_bindings, previous.key_bindings) != (settings.controller_bindings, settings.key_bindings):
+            self._apply_input_bindings()
+        if previous.video != settings.video:
+            self._actions.set_video_settings(settings.video)
+            self._on_demand.set_video_settings(settings.video)
         if previous.artwork_cache_limit_mb != settings.artwork_cache_limit_mb:
             # Cache maintenance belongs to the existing serial artwork worker.
             self._artwork_queue.put(('', Path(), settings.artwork_cache_limit_mb))
@@ -1169,9 +1269,10 @@ class CouchController(QObject):
     @Slot(int, result="QVariantMap")
     def changeVolume(self, delta: int) -> dict[str, object]:
         try:
+            limit = self._profiles.current.volume_limit
             volume = max(
                 0,
-                min(100, self._volume + int(delta)),
+                min(limit, self._volume + int(delta)),
             )
             self._save_settings(
                 replace(
@@ -1221,6 +1322,59 @@ class CouchController(QObject):
             return self.toggleMute()
 
         try:
+            if name in VIDEO_SETTING_NAMES:
+                field, label = VIDEO_SETTING_NAMES[name]
+                choices, _default = VIDEO_SETTING_CHOICES[field]
+                value = self._cycle_choice(getattr(self._settings, field), choices, step)
+                settings = replace(self._settings, **{field: value})
+                message = f"{label}: {video_value_label(field, value)}"
+                if field in {"video_deinterlace", "video_hardware_decoding"}:
+                    message += " (from the next program)"
+                self._save_settings(settings)
+                return {"ok": True, "message": message, "settings": self.settings}
+            if name == "bootVideo":
+                choices = tuple(c for c in BOOT_VIDEO_CHOICES if c != "custom" or self._boot_video_path())
+                current = self._settings.boot_video if self._settings.boot_video in choices else "static"
+                value = self._cycle_choice(current, choices, step)
+                self._save_settings(replace(self._settings, boot_video=value))
+                hint = "" if self._boot_video_path() else " (choose a video to add My Video)"
+                return {"ok": True, "message": f"Boot video: {BOOT_VIDEO_LABELS[value]}{hint}", "settings": self.settings}
+            if name == "bootSound":
+                choices = tuple(c for c in BOOT_SOUND_CHOICES if c != "custom" or self._boot_sound_path())
+                current = self._settings.boot_sound if self._settings.boot_sound in choices else "poppie"
+                value = self._cycle_choice(current, choices, step)
+                self._save_settings(replace(self._settings, boot_sound=value))
+                hint = "" if self._boot_sound_path() else " (choose a sound to add My Sound)"
+                return {"ok": True, "message": f"Boot sound: {BOOT_SOUND_LABELS[value]}{hint}", "settings": self.settings}
+            if name == "bootSoundVolume":
+                value = max(5, min(100, self._settings.boot_sound_volume + 5 * step))
+                self._save_settings(replace(self._settings, boot_sound_volume=value))
+                return {"ok": True, "message": f"Boot sound volume: {value}%", "settings": self.settings}
+            if name == "bootVideoSound":
+                value = not self._settings.boot_video_sound
+                self._save_settings(replace(self._settings, boot_video_sound=value))
+                return {"ok": True, "message": f"Boot video sound: {'On' if value else 'Off'}", "settings": self.settings}
+            if name == "controllerLayout":
+                value = self._cycle_choice(self._settings.controller_layout, LAYOUT_CHOICES, step)
+                self._save_settings(replace(self._settings, controller_layout=value))
+                label = "Automatic (matches the connected controller)" if value == "auto" else family_by_id(value)["name"]
+                return {"ok": True, "message": f"Controller layout: {label}", "settings": self.settings}
+            if name == "dedicatedController":
+                value = not self._settings.dedicated_controller
+                self._save_settings(replace(self._settings, dedicated_controller=value))
+                hint = ": text boxes open the on-screen keyboard" if value else ""
+                return {"ok": True, "message": f"Dedicated controller mode {'on' if value else 'off'}{hint}", "settings": self.settings}
+            if name == "loadingStyle":
+                value = self._cycle_choice(self._settings.loading_style, LOADING_STYLE_CHOICES, step)
+                self._save_settings(replace(self._settings, loading_style=value))
+                return {"ok": True, "message": f"Loading style: {LOADING_STYLE_LABELS[value]}", "settings": self.settings}
+            if name == "theme":
+                choices = tuple(THEME_CHOICES) + tuple(t.theme_id for t in self._theme_store.load())
+                current = self._settings.theme if self._settings.theme in choices else "channelos"
+                value = self._cycle_choice(current, choices, step)
+                self._save_settings(replace(self._settings, theme=value))
+                self.themeChanged.emit()
+                return {"ok": True, "message": f"Theme: {self._theme_name(value)}", "settings": self.settings}
             if name == "performanceProfile":
                 value = self._cycle_choice(
                     self._settings.performance_profile,
@@ -1230,6 +1384,12 @@ class CouchController(QObject):
                 settings = self._settings.with_performance_profile(value)
                 message = f"Performance profile: {value.title()}"
             elif name == "audioOutput":
+                if len(self._audio_output_devices) <= 1:
+                    self.refreshAudioOutputDevices()
+                if len(self._audio_output_devices) <= 1:
+                    return {"ok": False, "settings": self.settings,
+                            "message": "Only System Default was found. Plug in or turn on the speakers or headphones, "
+                                       "then try again (Windows can also pick its default under Sound settings)."}
                 current = self._settings.audio_output_device_id
                 choices = tuple(
                     str(device["deviceId"])
@@ -1382,10 +1542,487 @@ class CouchController(QObject):
         self._start_artwork_worker()
         return {'ok': True, 'pending': True, 'message': 'Clearing generated thumbnails…'}
 
+    # --- Themes -------------------------------------------------------------
+
+    def _theme_name(self, theme_id: str) -> str:
+        if theme_id in THEME_LABELS:
+            return THEME_LABELS[theme_id]
+        theme = self._theme_store.get(theme_id)
+        return theme.name if theme else "ChannelOS"
+
+    def _image_url(self, name: str) -> str:
+        path = self._theme_store.image_path(name)
+        return QUrl.fromLocalFile(str(path)).toString() if path else ""
+
+    def _custom_spec(self, theme: CustomTheme) -> dict[str, object]:
+        key = json.dumps(theme.to_mapping(), sort_keys=True)
+        palette = self._theme_palette_cache.get(key)
+        if palette is None:
+            palette = derive_palette(theme.roles, panel_opacity=theme.panel_opacity if theme.wallpaper else 100)
+            self._theme_palette_cache = {key: palette}  # active + one preview is enough
+        return {"name": theme.theme_id, "palette": palette, "wallpaper": self._image_url(theme.wallpaper),
+                "wallpaperFit": theme.wallpaper_fit, "wallpaperOpacity": theme.wallpaper_opacity}
+
+    @Property("QVariantMap", notify=themeChanged)
+    def themeSpec(self) -> dict[str, object]:
+        """What Theme.qml shows now: a saved theme, or a Theme Builder preview."""
+        if self._theme_preview is not None:
+            return self._theme_preview
+        theme_id = self._settings.theme
+        if theme_id.startswith(CUSTOM_PREFIX):
+            theme = self._theme_store.get(theme_id)
+            if theme is not None:
+                return self._custom_spec(theme)
+            theme_id = "channelos"
+        return {"name": theme_id, "palette": {}, "wallpaper": "", "wallpaperFit": "fill", "wallpaperOpacity": 100}
+
+    @Property("QVariantList", notify=themesChanged)
+    def themes(self) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = [
+            {"id": theme_id, "name": THEME_LABELS[theme_id], "builtin": True, "roles": dict(PRESETS[theme_id]),
+             "wallpaper": "", "wallpaperUrl": "", "wallpaperFit": "fill", "wallpaperOpacity": 100, "panelOpacity": 100}
+            for theme_id in THEME_CHOICES
+        ]
+        for theme in self._theme_store.load():
+            row = theme.to_mapping()
+            row.update(builtin=False, wallpaperUrl=self._image_url(theme.wallpaper))
+            rows.append(row)
+        return rows
+
+    @Property("QVariantList", constant=True)
+    def themeRoles(self) -> list[dict[str, str]]:
+        return [{"key": name, "label": ROLE_LABELS[name], "hint": ROLE_HINTS[name]} for name in ROLE_NAMES]
+
+    @Slot(str, result="QVariantMap")
+    def previewTheme(self, draft_json: str) -> dict[str, object]:
+        """Show an unsaved Theme Builder draft across the whole app."""
+        try:
+            draft = CustomTheme.from_mapping(json.loads(draft_json))
+        except (TypeError, ValueError) as exc:
+            return {"ok": False, "message": str(exc)}
+        self._theme_preview = self._custom_spec(draft)
+        self.themeChanged.emit()
+        return {"ok": True}
+
+    @Slot()
+    def endThemePreview(self) -> None:
+        if self._theme_preview is not None:
+            self._theme_preview = None
+            self.themeChanged.emit()
+
+    @Slot(str, bool, result="QVariantMap")
+    def saveTheme(self, draft_json: str, use: bool) -> dict[str, object]:
+        try:
+            theme = self._theme_store.save(json.loads(draft_json))
+            if use:
+                self._save_settings(replace(self._settings, theme=theme.theme_id))
+        except (OSError, TypeError, ValueError) as exc:
+            return self._error(exc)
+        self._theme_preview = None
+        self.themesChanged.emit()
+        self.themeChanged.emit()
+        message = f"Saved theme {theme.name}" + (" and switched to it" if use else "")
+        return {"ok": True, "id": theme.theme_id, "message": message, "settings": self.settings}
+
+    @Slot(str, result="QVariantMap")
+    def useTheme(self, theme_id: str) -> dict[str, object]:
+        if theme_id not in THEME_CHOICES and self._theme_store.get(theme_id) is None:
+            return {"ok": False, "message": "That theme no longer exists"}
+        try:
+            self._save_settings(replace(self._settings, theme=theme_id))
+        except OSError as exc:
+            return self._error(exc)
+        self._theme_preview = None
+        self.themeChanged.emit()
+        return {"ok": True, "message": f"Theme: {self._theme_name(theme_id)}", "settings": self.settings}
+
+    @Slot(str, result="QVariantMap")
+    def deleteTheme(self, theme_id: str) -> dict[str, object]:
+        if not theme_id.startswith(CUSTOM_PREFIX):
+            return {"ok": False, "message": "Built-in themes cannot be deleted"}
+        name = self._theme_name(theme_id)
+        try:
+            self._theme_store.delete(theme_id)
+            if self._settings.theme == theme_id:
+                self._save_settings(replace(self._settings, theme="channelos"))
+        except OSError as exc:
+            return self._error(exc)
+        self.themesChanged.emit()
+        self.themeChanged.emit()
+        return {"ok": True, "message": f"Deleted theme {name}", "settings": self.settings}
+
+    @Slot(result="QVariantMap")
+    def chooseThemeImage(self) -> dict[str, object]:
+        """Pick a wallpaper; it is copied into the setup's themes folder."""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            None, "Choose a theme image", str(Path.home()),
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif)")
+        if not path:
+            return {"ok": False, "cancelled": True, "message": ""}
+        return self.importThemeImage(path)
+
+    @Slot(str, result="QVariantMap")
+    def importThemeImage(self, path: str) -> dict[str, object]:
+        try:
+            name = self._theme_store.import_image(path)
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+        return {"ok": True, "file": name, "url": self._image_url(name), "message": "Image added"}
+
+    # --- Profiles -------------------------------------------------------------
+
+    def _profile_channel_filter(self):
+        channels = self._profiles.current.channels
+        return None if channels is None else frozenset(channels)
+
+    def profile_allows_screen(self, screen: str) -> bool:
+        return self._profiles.current.allows_screen(screen)
+
+    @Property("QVariantMap", notify=profileChanged)
+    def profile(self) -> dict[str, object]:
+        current = self._profiles.current
+        return dict(current.to_mapping(), id=current.profile_id, name=current.name, hasPin=self._profiles.has_pin)
+
+    @Property("QVariantList", notify=profileChanged)
+    def profiles(self) -> list[dict[str, object]]:
+        return [dict(self._profiles.profiles[pid].to_mapping(), id=pid, name=PROFILE_NAMES[pid],
+                     active=pid == self._profiles.active) for pid in PROFILE_IDS]
+
+    @Property("QVariantList", notify=profileChanged)
+    def profileChannelChoices(self) -> list[dict[str, object]]:
+        """Every channel in the setup, for choosing what a profile shows."""
+        return [{"number": number, "name": record.definition.name}
+                for number, record in sorted((r.channel_number, r) for r in self._broadcaster_records())]
+
+    def _broadcaster_records(self):
+        broadcaster = getattr(self, "_broadcaster", None)
+        if broadcaster is not None:
+            return tuple(broadcaster.records)
+        return tuple(type("Record", (), {"channel_number": r.channel_number, "definition": r.channel.definition})
+                     for r in self._actions.full_channels.values())
+
+    def _apply_profile(self) -> None:
+        """Install the active profile: lineup, volume limit, then views."""
+        self._actions.set_channel_filter(self._profile_channel_filter())
+        self._service = self._actions.service
+        limit = self._profiles.current.volume_limit
+        if self._volume > limit:
+            self._save_settings(replace(self._settings, volume_percent=limit))
+            try:
+                self._apply_audio_state()
+            except (OSError, PlaybackError, ValueError):
+                logger.exception("Volume limit could not be applied")
+        self.refresh()
+        self.profileChanged.emit()
+
+    @Slot(str, result="QVariantMap")
+    def setProfilePin(self, pin: str) -> dict[str, object]:
+        if self._profiles.current.locked:
+            return {"ok": False, "message": "Leave this profile to change the PIN"}
+        try:
+            self._profiles = self._profile_store.save(ProfileStore.with_pin(self._profiles, str(pin)))
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+        self.profileChanged.emit()
+        return {"ok": True, "message": "PIN saved. Locked profiles now need it to leave."}
+
+    @Slot(str, result="QVariantMap")
+    def activateProfile(self, profile_id: str) -> dict[str, object]:
+        if profile_id not in PROFILE_IDS:
+            return {"ok": False, "message": "Unknown profile"}
+        if self._profiles.current.locked and profile_id != self._profiles.active:
+            return {"ok": False, "needPin": True, "message": "Enter the PIN to leave this profile"}
+        target = self._profiles.profiles[profile_id]
+        if target.locked and not self._profiles.has_pin:
+            return {"ok": False, "message": "Set a PIN first (Settings → Profiles), so you can leave again"}
+        if target.locked and target.channels == ():
+            return {"ok": False, "message": f"Choose channels for {target.name} first"}
+        from dataclasses import replace as dc_replace
+        try:
+            self._profiles = self._profile_store.save(dc_replace(self._profiles, active=profile_id))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_profile()
+        return {"ok": True, "message": f"{target.name} profile is on", "profile": self.profile}
+
+    @Slot(str, result="QVariantMap")
+    def unlockProfile(self, pin: str) -> dict[str, object]:
+        """The PIN pad: the right PIN leaves a locked profile for Home."""
+        if not self._profiles.current.locked:
+            return {"ok": True, "message": ""}
+        if not self._profiles.check_pin(str(pin)):
+            return {"ok": False, "message": "Wrong PIN"}
+        from dataclasses import replace as dc_replace
+        name = self._profiles.current.name
+        try:
+            self._profiles = self._profile_store.save(dc_replace(self._profiles, active="home"))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_profile()
+        return {"ok": True, "message": f"Left {name}. Home profile is on."}
+
+    @Slot(str, str, result="QVariantMap")
+    def updateProfile(self, profile_id: str, changes_json: str) -> dict[str, object]:
+        if self._profiles.current.locked:
+            return {"ok": False, "message": "Leave this profile to edit profiles"}
+        try:
+            changes = json.loads(changes_json)
+            if not isinstance(changes, dict):
+                raise ValueError("Profile changes must be an object")
+            self._profiles = self._profile_store.save(ProfileStore.updated(self._profiles, profile_id, changes))
+        except (OSError, TypeError, ValueError) as exc:
+            return self._error(exc)
+        self.profileChanged.emit()
+        return {"ok": True, "message": f"{PROFILE_NAMES.get(profile_id, profile_id)} profile saved",
+                "profile": dict(self._profiles.profiles[profile_id].to_mapping(), id=profile_id)}
+
+    @Property("QVariantList", constant=True)
+    def profileVolumeLimits(self) -> list[int]:
+        return list(VOLUME_LIMITS)
+
+    # --- Controller and keyboard mapping -----------------------------------------
+
+    def attach_controller_input(self, controller_input) -> None:
+        self._controller_input = controller_input
+        self._apply_input_bindings()
+
+    def _apply_input_bindings(self) -> None:
+        controller_input = getattr(self, "_controller_input", None)
+        if controller_input is not None:
+            controller_input.set_bindings(effective_bindings(dict(self._settings.controller_bindings)))
+        CouchKeyFilter.set_key_overrides(dict(self._settings.key_bindings))
+
+    @Property("QVariantList", constant=True)
+    def controllerFamilies(self) -> list[dict[str, object]]:
+        return [dict(family) for family in FAMILIES]
+
+    @Property("QVariantList", constant=True)
+    def controllerActions(self) -> list[dict[str, str]]:
+        return [{"id": action, "label": label} for action, label in ACTIONS]
+
+    @Property("QVariantMap", notify=settingsChanged)
+    def controllerBindings(self) -> dict[str, str]:
+        merged = dict(DEFAULT_BINDINGS)
+        merged.update(dict(self._settings.controller_bindings))
+        return merged
+
+    @Slot(str, str, result="QVariantMap")
+    def setControllerBinding(self, control: str, action: str) -> dict[str, object]:
+        if control not in DEFAULT_BINDINGS or action not in ACTION_IDS:
+            return {"ok": False, "message": "Unknown button or action"}
+        bindings = dict(self._settings.controller_bindings)
+        bindings[control] = action
+        cleaned = tuple(sorted(clean_bindings(bindings).items()))
+        try:
+            self._save_settings(replace(self._settings, controller_bindings=cleaned))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_input_bindings()
+        return {"ok": True, "message": f"{ACTION_LABELS[action]}", "settings": self.settings}
+
+    @Slot(result="QVariantMap")
+    def resetControllerBindings(self) -> dict[str, object]:
+        try:
+            self._save_settings(replace(self._settings, controller_bindings=()))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_input_bindings()
+        return {"ok": True, "message": "Controller buttons are back to their defaults", "settings": self.settings}
+
+    @Slot(bool)
+    def setControllerCapture(self, active: bool) -> None:
+        """The button mapper listens for raw presses while it is open."""
+        controller_input = getattr(self, "_controller_input", None)
+        if controller_input is not None:
+            controller_input.set_capture(self.controllerButtonPressed.emit if active else None)
+
+    @Property("QVariantList", notify=settingsChanged)
+    def keyBindings(self) -> list[dict[str, object]]:
+        """One row per action with every key that triggers it."""
+        merged = dict(DEFAULT_KEYS)
+        merged.update(dict(self._settings.key_bindings))
+        rows = []
+        for action in KEY_ACTION_IDS:
+            if action == "NONE":
+                continue
+            keys = sorted(key for key, bound in merged.items() if bound == action)
+            rows.append({"action": action, "label": ACTION_LABELS[action],
+                         "keys": [{"key": key, "label": key_label(key), "fixed": key in FIXED_KEYS} for key in keys]})
+        return rows
+
+    @Slot(int, result=str)
+    def keyName(self, key: int) -> str:
+        try:
+            return Qt.Key(int(key)).name
+        except ValueError:
+            return ""
+
+    @Slot(str, str, result="QVariantMap")
+    def setKeyBinding(self, key_name: str, action: str) -> dict[str, object]:
+        """Give ``key_name`` to ``action`` (``NONE`` frees it)."""
+        if key_name in FIXED_KEYS:
+            return {"ok": False, "message": "Esc is always Back, so you can never get stuck"}
+        if key_name in {f"Key_{digit}" for digit in range(10)}:
+            return {"ok": False, "message": "Number keys always enter channel numbers"}
+        if not key_name.startswith("Key_") or action not in KEY_ACTION_IDS:
+            return {"ok": False, "message": "That key can't be mapped"}
+        bindings = dict(self._settings.key_bindings)
+        bindings[key_name] = action
+        if DEFAULT_KEYS.get(key_name, "NONE") == action:
+            bindings.pop(key_name)
+        cleaned = tuple(sorted(clean_key_bindings(bindings).items()))
+        try:
+            self._save_settings(replace(self._settings, key_bindings=cleaned))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_input_bindings()
+        label = key_label(key_name)
+        message = f"{label} does nothing now" if action == "NONE" else f"{label}: {ACTION_LABELS[action]}"
+        return {"ok": True, "message": message, "settings": self.settings}
+
+    @Slot(str, result="QVariantMap")
+    def clearKeysForAction(self, action: str) -> dict[str, object]:
+        merged = dict(DEFAULT_KEYS)
+        merged.update(dict(self._settings.key_bindings))
+        result: dict[str, object] = {"ok": True, "message": "No keys to clear"}
+        for key, bound in merged.items():
+            if bound == action and key not in FIXED_KEYS:
+                result = self.setKeyBinding(key, "NONE")
+        if result.get("ok"):
+            result["message"] = f"Cleared keys for {ACTION_LABELS.get(action, action)}"
+        return result
+
+    @Slot(result="QVariantMap")
+    def resetKeyBindings(self) -> dict[str, object]:
+        try:
+            self._save_settings(replace(self._settings, key_bindings=()))
+        except OSError as exc:
+            return self._error(exc)
+        self._apply_input_bindings()
+        return {"ok": True, "message": "Keyboard keys are back to their defaults", "settings": self.settings}
+
+    @Slot(bool)
+    def bootSoundPreview(self, playing: bool) -> None:
+        """Settings → Preview Startup plays the boot sound too."""
+        from .boot_sound import BootSound, boot_sound_plan
+        previous = getattr(self, "_boot_sound_preview", None)
+        if previous is not None:
+            previous.fade_out()
+            self._boot_sound_preview = None
+        plan = boot_sound_plan(replace(self._settings, muted=self._muted, volume_percent=self._volume),
+                               self._settings_store.path.parent) if playing else None
+        if plan is not None:
+            self._boot_sound_preview = BootSound.from_plan(plan, parent=self)
+            self._boot_sound_preview.start()
+
+    def _boot_sound_path(self) -> Path | None:
+        name = self._settings.boot_sound_file
+        path = self._boot_directory() / name if name else None
+        return path if path is not None and path.is_file() else None
+
+    @Slot(result="QVariantMap")
+    def chooseBootSound(self) -> dict[str, object]:
+        """Pick a boot sound; it is copied into the setup's boot folder."""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            None, "Choose a boot sound", str(Path.home()),
+            "Audio (*.mp3 *.ogg *.oga *.opus *.wav *.flac *.m4a *.aac *.wma)")
+        if not path:
+            return {"ok": False, "cancelled": True, "message": ""}
+        return self.importBootSound(path)
+
+    @Slot(str, result="QVariantMap")
+    def importBootSound(self, path: str) -> dict[str, object]:
+        import shutil
+        import uuid
+        from .boot_sound import BOOT_SOUND_SUFFIXES
+        source = Path(path)
+        try:
+            if source.suffix.lower() not in BOOT_SOUND_SUFFIXES:
+                raise ValueError("Choose an audio file such as MP3, OGG, WAV or FLAC")
+            if not source.is_file():
+                raise ValueError(f"Sound not found: {source}")
+            if source.stat().st_size > 50 * 1024 * 1024:
+                raise ValueError("That sound is over 50 MB. Choose a shorter boot sound.")
+            directory = self._boot_directory()
+            directory.mkdir(parents=True, exist_ok=True)
+            name = f"sound-{uuid.uuid4().hex[:10]}{source.suffix.lower()}"
+            shutil.copyfile(source, directory / name)
+            previous = self._boot_sound_path()
+            self._save_settings(replace(self._settings, boot_sound="custom", boot_sound_file=name))
+            if previous is not None and previous.name != name:
+                previous.unlink(missing_ok=True)
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+        return {"ok": True, "message": f"Boot sound set: {source.name}", "settings": self.settings}
+
+    # --- Boot video -----------------------------------------------------------
+
+    def _boot_directory(self) -> Path:
+        return self._settings_store.path.parent / "boot"
+
+    def _boot_video_path(self) -> Path | None:
+        name = self._settings.boot_video_file
+        path = self._boot_directory() / name if name else None
+        return path if path is not None and path.is_file() else None
+
+    @Slot(result="QVariantMap")
+    def chooseBootVideo(self) -> dict[str, object]:
+        """Pick a boot video; it is copied into the setup's boot folder."""
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getOpenFileName(
+            None, "Choose a boot video", str(Path.home()),
+            "Videos (*.mp4 *.mkv *.webm *.mov *.avi *.m4v *.wmv *.mpg *.mpeg *.gif)")
+        if not path:
+            return {"ok": False, "cancelled": True, "message": ""}
+        return self.importBootVideo(path)
+
+    @Slot(str, result="QVariantMap")
+    def importBootVideo(self, path: str) -> dict[str, object]:
+        import shutil
+        import uuid
+        source = Path(path)
+        try:
+            if source.suffix.lower() not in BOOT_VIDEO_SUFFIXES:
+                raise ValueError("Choose a video file such as MP4, MKV, WebM or MOV")
+            if not source.is_file():
+                raise ValueError(f"Video not found: {source}")
+            if source.stat().st_size > 500 * 1024 * 1024:
+                raise ValueError("That video is over 500 MB. Choose a shorter boot video.")
+            directory = self._boot_directory()
+            directory.mkdir(parents=True, exist_ok=True)
+            name = f"boot-{uuid.uuid4().hex[:10]}{source.suffix.lower()}"
+            shutil.copyfile(source, directory / name)
+            previous = self._boot_video_path()
+            self._save_settings(replace(self._settings, boot_video="custom", boot_video_file=name))
+            if previous is not None and previous.name != name:
+                previous.unlink(missing_ok=True)
+        except (OSError, ValueError) as exc:
+            return self._error(exc)
+        return {"ok": True, "message": f"Boot video set: {source.name}", "settings": self.settings}
+
+    @Slot(result="QVariantMap")
+    def bootPreview(self) -> dict[str, object]:
+        """What the Settings preview plays: the boot video URL, if any."""
+        path = self._boot_video_path() if self._settings.boot_video == "custom" else None
+        return {"video": self._settings.boot_video, "url": QUrl.fromLocalFile(str(path)).toString() if path else "",
+                "loadingStyle": self._settings.loading_style}
+
+    @Slot(int, int)
+    def setVideoSurfaceSize(self, width: int, height: int) -> None:
+        """The native video window resized: fill/stretch follow its shape."""
+        if int(width) <= 0 or int(height) <= 0:
+            return
+        self._actions.set_surface_size(int(width), int(height))
+        self._on_demand.set_surface_size(int(width), int(height))
+
     @Slot(result="QVariantMap")
     def resetSettings(self) -> dict[str, object]:
         try:
             self._save_settings(CouchSettings())
+            self._theme_preview = None
+            self.themeChanged.emit()
             self._actions.set_audio_output_device(None)
             self._on_demand.set_audio_output_device(None)
             self._apply_audio_state()
@@ -1434,6 +2071,10 @@ def connect_screen_changed(window, callback) -> None:
         changed.connect(callback)
 
 
+_FOCUS_NAVIGATION_INTENTS = frozenset({
+    ControlIntent.UP, ControlIntent.DOWN, ControlIntent.LEFT, ControlIntent.RIGHT, ControlIntent.SELECT})
+
+
 class CouchKeyFilter(QObject):
     """Translate couch/keyboard controls independently of QML focus ownership."""
 
@@ -1447,9 +2088,137 @@ class CouchKeyFilter(QObject):
         self._channel_digits = ""
         self._home_scan_dialog: QProgressDialog | None = None
         connect_screen_changed(window, self._channel_entry_screen_changed)
+        connect_screen_changed(window, self._guard_profile_screen)
+        self._allowed_screen = "home"
+        self._profile_checked = None
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.focusObjectChanged.connect(self._focus_object_changed)
+        profile_changed = getattr(controller, "profileChanged", None)
+        if profile_changed is not None:
+            profile_changed.connect(self._profile_changed)
+            # A Lobby setup boots straight to its channel once video can play.
+            QTimer.singleShot(800, lambda: self._enter_profile_start(attempts=40))
         scan_changed = getattr(controller, "libraryScanChanged", None)
         if scan_changed is not None:
             scan_changed.connect(self._update_home_scan_dialog)
+
+    # --- Profiles -------------------------------------------------------------
+
+    def _current_profile(self):
+        profiles = getattr(self._controller, "_profiles", None)
+        return profiles.current if profiles is not None else None
+
+    def _show_pin_pad(self, reason: str = "") -> None:
+        profile = self._current_profile()
+        name = profile.name if profile is not None else "this profile"
+        self._window.setProperty("pinPadTitle", f"Enter PIN to leave {name}")
+        self._window.setProperty("pinPadReason", reason)
+        self._window.setProperty("pinPadVisible", True)
+
+    def _profile_guard(self, command: ControlCommand) -> bool:
+        """Locked profiles: ignore what they forbid, or ask for the PIN.
+
+        Returns True when the command was consumed here.
+        """
+        if self._profile_checked is True:
+            return False  # BroadcasterKeyFilter checked this command already
+        if bool(self._window.property("keyboardVisible")):
+            QMetaObject.invokeMethod(self._window, "handleKeyboardIntent", Qt.ConnectionType.DirectConnection,
+                                     Q_ARG("QVariant", command.intent.value))
+            return True
+        if bool(self._window.property("pinPadVisible")):
+            digit = command.value if command.intent is ControlIntent.DIGIT else -1
+            QMetaObject.invokeMethod(self._window, "handlePinIntent", Qt.ConnectionType.DirectConnection,
+                                     Q_ARG("QVariant", command.intent.value), Q_ARG("QVariant", digit))
+            return True
+        profile = self._current_profile()
+        if profile is None or not profile.locked:
+            return False
+        intent = command.intent
+        screen = str(self._window.property("screen"))
+        channel_intents = {ControlIntent.CHANNEL_UP, ControlIntent.CHANNEL_DOWN, ControlIntent.PREVIOUS_CHANNEL,
+                           ControlIntent.DIGIT, ControlIntent.TUNE}
+        seek_intents = {ControlIntent.SKIP_BACK, ControlIntent.SKIP_FORWARD, ControlIntent.REWIND,
+                        ControlIntent.FAST_FORWARD}
+        if intent is ControlIntent.SETTINGS or intent is ControlIntent.CHANNELS:
+            self._show_pin_pad()
+            return True
+        if intent is ControlIntent.POWER:
+            self._show_pin_pad("Closing ChannelOS needs the PIN")
+            return True
+        if intent is ControlIntent.HOME and not profile.home:
+            self._show_pin_pad()
+            return True
+        if intent is ControlIntent.BACK and screen in {"live", "ondemand"} and not profile.home:
+            return True  # Lobby stays on its channel
+        if intent is ControlIntent.GUIDE and not profile.guide:
+            self._notify({"message": f"The Guide is off in {profile.name}"})
+            return True
+        if intent is ControlIntent.LIBRARY and not profile.ondemand:
+            self._notify({"message": f"On Demand is off in {profile.name}"})
+            return True
+        if intent in channel_intents and not profile.change_channels:
+            self._notify({"message": f"Changing channels is off in {profile.name}"})
+            return True
+        if intent in seek_intents and not profile.seek and screen in {"live", "ondemand"}:
+            self._notify({"message": f"Skipping is off in {profile.name}"})
+            return True
+        return False
+
+    def _guard_profile_screen(self) -> None:
+        """Whatever opened a screen (key, click, QML), a locked profile
+        sends it back and asks for the PIN."""
+        screen = str(self._window.property("screen"))
+        profile = self._current_profile()
+        if profile is None or profile.allows_screen(screen):
+            self._allowed_screen = screen
+            return
+        fallback = self._allowed_screen if profile.allows_screen(self._allowed_screen) else (
+            "home" if profile.home else "live")
+        QTimer.singleShot(0, lambda: self._window.setProperty("screen", fallback))
+        self._show_pin_pad()
+
+    @Slot(str)
+    def submitPin(self, pin: str) -> None:
+        result = self._controller.unlockProfile(pin)
+        if bool(result.get("ok")):
+            self._window.setProperty("pinPadVisible", False)
+            self._notify(result)
+        else:
+            QMetaObject.invokeMethod(self._window, "pinRejected", Qt.ConnectionType.DirectConnection,
+                                     Q_ARG("QVariant", str(result.get("message", "Wrong PIN"))))
+
+    def _profile_changed(self) -> None:
+        self._controller.refresh()
+        profile = self._current_profile()
+        if profile is None:
+            return
+        screen = str(self._window.property("screen"))
+        if not profile.allows_screen(screen):
+            self._window.setProperty("screen", "home" if profile.home else "live")
+        self._enter_profile_start(attempts=10)
+
+    def _enter_profile_start(self, attempts: int) -> None:
+        """Profiles without Home (Lobby) play their channel full screen."""
+        profile = self._current_profile()
+        if profile is None or profile.home:
+            return
+        if not getattr(self._controller, "_surface_ready", False):
+            if attempts > 0:
+                QTimer.singleShot(1000, lambda: self._enter_profile_start(attempts - 1))
+            return
+        numbers = sorted(getattr(self._controller._actions.runtime, "channels", {}) or {})
+        if not numbers:
+            return
+        target = profile.boot_channel if profile.boot_channel in numbers else numbers[0]
+        playback = self._controller.playback if isinstance(self._controller.playback, dict) else {}
+        if bool(playback.get("active")) and int(playback.get("channelNumber", -1)) == target:
+            self._window.setProperty("screen", "live")
+            return
+        self._window.setProperty("screen", "live")
+        QApplication.processEvents()
+        self._notify(self._controller.tuneChannel(target))
 
     def _show_live_hud(self) -> None:
         # Show the Live information layer after tuning or transport/channel
@@ -1504,9 +2273,25 @@ class CouchKeyFilter(QObject):
         self._show_audio_hud(result)
         return True
 
+    _key_overrides: dict[str, str] = {}
+
+    @classmethod
+    def set_key_overrides(cls, overrides: dict[str, str]) -> None:
+        """Keyboard mapper changes: Qt key name -> action (``NONE`` disables)."""
+        CouchKeyFilter._key_overrides = dict(overrides)
+
     @staticmethod
     def command_for_key(key: int) -> ControlCommand | None:
         """Translate one Qt keyboard/media key without applying UI behavior."""
+        overrides = CouchKeyFilter._key_overrides
+        if overrides:
+            try:
+                name = Qt.Key(int(key)).name
+            except ValueError:
+                name = ""
+            if name in overrides:
+                action = overrides[name]
+                return None if action == "NONE" else ControlCommand(ControlIntent(action))
 
         digits = {
             Qt.Key.Key_0: 0,
@@ -1537,7 +2322,6 @@ class CouchKeyFilter(QObject):
             Qt.Key.Key_G: ControlIntent.GUIDE,
             Qt.Key.Key_H: ControlIntent.HOME,
             Qt.Key.Key_Escape: ControlIntent.BACK,
-            Qt.Key.Key_Backspace: ControlIntent.BACK,
             Qt.Key.Key_Back: ControlIntent.BACK,
             Qt.Key.Key_Up: ControlIntent.UP,
             Qt.Key.Key_Down: ControlIntent.DOWN,
@@ -1786,6 +2570,52 @@ class CouchKeyFilter(QObject):
         start = horizon_start + minutes * 60_000
         self._shift_guide_to(start, start + offset + 1)
 
+    def _guide_at_now(self) -> bool:
+        if not self._guide_live() or self._guide_focus_ms():
+            return False
+        row_index = int(self._window.property("selectedRow"))
+        programs = self._selected_programs()
+        index = int(self._window.property("selectedProgram"))
+        return (0 <= index < len(programs) and isinstance(programs[index], dict)
+                and bool(programs[index].get("isCurrent"))) or (not programs and row_index >= 0)
+
+    @Slot()
+    def activateGuideLive(self) -> None:
+        """Guide LIVE: first press returns to now; pressed at now, watch live.
+
+        Watching live tunes the selected channel at its live point. If that
+        channel is already playing behind (or ahead of) live, it catches up.
+        """
+        if str(self._window.property("screen")) != "guide":
+            return
+        if not self._guide_at_now():
+            self._guide_to_now()
+            self._notify({"message": "Guide is at now - press LIVE again to watch live"})
+            return
+        rows = self._rows()
+        row_index = int(self._window.property("selectedRow"))
+        if not 0 <= row_index < len(rows):
+            return
+        row = rows[row_index]
+        if bool(row.get("isUnassigned")):
+            self._notify({"message": "Channel 001 is unassigned - create Channel 001 in Broadcaster to replace the static slot"})
+            return
+        channel = int(row.get("channelNumber", 0))
+        playback = self._controller.playback if isinstance(self._controller.playback, dict) else {}
+        same_channel = int(playback.get("channelNumber", -1)) == channel and not bool(playback.get("isUnassigned"))
+        # Show the native video surface before libVLC creates its output.
+        self._window.setProperty("screen", "live")
+        QApplication.processEvents()
+        if same_channel:
+            result = self._controller.goLive() if not bool(playback.get("isLive")) else {"ok": True, "message": "Watching live"}
+        else:
+            result = self._controller.tuneChannel(channel)
+        self._notify(result)
+        if not bool(result.get("ok")):
+            self._window.setProperty("screen", "guide")
+        else:
+            self._show_live_hud()
+
     def _guide_to_now(self) -> None:
         to_now = getattr(self._controller, "guideWindowToNow", None)
         self._window.setProperty("guideFocusMs", 0.0)
@@ -2004,43 +2834,6 @@ class CouchKeyFilter(QObject):
         else:
             self.dispatch_command(ControlCommand(ControlIntent.CHANNELS))
 
-    def _adjust_selected_setting(self, direction: int) -> bool:
-        selection = int(self._window.property("settingsSelection"))
-        if selection == 1:
-            result = self._controller.changeDisplayMode(direction)
-        else:
-            names = {
-                0: "performanceProfile",
-                2: "audioOutput",
-                3: "volume",
-                4: "muted",
-                5: "skipBack",
-                6: "skipForward",
-                7: "generateVideoThumbnails",
-                8: "artworkCacheLimit",
-                9: "backgroundArtworkDuringPlayback",
-                10: "reducedMotion",
-                11: "controllerEnabled",
-            }
-            name = names.get(selection)
-            if name is None:
-                return False
-            result = self._controller.adjustSetting(name, direction)
-        if not bool(result.get("ok", False)):
-            self._notify(result)
-            return False
-        self._notify(result)
-        if "volume" in result:
-            self._window.setProperty(
-                "volumePercent",
-                int(result.get("volume", 100)),
-            )
-            self._window.setProperty(
-                "muted",
-                bool(result.get("muted", False)),
-            )
-        return True
-
     def _go_home(self) -> bool:
         if str(self._window.property("screen")) == "ondemand":
             self._controller.stopOnDemand()
@@ -2066,6 +2859,8 @@ class CouchKeyFilter(QObject):
     def dispatch_command(self, command: ControlCommand) -> bool:
         """Interpret a transport-neutral intent in the current UI context."""
 
+        if self._profile_guard(command):
+            return True
         intent = command.intent
         screen = str(self._window.property("screen"))
         if intent in {ControlIntent.TUNE, ControlIntent.CHANNEL_UP,
@@ -2185,49 +2980,21 @@ class CouchKeyFilter(QObject):
             return False
 
         if screen == "settings":
-            if intent is ControlIntent.BACK:
-                return self._go_home()
-            if intent is ControlIntent.UP:
-                current = int(self._window.property("settingsSelection"))
-                self._window.setProperty(
-                    "settingsSelection",
-                    max(0, current - 1),
-                )
+            # SettingsScreen.qml owns its tabs, rows and the Theme Builder.
+            settings_item = getattr(self._window, "_channelos_settings_item", None)
+            if settings_item is None:
+                return self._go_home() if intent is ControlIntent.BACK else False
+            if bool(settings_item.property("focusNavigation")) and intent in _FOCUS_NAVIGATION_INTENTS:
+                return self.navigate_focus(intent)
+            if intent is ControlIntent.DIGIT:
+                # Digits type into the Settings PIN pad when it is open.
+                QMetaObject.invokeMethod(settings_item, "handleDigit", Qt.ConnectionType.DirectConnection,
+                                         Q_ARG("QVariant", int(command.value or 0)))
                 return True
-            if intent is ControlIntent.DOWN:
-                current = int(self._window.property("settingsSelection"))
-                self._window.setProperty(
-                    "settingsSelection",
-                    min(14, current + 1),
-                )
-                return True
-            if intent in {ControlIntent.LEFT, ControlIntent.RIGHT}:
-                direction = -1 if intent is ControlIntent.LEFT else 1
-                return self._adjust_selected_setting(direction)
-            if intent is ControlIntent.SELECT:
-                selection = int(self._window.property("settingsSelection"))
-                if selection == 12:
-                    result = self._controller.clearArtworkCache()
-                    self._notify(result)
-                    return True
-                if selection == 13:
-                    result = self._controller.openDiagnosticLogs()
-                    self._notify(result)
-                    return True
-                if selection == 14:
-                    result = self._controller.resetSettings()
-                    self._notify(result)
-                    self._window.setProperty(
-                        "volumePercent",
-                        int(result.get("volume", 100)),
-                    )
-                    self._window.setProperty(
-                        "muted",
-                        bool(result.get("muted", False)),
-                    )
-                    return True
-                return self._adjust_selected_setting(1)
-            return False
+            QMetaObject.invokeMethod(settings_item, "handleControllerIntent",
+                                     Qt.ConnectionType.DirectConnection,
+                                     Q_ARG("QVariant", intent.value))
+            return True
 
         if screen == "library":
             if intent is ControlIntent.BACK:
@@ -2298,6 +3065,9 @@ class CouchKeyFilter(QObject):
                 return True
             if intent is ControlIntent.GUIDE_NOW:
                 self._guide_to_now()
+                return True
+            if intent is ControlIntent.GO_LIVE:
+                self.activateGuideLive()
                 return True
             if intent in {ControlIntent.REWIND, ControlIntent.FAST_FORWARD}:
                 self._page_guide(-180 if intent is ControlIntent.REWIND else 180)
@@ -2508,8 +3278,80 @@ class CouchKeyFilter(QObject):
             return True
         return False
 
+    def navigate_focus(self, intent: ControlIntent) -> bool:
+        """Drive Qt's own focus chain from a remote or controller.
+
+        Up/Down (and Left/Right on ordinary controls) move like Shift+Tab/Tab;
+        Left/Right adjust sliders, lists and spin boxes; Select presses the
+        focused control. The keys are synthesized, so every control keeps its
+        normal keyboard behavior and signals.
+        """
+        if intent is ControlIntent.SELECT and self._text_entry_has_focus() and self.open_keyboard_for_focus():
+            return True
+        focus = QGuiApplication.focusObject()
+        adjustable = focus is not None and any(
+            focus.inherits(name) for name in ("QQuickSlider", "QQuickComboBox", "QQuickSpinBox", "QQuickRangeSlider"))
+        modifiers = Qt.KeyboardModifier.NoModifier
+        if intent is ControlIntent.SELECT:
+            key = Qt.Key.Key_Return if self._text_entry_has_focus() or (
+                focus is not None and focus.inherits("QQuickComboBox")) else Qt.Key.Key_Space
+        elif adjustable and intent in (ControlIntent.LEFT, ControlIntent.RIGHT):
+            key = Qt.Key.Key_Left if intent is ControlIntent.LEFT else Qt.Key.Key_Right
+        else:
+            key = Qt.Key.Key_Tab
+            if intent in (ControlIntent.UP, ControlIntent.LEFT):
+                modifiers = Qt.KeyboardModifier.ShiftModifier
+        target = QGuiApplication.focusWindow() or self._window
+        self._synthesizing = True
+        try:
+            QCoreApplication.sendEvent(target, QKeyEvent(QEvent.Type.KeyPress, key, modifiers))
+            QCoreApplication.sendEvent(target, QKeyEvent(QEvent.Type.KeyRelease, key, modifiers))
+        finally:
+            self._synthesizing = False
+        return True
+
+    def _dedicated_controller(self) -> bool:
+        settings = getattr(self._controller, "settings", None)
+        return isinstance(settings, dict) and bool(settings.get("dedicatedController"))
+
+    def open_keyboard_for_focus(self) -> bool:
+        """Dedicated Controller Mode: type into the focused text box on screen."""
+        if not self._dedicated_controller() or not self._text_entry_has_focus():
+            return False
+        focus = QGuiApplication.focusObject()
+        label = str(focus.property("placeholderText") or focus.property("accessibleName") or "")
+        QMetaObject.invokeMethod(self._window, "openKeyboard", Qt.ConnectionType.DirectConnection,
+                                 Q_ARG("QVariant", focus), Q_ARG("QVariant", label))
+        return True
+
+    def _focus_object_changed(self, focus) -> None:
+        if not bool(self._window.property("keyboardVisible")):
+            # A click into a text box opens the couch keyboard too.
+            if focus is not None and QGuiApplication.mouseButtons() != Qt.MouseButton.NoButton:
+                QTimer.singleShot(0, self.open_keyboard_for_focus)
+            return
+        if focus is None or not self._text_entry_has_focus():
+            QMetaObject.invokeMethod(self._window, "closeKeyboard", Qt.ConnectionType.DirectConnection)
+
+    @staticmethod
+    def _text_entry_has_focus() -> bool:
+        """True while a text box (hex field, name, search…) is being typed in."""
+        focus = QGuiApplication.focusObject()
+        if focus is None:
+            return False
+        if any(focus.inherits(name) for name in ("QQuickTextInput", "QQuickTextEdit")):
+            return not bool(focus.property("readOnly"))
+        class_name = focus.metaObject().className().lower()
+        return any(marker in class_name for marker in ("textinput", "textfield", "textedit", "textarea"))
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if event.type() != QEvent.Type.KeyPress:
+        if event.type() != QEvent.Type.KeyPress or getattr(self, "_synthesizing", False):
+            return False
+        if bool(self._window.property("keyCaptureActive")):
+            return False  # the keyboard mapper is listening for a raw key
+        if self._text_entry_has_focus() and event.key() not in (Qt.Key.Key_Escape, Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+            # Typing belongs to the text box: letters, digits, Backspace,
+            # arrows and Enter never become remote commands while editing.
             return False
         command = self.command_for_key(event.key())
         if command is None:
@@ -2648,6 +3490,13 @@ def run_qt(
     key_filter = CouchKeyFilter(controller, window)
     window.installEventFilter(key_filter)
     window.homeMenuActivated.connect(key_filter.activateHomeMenu)
+    window.guideLiveActivated.connect(key_filter.activateGuideLive)
+    window.pinSubmitted.connect(key_filter.submitPin)
+    # Fill and stretch follow the video surface's shape.
+    def report_video_size(*_args) -> None:
+        controller.setVideoSurfaceSize(video_window.width(), video_window.height())
+    video_window.widthChanged.connect(report_video_size)
+    video_window.heightChanged.connect(report_video_size)
     window.homeCardActivated.connect(key_filter.activateHomeCard)
 
     # Keep Python-owned Qt wrappers alive for the duration of the QML window.
@@ -2663,6 +3512,7 @@ def run_qt(
         ),
     )
     window._channelos_controller_input = controller_input
+    controller.attach_controller_input(controller_input)
 
     # The channel continues broadcasting independently of UI input.
     # Poll the Viewer Clock often enough that short-form captures hand off

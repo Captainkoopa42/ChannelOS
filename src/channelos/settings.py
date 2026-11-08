@@ -5,6 +5,16 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from .playback import (
+    VIDEO_ASPECT_CHOICES,
+    VIDEO_DEINTERLACE_CHOICES,
+    VIDEO_FIT_CHOICES,
+    VIDEO_HARDWARE_DECODING_CHOICES,
+    VIDEO_LEVEL_CHOICES,
+    VIDEO_OVERSCAN_CHOICES,
+    VideoSettings,
+)
+
 
 DEFAULT_VOLUME_PERCENT = 100
 DEFAULT_MUTED = False
@@ -20,6 +30,24 @@ PERFORMANCE_PROFILES = ("standard", "lightweight", "custom")
 ARTWORK_CACHE_LIMIT_CHOICES_MB = (0, 128, 256, 512, 1024, 2048)
 THUMBNAIL_WIDTH_CHOICES = (320, 480, 640)
 FFMPEG_THREAD_CHOICES = (0, 1, 2)
+THEME_CHOICES = ("channelos", "chromespace")
+BOOT_VIDEO_CHOICES = ("static", "custom", "off")
+LOADING_STYLE_CHOICES = ("classic", "bar", "tv")
+BOOT_SOUND_CHOICES = ("poppie", "custom", "off")
+BOOT_SOUND_VOLUMES = tuple(range(5, 101, 5))
+
+# Persisted name -> (choices, default). Values outside the choices fall back
+# to the default, so an edited or older settings file can never break playback.
+VIDEO_SETTING_CHOICES = {
+    "video_aspect_ratio": (VIDEO_ASPECT_CHOICES, "auto"),
+    "video_fit": (VIDEO_FIT_CHOICES, "fit"),
+    "video_overscan_percent": (VIDEO_OVERSCAN_CHOICES, 0),
+    "video_deinterlace": (VIDEO_DEINTERLACE_CHOICES, "auto"),
+    "video_hardware_decoding": (VIDEO_HARDWARE_DECODING_CHOICES, "auto"),
+    "video_brightness": (VIDEO_LEVEL_CHOICES, 100),
+    "video_contrast": (VIDEO_LEVEL_CHOICES, 100),
+    "video_saturation": (VIDEO_LEVEL_CHOICES, 100),
+}
 
 STANDARD_PERFORMANCE = {
     "generate_video_thumbnails": True,
@@ -58,6 +86,43 @@ class CouchSettings:
     reduced_motion: bool = False
     thumbnail_width: int = 640
     ffmpeg_threads: int = 0
+    video_aspect_ratio: str = "auto"
+    video_fit: str = "fit"
+    video_overscan_percent: int = 0
+    video_deinterlace: str = "auto"
+    video_hardware_decoding: str = "auto"
+    video_brightness: int = 100
+    video_contrast: int = 100
+    video_saturation: int = 100
+    theme: str = "channelos"
+    # Boot: "static" TV noise (default), a "custom" video, or "off".
+    boot_video: str = "static"
+    boot_video_file: str = ""
+    boot_video_sound: bool = True
+    loading_style: str = "tv"
+    # Boot sound: "poppie" (built in), your own "custom" sound, or "off".
+    boot_sound: str = "poppie"
+    boot_sound_file: str = ""
+    boot_sound_volume: int = 25
+    # Controller tab. Bindings hold only changes from the defaults, as sorted
+    # (control, action) pairs so the settings object stays immutable.
+    controller_layout: str = "auto"
+    controller_bindings: tuple[tuple[str, str], ...] = ()
+    key_bindings: tuple[tuple[str, str], ...] = ()
+    dedicated_controller: bool = False
+
+    @property
+    def video(self) -> VideoSettings:
+        return VideoSettings(
+            aspect_ratio=self.video_aspect_ratio,
+            fit=self.video_fit,
+            overscan_percent=self.video_overscan_percent,
+            deinterlace=self.video_deinterlace,
+            hardware_decoding=self.video_hardware_decoding,
+            brightness=self.video_brightness,
+            contrast=self.video_contrast,
+            saturation=self.video_saturation,
+        )
 
     def with_performance_profile(self, profile: str) -> "CouchSettings":
         selected = str(profile).strip().lower()
@@ -178,7 +243,59 @@ class CouchSettings:
         if ffmpeg_threads not in FFMPEG_THREAD_CHOICES:
             ffmpeg_threads = 0
 
+        video = {}
+        for name, (choices, default) in VIDEO_SETTING_CHOICES.items():
+            value = values.get(name, default)
+            video[name] = value if value in choices and not isinstance(value, bool) else default
+
+        theme = str(values.get("theme", "channelos")).strip().lower()
+        # Built-in themes, or a custom theme id from the Theme Builder.
+        if theme not in THEME_CHOICES and not (
+            theme.startswith("custom-") and 8 <= len(theme) <= 40
+            and theme[7:].replace("-", "").isalnum()
+        ):
+            theme = "channelos"
+
+        boot_video = str(values.get("boot_video", "static"))
+        boot_video_file = Path(str(values.get("boot_video_file", "") or "")).name
+        if boot_video not in BOOT_VIDEO_CHOICES or (boot_video == "custom" and not boot_video_file):
+            boot_video = "static"
+        raw_sound = values.get("boot_sound", "poppie")
+        boot_sound = {True: "poppie", False: "off"}.get(raw_sound, raw_sound) if isinstance(raw_sound, bool) else str(raw_sound)
+        boot_sound_file = Path(str(values.get("boot_sound_file", "") or "")).name
+        if boot_sound not in BOOT_SOUND_CHOICES or (boot_sound == "custom" and not boot_sound_file):
+            boot_sound = "poppie"
+        boot_sound_volume = values.get("boot_sound_volume", 25)
+        if isinstance(boot_sound_volume, bool) or boot_sound_volume not in BOOT_SOUND_VOLUMES:
+            boot_sound_volume = 25
+        loading_style = str(values.get("loading_style", "tv"))
+        if loading_style not in LOADING_STYLE_CHOICES:
+            loading_style = "tv"
+
+        from .controller_layouts import LAYOUT_CHOICES, clean_bindings, clean_key_bindings
+        controller_layout = str(values.get("controller_layout", "auto"))
+        if controller_layout not in LAYOUT_CHOICES:
+            controller_layout = "auto"
+
+        def pairs(raw):
+            if isinstance(raw, (list, tuple)):
+                raw = {item[0]: item[1] for item in raw if isinstance(item, (list, tuple)) and len(item) == 2}
+            return raw
+
         return cls(
+            **video,
+            controller_layout=controller_layout,
+            controller_bindings=tuple(sorted(clean_bindings(pairs(values.get("controller_bindings"))).items())),
+            key_bindings=tuple(sorted(clean_key_bindings(pairs(values.get("key_bindings"))).items())),
+            dedicated_controller=values.get("dedicated_controller") is True,
+            theme=theme,
+            boot_video=boot_video,
+            boot_video_file=boot_video_file,
+            boot_video_sound=bool(values.get("boot_video_sound", True)),
+            boot_sound=boot_sound,
+            boot_sound_file=boot_sound_file,
+            boot_sound_volume=boot_sound_volume,
+            loading_style=loading_style,
             volume_percent=max(0, min(100, int(volume))),
             muted=muted,
             audio_output_device_id=audio_output_device_id,
@@ -195,8 +312,11 @@ class CouchSettings:
             ffmpeg_threads=int(ffmpeg_threads),
         )
 
-    def to_mapping(self) -> dict[str, int | bool | str]:
-        return dict(asdict(self))
+    def to_mapping(self) -> dict[str, object]:
+        values = dict(asdict(self))
+        values["controller_bindings"] = dict(self.controller_bindings)
+        values["key_bindings"] = dict(self.key_bindings)
+        return values
 
 
 class SettingsStore:

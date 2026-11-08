@@ -10,23 +10,23 @@ ComboBox {
     focusPolicy: Qt.StrongFocus
     hoverEnabled: true
 
-    palette.window: "#111f2c"
-    palette.windowText: "#f4f7fb"
-    palette.base: "#111f2c"
-    palette.alternateBase: "#162a3a"
-    palette.text: "#f4f7fb"
-    palette.button: "#111f2c"
-    palette.buttonText: "#f4f7fb"
-    palette.highlight: "#1a91ff"
-    palette.highlightedText: "#ffffff"
-    palette.placeholderText: "#7f93a8"
-    palette.mid: "#294158"
+    palette.window: Theme.c("#111f2c")
+    palette.windowText: Theme.c("#f4f7fb")
+    palette.base: Theme.c("#111f2c")
+    palette.alternateBase: Theme.c("#162a3a")
+    palette.text: Theme.c("#f4f7fb")
+    palette.button: Theme.c("#111f2c")
+    palette.buttonText: Theme.c("#f4f7fb")
+    palette.highlight: Theme.c("#1a91ff")
+    palette.highlightedText: Theme.c("#ffffff")
+    palette.placeholderText: Theme.c("#7f93a8")
+    palette.mid: Theme.c("#294158")
 
     contentItem: Text {
         leftPadding: 0
         rightPadding: channelCombo.indicator.width + channelCombo.spacing
         text: channelCombo.displayText
-        color: channelCombo.enabled ? "#f4f7fb" : "#607489"
+        color: channelCombo.enabled ? Theme.c("#f4f7fb") : Theme.c("#607489")
         font: channelCombo.font
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
@@ -37,8 +37,8 @@ ComboBox {
         y: Math.round((channelCombo.height - height) / 2)
         text: "▾"
         color: channelCombo.enabled
-               ? (channelCombo.activeFocus ? "#42adff" : "#9fb0c2")
-               : "#607489"
+               ? (channelCombo.activeFocus ? Theme.c("#42adff") : Theme.c("#9fb0c2"))
+               : Theme.c("#607489")
         font.pixelSize: 16
         font.weight: Font.DemiBold
     }
@@ -46,17 +46,17 @@ ComboBox {
     background: Rectangle {
         radius: 6
         color: !channelCombo.enabled
-               ? "#091522"
+               ? Theme.c("#091522")
                : channelCombo.down
-               ? "#172e40"
+               ? Theme.c("#172e40")
                : channelCombo.activeFocus
-               ? "#12396a"
+               ? Theme.c("#12396a")
                : channelCombo.hovered
-               ? "#142634" : "#111f2c"
+               ? Theme.c("#142634") : Theme.c("#111f2c")
         border.color: !channelCombo.enabled
-                      ? "#14283b"
+                      ? Theme.c("#14283b")
                       : channelCombo.activeFocus
-                      ? "#42adff" : "#294158"
+                      ? Theme.c("#42adff") : Theme.c("#294158")
         border.width: channelCombo.activeFocus ? 2 : 1
 
         Behavior on color {
@@ -81,7 +81,7 @@ ComboBox {
                 }
                 return value === undefined || value === null ? "" : String(value)
             }
-            color: highlighted ? "#ffffff" : "#f4f7fb"
+            color: highlighted ? Theme.c("#ffffff") : Theme.c("#f4f7fb")
             font: channelCombo.font
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
@@ -89,7 +89,7 @@ ComboBox {
 
         background: Rectangle {
             radius: 4
-            color: highlighted ? "#1a91ff" : "transparent"
+            color: highlighted ? Theme.c("#1a91ff") : "transparent"
         }
     }
 
@@ -111,8 +111,8 @@ ComboBox {
 
         background: Rectangle {
             radius: 7
-            color: "#0d1b28"
-            border.color: "#294158"
+            color: Theme.c("#0d1b28")
+            border.color: Theme.c("#294158")
             border.width: 1
         }
     }

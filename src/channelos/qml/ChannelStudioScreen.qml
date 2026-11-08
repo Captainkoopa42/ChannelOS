@@ -10,18 +10,18 @@ Item {
     anchors.fill: parent
     z: 92
 
-    readonly property color appBackground: "#050c15"
-    readonly property color panel: "#081625"
-    readonly property color panelRaised: "#0d2035"
-    readonly property color panelSoft: "#10283f"
-    readonly property color line: "#1a3550"
-    readonly property color textPrimary: "#f4f7fb"
-    readonly property color textSecondary: "#9fb0c2"
-    readonly property color accent: "#1a91ff"
-    readonly property color accentBright: "#42adff"
-    readonly property color liveGreen: "#2bcf75"
-    readonly property color warning: "#ffb84a"
-    readonly property color danger: "#ff6666"
+    readonly property color appBackground: Theme.c("#050c15")
+    readonly property color panel: Theme.c("#081625")
+    readonly property color panelRaised: Theme.c("#0d2035")
+    readonly property color panelSoft: Theme.c("#10283f")
+    readonly property color line: Theme.c("#1a3550")
+    readonly property color textPrimary: Theme.c("#f4f7fb")
+    readonly property color textSecondary: Theme.c("#9fb0c2")
+    readonly property color accent: Theme.c("#1a91ff")
+    readonly property color accentBright: Theme.c("#42adff")
+    readonly property color liveGreen: Theme.c("#2bcf75")
+    readonly property color warning: Theme.c("#ffb84a")
+    readonly property color danger: Theme.c("#ff6666")
 
     component StudioButton: Button {
         id: studioButton
@@ -41,11 +41,13 @@ Item {
             id: buttonLabel
             text: studioButton.text
             color: !studioButton.enabled
-                   ? "#607489"
+                   ? Theme.c("#607489")
                    : studioButton.destructive
                    ? studioRoot.danger
-                   : studioButton.highlighted || studioButton.checked
-                   ? "#ffffff" : studioRoot.textPrimary
+                   : studioButton.highlighted
+                   ? Theme.c("#ffffff")
+                   : studioButton.checked
+                   ? Theme.c("#fffffe") : studioRoot.textPrimary
             font.pixelSize: 12
             font.weight: studioButton.highlighted || studioButton.checked
                          ? Font.DemiBold : Font.Medium
@@ -58,20 +60,20 @@ Item {
             id: buttonBackground
             radius: 7
             color: !studioButton.enabled
-                   ? "#091522"
+                   ? Theme.c("#091522")
                    : studioButton.down
-                   ? (studioButton.destructive ? "#54212a" : "#0a66ad")
+                   ? (studioButton.destructive ? Theme.c("#54212a") : Theme.c("#0a66ad"))
                    : studioButton.destructive
-                   ? (studioButton.hovered ? "#351b24" : "#21151c")
+                   ? (studioButton.hovered ? Theme.c("#351b24") : Theme.c("#21151c"))
                    : studioButton.highlighted
                    ? (studioButton.hovered ? studioRoot.accentBright
                                            : studioRoot.accent)
                    : studioButton.checked
-                   ? (studioButton.hovered ? "#176aa6" : "#12527f")
+                   ? (studioButton.hovered ? Theme.c("#176aa6") : Theme.c("#12527f"))
                    : studioButton.hovered
-                   ? "#143a5c" : studioRoot.panelRaised
+                   ? Theme.c("#143a5c") : studioRoot.panelRaised
             border.color: !studioButton.enabled
-                          ? "#14283b"
+                          ? Theme.c("#14283b")
                           : studioButton.destructive
                           ? studioRoot.danger
                           : studioButton.activeFocus
@@ -108,7 +110,7 @@ Item {
         }
 
         Overlay.modal: Rectangle {
-            color: "#aa02070d"
+            color: Theme.c("#aa02070d")
         }
     }
 
@@ -1656,9 +1658,8 @@ Item {
             onActivated: studioRoot.applyDraft()
         }
 
-        Rectangle {
+        ThemeBackdrop {
             anchors.fill: parent
-            color: studioRoot.appBackground
         }
 
         Rectangle {
@@ -1667,7 +1668,7 @@ Item {
             anchors.right: parent.right
             anchors.top: parent.top
             height: 146
-            color: "#071322"
+            color: Theme.c("#071322")
             border.color: studioRoot.line
 
             ColumnLayout {
@@ -1715,7 +1716,7 @@ Item {
                     Rectangle {
                         visible: studioRoot.draftDirty
                         radius: 12
-                        color: "#4b3717"
+                        color: Theme.c("#4b3717")
                         border.color: studioRoot.warning
                         implicitWidth: unsavedText.implicitWidth + 20
                         implicitHeight: 28
@@ -1908,7 +1909,7 @@ Item {
                         height: isSource ? 70 : 76
                         radius: 7
                         color: mediaMouse.containsMouse
-                               ? "#14304a" : studioRoot.panelRaised
+                               ? Theme.c("#14304a") : studioRoot.panelRaised
                         border.color: mediaMouse.containsMouse
                                       ? studioRoot.accentBright : studioRoot.line
 
@@ -2070,7 +2071,7 @@ Item {
             anchors.top: studioHeader.bottom
             anchors.bottom: studioRoot.viewMode === "day" || studioRoot.plannerView
                             ? studioFooter.top : timelinePanel.top
-            color: "#091827"
+            color: Theme.c("#091827")
             border.color: studioRoot.line
 
             ColumnLayout {
@@ -2227,7 +2228,7 @@ Item {
                                 height: weekGrid.height
                                 radius: 7
                                 color: studioRoot.selectedDayKey === studioRoot.dayKey(columnDate)
-                                       ? "#102d49" : studioRoot.panel
+                                       ? Theme.c("#102d49") : studioRoot.panel
                                 border.color: studioRoot.dayKey(columnDate) === studioRoot.dayKey(new Date())
                                               ? studioRoot.accentBright : studioRoot.line
                                 border.width: studioRoot.dayKey(columnDate) === studioRoot.dayKey(new Date()) ? 2 : 1
@@ -2289,7 +2290,7 @@ Item {
                                             height: 55
                                             radius: 5
                                             color: Number(modelData.modelIndex) === studioRoot.selectedBlockIndex
-                                                   ? "#14558a" : studioRoot.panelRaised
+                                                   ? Theme.c("#14558a") : studioRoot.panelRaised
                                             border.color: Number(modelData.modelIndex) === studioRoot.selectedBlockIndex
                                                           ? studioRoot.accentBright : studioRoot.line
                                             Text {
@@ -2352,7 +2353,7 @@ Item {
                                 height: (monthGrid.height - monthGrid.spacing * 5) / 6
                                 radius: 6
                                 color: studioRoot.selectedDayKey === studioRoot.dayKey(cellDate)
-                                       ? "#123b60" : studioRoot.panel
+                                       ? Theme.c("#123b60") : studioRoot.panel
                                 opacity: cellDate.getMonth() === studioRoot.anchorDate.getMonth()
                                          ? 1.0 : 0.52
                                 border.color: studioRoot.dayKey(cellDate) === studioRoot.dayKey(new Date())
@@ -2519,7 +2520,7 @@ Item {
                                     id: dayTrack
                                     width: dayTimeline.contentWidth
                                     height: dayTimeline.height
-                                    color: "#06111e"
+                                    color: Theme.c("#06111e")
                                     border.color: studioRoot.line
 
                                     DropArea {
@@ -2583,7 +2584,7 @@ Item {
                                         y: 48
                                         width: parent.width
                                         height: Math.max(120, parent.height - 82)
-                                        color: "#091827"
+                                        color: Theme.c("#091827")
                                         border.color: studioRoot.line
                                     }
 
@@ -2604,7 +2605,7 @@ Item {
                                             height: Math.max(92, dayTrack.height - 110)
                                             radius: 7
                                             color: blockIndex === studioRoot.selectedBlockIndex
-                                                   ? "#14558a" : studioRoot.panelRaised
+                                                   ? Theme.c("#14558a") : studioRoot.panelRaised
                                             border.color: blockIndex === studioRoot.selectedBlockIndex
                                                           ? studioRoot.accentBright
                                                           : studioRoot.line
@@ -2726,7 +2727,7 @@ Item {
             anchors.bottom: studioFooter.top
             height: 210
             visible: studioRoot.viewMode !== "day" && !studioRoot.plannerView
-            color: "#06111e"
+            color: Theme.c("#06111e")
             border.color: studioRoot.line
 
             ColumnLayout {
@@ -2803,7 +2804,7 @@ Item {
                         height: programTimeline.height - 12
                         radius: 7
                         color: blockIndex === studioRoot.selectedBlockIndex
-                               ? "#14558a" : studioRoot.panelRaised
+                               ? Theme.c("#14558a") : studioRoot.panelRaised
                         border.color: timelineDrop.containsDrag
                                       ? studioRoot.warning
                                       : (blockIndex === studioRoot.selectedBlockIndex
@@ -2930,7 +2931,7 @@ Item {
             anchors.right: parent.right
             anchors.bottom: parent.bottom
             height: 54
-            color: studioRoot.feedbackIsError ? "#32151b" : "#071322"
+            color: studioRoot.feedbackIsError ? Theme.c("#32151b") : Theme.c("#071322")
             border.color: studioRoot.feedbackIsError
                           ? studioRoot.danger : studioRoot.line
 
@@ -2964,7 +2965,7 @@ Item {
             anchors.fill: parent
             visible: studioRoot.autoFillBusy
             z: 200
-            color: "#cc02070d"
+            color: Theme.c("#cc02070d")
 
             MouseArea {
                 anchors.fill: parent

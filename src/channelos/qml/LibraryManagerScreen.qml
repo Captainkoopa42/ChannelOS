@@ -14,18 +14,18 @@ Item {
     readonly property bool viewActive: active && hostWindow !== null && hostWindow.screen === "library"
     visible: viewActive
 
-    readonly property color appBackground: "#050c15"
-    readonly property color panel: "#081625"
-    readonly property color panelRaised: "#0d2035"
-    readonly property color panelSoft: "#10283f"
-    readonly property color line: "#1a3550"
-    readonly property color textPrimary: "#f4f7fb"
-    readonly property color textSecondary: "#9fb0c2"
-    readonly property color accent: "#1a91ff"
-    readonly property color accentBright: "#42adff"
-    readonly property color liveGreen: "#2bcf75"
-    readonly property color warning: "#ffb84a"
-    readonly property color danger: "#ff6666"
+    readonly property color appBackground: Theme.c("#050c15")
+    readonly property color panel: Theme.c("#081625")
+    readonly property color panelRaised: Theme.c("#0d2035")
+    readonly property color panelSoft: Theme.c("#10283f")
+    readonly property color line: Theme.c("#1a3550")
+    readonly property color textPrimary: Theme.c("#f4f7fb")
+    readonly property color textSecondary: Theme.c("#9fb0c2")
+    readonly property color accent: Theme.c("#1a91ff")
+    readonly property color accentBright: Theme.c("#42adff")
+    readonly property color liveGreen: Theme.c("#2bcf75")
+    readonly property color warning: Theme.c("#ffb84a")
+    readonly property color danger: Theme.c("#ff6666")
 
     property var snapshot: ({items: [], sources: []})
     property var viewData: null
@@ -315,9 +315,8 @@ Item {
         }
     }
 
-    Rectangle {
+    ThemeBackdrop {
         anchors.fill: parent
-        color: appBackground
     }
 
     Rectangle {
@@ -326,7 +325,7 @@ Item {
         anchors.right: parent.right
         anchors.top: parent.top
         height: 104
-        color: "#071322"
+        color: Theme.c("#071322")
         border.color: line
         border.width: 1
 
@@ -364,7 +363,7 @@ Item {
             width: 330
             height: 46
             placeholderText: "Search owned media…  Ctrl+F"
-            placeholderTextColor: "#70869c"
+            placeholderTextColor: Theme.c("#70869c")
             color: textPrimary
             selectionColor: accent
             selectedTextColor: "white"
@@ -372,7 +371,7 @@ Item {
             onTextChanged: libraryRoot.query = text
             background: Rectangle {
                 radius: 7
-                color: "#0d2035"
+                color: Theme.c("#0d2035")
                 border.color: searchField.activeFocus ? accentBright : line
                 border.width: searchField.activeFocus ? 2 : 1
             }
@@ -409,7 +408,7 @@ Item {
         anchors.top: header.bottom
         anchors.bottom: footer.top
         width: Math.max(280, parent.width * 0.22)
-        color: "#06111e"
+        color: Theme.c("#06111e")
         border.color: line
         border.width: 1
 
@@ -453,8 +452,8 @@ Item {
                 width: sourceList.width
                 height: 116
                 radius: 8
-                color: index === libraryRoot.selectedSource ? "#102b50" : "#0a1a2b"
-                border.color: index === libraryRoot.selectedSource ? accentBright : "#17324a"
+                color: index === libraryRoot.selectedSource ? Theme.c("#102b50") : Theme.c("#0a1a2b")
+                border.color: index === libraryRoot.selectedSource ? accentBright : Theme.c("#17324a")
                 border.width: index === libraryRoot.selectedSource ? 2 : 1
 
                 MouseArea {
@@ -555,7 +554,7 @@ Item {
             anchors.margins: 14
             height: 74
             radius: 7
-            color: "#091827"
+            color: Theme.c("#091827")
             border.color: line
             border.width: 1
 
@@ -576,7 +575,7 @@ Item {
         anchors.right: detailsPanel.left
         anchors.top: header.bottom
         anchors.bottom: footer.top
-        color: "#071421"
+        color: Theme.c("#071421")
         border.color: line
         border.width: 1
 
@@ -622,8 +621,8 @@ Item {
                 width: mediaList.width
                 height: 76
                 radius: 7
-                color: index === libraryRoot.selectedMedia ? "#12396a" : "#0a1a2b"
-                border.color: index === libraryRoot.selectedMedia ? accentBright : "#17324a"
+                color: index === libraryRoot.selectedMedia ? Theme.c("#12396a") : Theme.c("#0a1a2b")
+                border.color: index === libraryRoot.selectedMedia ? accentBright : Theme.c("#17324a")
                 border.width: index === libraryRoot.selectedMedia ? 2 : 1
 
                 MouseArea {
@@ -690,7 +689,7 @@ Item {
         anchors.top: header.bottom
         anchors.bottom: footer.top
         width: Math.max(360, parent.width * 0.28)
-        color: "#091827"
+        color: Theme.c("#091827")
         border.color: line
         border.width: 1
 
@@ -704,8 +703,8 @@ Item {
             height: 190
             radius: 10
             gradient: Gradient {
-                GradientStop { position: 0.0; color: "#12304a" }
-                GradientStop { position: 1.0; color: "#08131f" }
+                GradientStop { position: 0.0; color: Theme.c("#12304a") }
+                GradientStop { position: 1.0; color: Theme.c("#08131f") }
             }
             border.color: accent
             border.width: 1
@@ -793,7 +792,7 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 58
-        color: "#06111e"
+        color: Theme.c("#06111e")
         border.color: line
         border.width: 1
 
@@ -825,7 +824,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         visible: Boolean(scan.active)
-        color: "#b0050c15"
+        color: Theme.c("#b0050c15")
         z: 200
 
         Rectangle {
@@ -872,7 +871,7 @@ Item {
                     width: parent.width
                     height: 10
                     radius: 5
-                    color: "#1c3348"
+                    color: Theme.c("#1c3348")
                     Rectangle {
                         width: parent.width * (Number(scan.total || 0) > 0
                                               ? Math.max(0, Math.min(1, Number(scan.current || 0) / Number(scan.total)))
@@ -904,7 +903,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         visible: libraryRoot.scanConfirmVisible
-        color: "#b8050c15"
+        color: Theme.c("#b8050c15")
         z: 210
 
         Rectangle {
@@ -979,7 +978,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         visible: libraryRoot.removeConfirmVisible
-        color: "#b8050c15"
+        color: Theme.c("#b8050c15")
         z: 220
 
         Rectangle {

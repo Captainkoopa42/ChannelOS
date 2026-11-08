@@ -143,6 +143,7 @@ The Guide reaches **14 days back and 14 days ahead** of now, in half-hour steps:
 | Page Up / Page Down, media rewind / fast-forward | Page 3 hours |
 | `,` / `.`, triggers, media previous / next | Jump one day |
 | Home, `G` inside the Guide | Back to now |
+| LIVE button, `L`, left-stick click | First press: back to now. Pressed at now: watch the selected channel live (or catch up if it is already playing behind live) |
 
 Away from now the header names the day being shown (TOMORROW, a weekday and
 date) in amber, the "now" marker hides, and Up/Down keep the selected time

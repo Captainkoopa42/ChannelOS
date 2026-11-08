@@ -1,15 +1,18 @@
-name: release-candidate
+name: release
 
+# Pushing a version tag (for example v2.0.0-beta.1) builds, tests and smoke-
+# checks the Windows package for that exact commit, then publishes it as a
+# GitHub pre-release with its checksum and docs/releases/<tag>.md as notes.
 on:
   push:
-    branches: ["feature/unified-broadcast-planner"]
+    tags: ["v*"]
 
 permissions:
   contents: read
 
 concurrency:
-  group: channelos-windows-0.0.7-candidate
-  cancel-in-progress: true
+  group: channelos-release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   tests:
@@ -23,7 +26,7 @@ jobs:
     permissions:
       contents: write
     env:
-      CANDIDATE_TAG: v0.0.7-rc.1
+      RELEASE_TAG: ${{ github.ref_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -31,30 +34,34 @@ jobs:
         with:
           name: ChannelOS-Windows-x64
           path: release-output
-      - name: Verify candidate identity and checksum
+      - name: Verify the package and write notes
         shell: bash
         run: |
           python - <<'PYCODE'
           import hashlib, json, os, pathlib, zipfile
-          path = pathlib.Path('release-output/ChannelOS-0.0.7-windows-x64.zip')
+          tag = os.environ['RELEASE_TAG']
+          path = pathlib.Path(f'release-output/ChannelOS-{tag[1:]}-windows-x64.zip')
+          assert path.is_file(), f'{path} was not built; is RELEASE_LABEL set to {tag[1:]}?'
           with zipfile.ZipFile(path) as archive:
               bom = json.loads(archive.read('ChannelOS/PACKAGE-BOM.json'))
-          assert bom['product']['version'] == '0.0.7', bom['product']
           assert bom['product']['git_commit'] == os.environ['GITHUB_SHA'], bom['product']
           digest = hashlib.file_digest(path.open('rb'), 'sha256').hexdigest()
           pathlib.Path('release-output/SHA256SUMS.txt').write_text(f'{digest}  {path.name}\n')
-          notes = pathlib.Path('docs/releases/v0.0.7-rc.1.md').read_text()
+          notes = pathlib.Path(f'docs/releases/{tag}.md').read_text()
           notes += '\nVerified source commit: `' + os.environ['GITHUB_SHA'] + '`\n'
           notes += '\nBuild and smoke checks: https://github.com/' + os.environ['GITHUB_REPOSITORY'] + '/actions/runs/' + os.environ['GITHUB_RUN_ID'] + '\n'
           pathlib.Path('release-output/RELEASE-NOTES.md').write_text(notes)
+          pathlib.Path('release-output/ZIP').write_text(path.name)
           PYCODE
-      - name: Publish verified Windows test candidate
+      - name: Publish the pre-release
         shell: bash
         run: |
-          if gh release view "$CANDIDATE_TAG" >/dev/null 2>&1; then
-            published=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$CANDIDATE_TAG" --jq .object.sha)
-            test "$published" = "$GITHUB_SHA" || { echo "Existing candidate tag names another commit; retained its files."; exit 1; }
-            gh release view "$CANDIDATE_TAG"
+          zip="release-output/$(cat release-output/ZIP)"
+          title="$(head -n 1 docs/releases/$RELEASE_TAG.md | sed 's/^# //')"
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; its files were kept."
+            gh release view "$RELEASE_TAG"
           else
-            gh release create "$CANDIDATE_TAG"               release-output/ChannelOS-0.0.7-windows-x64.zip               release-output/SHA256SUMS.txt               --target "$GITHUB_SHA" --prerelease               --title "ChannelOS 0.0.7 — Broadcast Planner Windows candidate 1"               --notes-file release-output/RELEASE-NOTES.md
+            gh release create "$RELEASE_TAG" "$zip" release-output/SHA256SUMS.txt \
+              --verify-tag --prerelease --title "$title" --notes-file release-output/RELEASE-NOTES.md
           fi

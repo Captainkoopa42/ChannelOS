@@ -23,6 +23,8 @@ RUNTIME_LOCK_PATH = PACKAGING_ROOT / "runtime-lock.json"
 SPEC_PATH = PACKAGING_ROOT / "ChannelOS.spec"
 REQUIRED_VLC_FILES = ("libvlc.dll", "libvlccore.dll")
 RUNTIME_DOWNLOAD_ATTEMPTS = 3
+# The public name of this build (archive, release tag and notes).
+RELEASE_LABEL = "2.0.0-beta.1"
 PACKAGE_LICENSE_DOCUMENTS = (
     "LICENSE.md",
     "THIRD_PARTY_NOTICES.md",
@@ -123,7 +125,7 @@ def download_locked_runtime(lock: dict[str, Any], cache_directory: Path) -> Path
         try:
             request = urllib.request.Request(
                 lock["download_url"],
-                headers={"User-Agent": "ChannelOS-Windows-Packager/0.0.7"},
+                headers={"User-Agent": f"ChannelOS-Windows-Packager/{RELEASE_LABEL}"},
             )
             with urllib.request.urlopen(request, timeout=120) as response:
                 with temporary.open("wb") as output:
@@ -285,7 +287,7 @@ def copy_release_documents(package_root: Path) -> None:
         output = licenses / Path(relative).name
         shutil.copy2(source, output)
 
-    for relative in ("docs/releases/v0.0.7-rc.1.md", "docs/releases/WINDOWS_0.0.7_ACCEPTANCE.md"):
+    for relative in (f"docs/releases/v{RELEASE_LABEL}.md", "docs/releases/WINDOWS_0.0.7_ACCEPTANCE.md"):
         target = package_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(PROJECT_ROOT / relative, target)
@@ -532,7 +534,7 @@ def build_package(output_directory: Path, supplied_nupkg: Path | None = None) ->
     write_bom(package_root, lock, nupkg, vlc_inventory)
     validate_package_root(package_root)
 
-    archive_base = output_directory / "ChannelOS-0.0.7-windows-x64"
+    archive_base = output_directory / f"ChannelOS-{RELEASE_LABEL}-windows-x64"
     archive = Path(shutil.make_archive(str(archive_base), "zip", output_directory, "ChannelOS"))
     return archive
 

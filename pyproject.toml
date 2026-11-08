@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "channelos"
-version = "0.0.7"
+version = "2.0.0b1"
 description = "A personal broadcasting system for user-owned media."
 readme = "README.md"
 license = "MPL-2.0"

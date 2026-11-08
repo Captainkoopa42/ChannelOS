@@ -57,8 +57,10 @@ def boot_sound_plan(settings: Any, setup_directory: Path) -> dict[str, Any] | No
     if choice == "custom":
         path = Path(setup_directory) / "boot" / settings.boot_sound_file if settings.boot_sound_file else None
         if path is not None and path.is_file():
-            return {"path": path, "volume": volume, "loop": None, "bar": None}
-    return {"path": BOOT_SOUND_PATH, "volume": volume, "loop": POPPIE_LOOP, "bar": BAR_SECONDS}
+            return {"path": path, "volume": volume, "loop": None, "bar": None,
+                    "device": settings.audio_output_device_id}
+    return {"path": BOOT_SOUND_PATH, "volume": volume, "loop": POPPIE_LOOP, "bar": BAR_SECONDS,
+            "device": settings.audio_output_device_id}
 
 
 def _default_backend(volume_percent: int):
@@ -70,13 +72,14 @@ def _default_backend(volume_percent: int):
 class BootSound(QObject):
     def __init__(self, volume_percent: int, muted: bool = False, *, path: Path = BOOT_SOUND_PATH,
                  loop: tuple[float, float] | None = POPPIE_LOOP, bar: float | None = BAR_SECONDS,
-                 backend_factory: Callable[[int], object] | None = None, parent: QObject | None = None) -> None:
+                 device: str = "", backend_factory: Callable[[int], object] | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._volume = max(0, min(100, int(volume_percent)))
         self._muted = bool(muted)
         self._path = Path(path)
         self._loop = loop
         self._bar = bar
+        self._device = str(device or "")
         self._factory = backend_factory or _default_backend
         self._backend = None
         self._started_at: float | None = None
@@ -96,7 +99,8 @@ class BootSound(QObject):
 
     @classmethod
     def from_plan(cls, plan: dict[str, Any], **kwargs) -> "BootSound":
-        return cls(int(plan["volume"]), False, path=plan["path"], loop=plan["loop"], bar=plan["bar"], **kwargs)
+        return cls(int(plan["volume"]), False, path=plan["path"], loop=plan["loop"], bar=plan["bar"],
+                   device=plan.get("device", ""), **kwargs)
 
     @property
     def silent(self) -> bool:
@@ -117,8 +121,13 @@ class BootSound(QObject):
     def _open(self) -> None:
         try:
             backend = self._factory(self._volume)
+            if self._device:
+                # The same speakers or headphones as the rest of ChannelOS.
+                backend.set_audio_output_device(self._device)
             backend.load(self._path)
             backend.play()
+            logger.info("Boot sound playing %s at %d%%%s", self._path.name, self._volume,
+                        f" on {self._device}" if self._device else "")
             # The level is already libVLC gain; 100 here keeps the fade
             # (transition level) working from a known volume.
             backend.set_volume(100)
@@ -153,6 +162,10 @@ class BootSound(QObject):
         if backend is None:
             return
         try:
+            # Applies the chosen audio device once libVLC's audio output exists.
+            apply_audio = getattr(backend, "playback_error", None)
+            if callable(apply_audio):
+                apply_audio()
             ended = bool(backend.has_ended())
             if self._loop is not None:
                 start, end = self._loop

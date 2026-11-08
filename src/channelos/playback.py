@@ -445,6 +445,8 @@ class LibVLCBackend(PlaybackBackend):
         self._loaded_path = media_path
 
     def play(self) -> None:
+        if getattr(self, "_user_device", None) is not None:
+            self._device_pending = True
         result = self._player.play()
         if isinstance(result, int) and result < 0:
             raise PlaybackError("libVLC could not start playback")
@@ -542,7 +544,19 @@ class LibVLCBackend(PlaybackBackend):
         value = self._player.audio_get_mute()
         return bool(value) if value is not None and value >= 0 else False
 
+    def _apply_audio_device(self) -> None:
+        if not getattr(self, "_device_pending", False):
+            return
+        try:
+            if self._player.audio_output_device_get() is None:
+                return  # no audio output yet; try again on the next poll
+            self._player.audio_output_device_set(None, getattr(self, "_user_device", None))
+            self._device_pending = False
+        except (AttributeError, TypeError, ValueError):
+            self._device_pending = False
+
     def _apply_audio_settings(self) -> None:
+        self._apply_audio_device()
         if getattr(self, "_user_volume", None) is not None:
             self._player.audio_set_volume(round(self._user_volume * self._transition_level))
         if getattr(self, "_user_muted", None) is not None:
@@ -556,16 +570,34 @@ class LibVLCBackend(PlaybackBackend):
             return value.decode("utf-8", errors="replace")
         return str(value)
 
+    # Audio-output modules to ask when nothing is playing yet (the player can
+    # only list devices while its audio output exists).
+    AUDIO_MODULES = {"win32": ("mmdevice", "directsound"), "darwin": ("auhal",)}
+
     def list_audio_output_devices(self) -> tuple[AudioOutputDevice, ...]:
-        """Enumerate libVLC audio destinations and release its native list."""
+        """Enumerate libVLC audio destinations, even before anything plays."""
 
         try:
-            head = self._player.audio_output_device_enum()
+            devices = self._parse_device_list(self._player.audio_output_device_enum())
         except (AttributeError, TypeError, ValueError) as exc:
             raise PlaybackUnavailableError(
                 "libVLC could not enumerate audio output devices"
             ) from exc
+        if devices:
+            return devices
+        # No audio output yet: ask the platform's output module directly.
+        modules = self.AUDIO_MODULES.get(sys.platform, ("pulse", "alsa"))
+        for module in modules:
+            try:
+                devices = self._parse_device_list(self._instance.audio_output_device_list_get(module))
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if devices:
+                self._device_module = module
+                return devices
+        return ()
 
+    def _parse_device_list(self, head) -> tuple[AudioOutputDevice, ...]:
         if not head:
             return ()
 
@@ -606,9 +638,16 @@ class LibVLCBackend(PlaybackBackend):
         return tuple(devices)
 
     def set_audio_output_device(self, device_id: str | None) -> None:
-        """Switch libVLC immediately; ``None`` follows the system default."""
+        """Switch libVLC immediately; ``None`` follows the system default.
+
+        libVLC ignores a device change while no audio output exists (before the
+        first sample plays), so the choice is remembered and applied again as
+        soon as playback has an audio output.
+        """
 
         selected = None if not device_id else str(device_id)
+        self._user_device = selected
+        self._device_pending = True
         try:
             # Passing no module lets libVLC route the identifier to the active
             # audio output. libVLC 3 exposes no useful success return here.

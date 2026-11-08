@@ -697,6 +697,10 @@ Item {
     }
 
     Component.onCompleted: Qt.callLater(applyStartupDisplayMode)
+    // However Settings was opened (remote, click, menu), list the speakers
+    // and headphones that are available right now.
+    onVisibleChanged: if (visible && channelOS && typeof channelOS.refreshAudioOutputDevices === "function")
+                          channelOS.refreshAudioOutputDevices()
 
     Rectangle {
         id: settingsFooter

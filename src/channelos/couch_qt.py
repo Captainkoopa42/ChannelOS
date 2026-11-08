@@ -382,6 +382,11 @@ class CouchController(QObject):
 
         try:
             discovered = self._actions.list_audio_output_devices()
+            if not discovered:
+                # Nothing could be listed (no audio output yet): keep the saved
+                # choice instead of resetting it to System Default.
+                self.settingsChanged.emit()
+                return {"ok": True, "message": "", "settings": self.settings}
             devices, effective_device_id = _resolved_audio_output_rows(
                 discovered,
                 self._settings.audio_output_device_id,
@@ -1379,6 +1384,12 @@ class CouchController(QObject):
                 settings = self._settings.with_performance_profile(value)
                 message = f"Performance profile: {value.title()}"
             elif name == "audioOutput":
+                if len(self._audio_output_devices) <= 1:
+                    self.refreshAudioOutputDevices()
+                if len(self._audio_output_devices) <= 1:
+                    return {"ok": False, "settings": self.settings,
+                            "message": "Only System Default was found. Plug in or turn on the speakers or headphones, "
+                                       "then try again (Windows can also pick its default under Sound settings)."}
                 current = self._settings.audio_output_device_id
                 choices = tuple(
                     str(device["deviceId"])

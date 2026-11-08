@@ -860,8 +860,15 @@ ApplicationWindow {
             anchors.centerIn: parent
             spacing: 14
             Text { anchors.horizontalCenter: parent.horizontalCenter; text: root.playback.channelName || "ChannelOS"; color: Theme.c("#91b9e1"); font.pixelSize: 22 }
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "Off air"; color: Theme.c("#f0f6ff"); font.pixelSize: 48; font.weight: Font.DemiBold }
-            Text { anchors.horizontalCenter: parent.horizontalCenter; text: "No scheduled program at this broadcast time"; color: Theme.c("#a3b6ca"); font.pixelSize: 16 }
+            Text { anchors.horizontalCenter: parent.horizontalCenter; text: root.playback.unavailable ? "Program unavailable" : "Off air"; color: Theme.c("#f0f6ff"); font.pixelSize: 48; font.weight: Font.DemiBold }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.playback.unavailable
+                      ? ((root.playback.title && root.playback.title !== "Unavailable program" ? root.playback.title + " can't be found right now. " : "This program's file can't be found right now. ")
+                         + "The channel stays on schedule.")
+                      : "No scheduled program at this broadcast time"
+                color: Theme.c("#a3b6ca"); font.pixelSize: 16
+            }
         }
     }
 

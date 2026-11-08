@@ -18,7 +18,7 @@ class ConstantDurationProbe:
         return MediaProbeResult(duration_seconds=30.0, container_format=path.suffix.lstrip("."))
 
 
-def test_missing_file_recovery_rebuilds_online_schedule_and_reanchors(tmp_path: Path) -> None:
+def test_missing_file_recovery_keeps_the_clock_and_drops_the_file_at_the_next_program(tmp_path: Path) -> None:
     media_dir = tmp_path / "media"
     media_dir.mkdir()
     first_path = media_dir / "a.mp4"
@@ -55,6 +55,13 @@ def test_missing_file_recovery_rebuilds_online_schedule_and_reanchors(tmp_path: 
 
     assert len(recovered.channel.media) == 1
     assert recovered.channel.media[0].location.path == first_path
-    assert recovered.signature != original.signature
-    assert recovered.epoch_utc == recovered_at
-    assert recovered.broadcast_at(recovered_at).media.location.path == first_path
+    # A deleted file is library maintenance, not a restart: the clock stays,
+    # the program airing now finishes its slot, and from the next program
+    # boundary only the remaining file plays.
+    assert recovered.signature == original.signature
+    assert recovered.epoch_utc == epoch
+    airing = recovered.broadcast_at(recovered_at)
+    assert airing.program_started_at == original.broadcast_at(recovered_at).program_started_at
+    after = airing.program_ends_at + timedelta(seconds=1)
+    for step in range(4):
+        assert recovered.broadcast_at(after + timedelta(seconds=30 * step)).media.location.path == first_path

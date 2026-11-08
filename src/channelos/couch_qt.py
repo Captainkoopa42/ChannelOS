@@ -918,6 +918,7 @@ class CouchController(QObject):
             "channelName": decision.channel_name,
             "title": selected.media.location.path.stem,
             "eventType": event.event_type,
+            "unavailable": selected.origin == "unavailable",
             "isAdvertisement": event.event_type in {"advertisement", "transition"},
             "breakId": event.break_id or "",
             "parentProgramTitle": parent_title,

@@ -343,7 +343,7 @@ def test_channel_epoch_survives_runtime_restart(tmp_path: Path) -> None:
     assert restarted.signature == first.signature
 
 
-def test_schedule_change_creates_new_epoch(tmp_path: Path) -> None:
+def test_library_change_keeps_the_clock_and_restart_is_explicit(tmp_path: Path) -> None:
     resolved = build_resolved_channel(tmp_path, [30.0, 45.0, 60.0])
     epoch = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     changed_at = epoch + timedelta(hours=2)
@@ -356,8 +356,15 @@ def test_schedule_change_creates_new_epoch(tmp_path: Path) -> None:
     )
     second = ChannelRuntime.open(changed, store, now=changed_at)
 
-    assert second.signature != first.signature
-    assert second.epoch_utc == changed_at
+    # Removing media is library maintenance: the channel keeps its clock.
+    assert second.signature == first.signature
+    assert second.epoch_utc == epoch
+
+    # Starting over is a deliberate action.
+    store.restart_channel(resolved.definition.channel)
+    restarted = ChannelRuntime.open(changed, store, now=changed_at)
+    assert restarted.epoch_utc == changed_at
+    assert restarted.broadcast_at(changed_at).program_started_at == changed_at
 
 
 def test_calendar_support_preserves_legacy_schedule_signature(tmp_path: Path) -> None:

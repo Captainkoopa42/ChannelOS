@@ -242,22 +242,28 @@ def _schedule_begins(runtime: ChannelRuntime) -> datetime | None:
     programming = getattr(runtime.channel.definition, "programming", None)
     if getattr(programming, "mode", None) not in ("sequential", "shuffle"):
         return None
-    return getattr(runtime, "epoch_utc", None)
+    begins = getattr(runtime.timeline, "begins_at", None)
+    return begins if begins is not None else getattr(runtime, "epoch_utc", None)
 
 
 def _before_schedule(runtime: ChannelRuntime, start: datetime, end: datetime,
                      begins: datetime, reference: datetime) -> GuideProgram:
+    # A channel that restarted when upgrading from Beta 1: something aired
+    # before, but its lineup can no longer be rebuilt. Say so honestly.
+    unknown = getattr(runtime.timeline, "history_unknown_before", None) == begins
     return GuideProgram(
         schedule_id=f"channelos:before-schedule:{runtime.channel_number}:{int(begins.timestamp())}",
         channel_number=runtime.channel_number,
         asset_id="",
-        display_label="Off air",
+        display_label="Schedule history unavailable" if unknown else "Off air",
         start_utc=start,
         end_utc=end,
         duration_seconds=(end - start).total_seconds(),
         programming_mode="offair",
-        explanation=(f"This channel's current schedule begins at {begins.isoformat()}.",
-                     "Nothing aired here under it."),
+        explanation=((f"This channel restarted at {begins.isoformat()} when ChannelOS was upgraded.",
+                      "What aired before then can't be rebuilt.") if unknown else
+                     (f"This channel's current schedule begins at {begins.isoformat()}.",
+                      "Nothing aired here under it.")),
         is_current=start <= reference < end,
         is_past=end <= reference,
         is_future=start > reference,

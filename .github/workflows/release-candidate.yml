@@ -1,11 +1,14 @@
 name: release
 
-# Pushing a version tag (for example v2.0.0-beta.1) builds, tests and smoke-
-# checks the Windows package for that exact commit, then publishes it as a
-# GitHub pre-release with its checksum and docs/releases/<tag>.md as notes.
+# Publishing a GitHub release (or pushing a version tag such as v2.0.0-beta.1)
+# builds, tests and smoke-checks the Windows package for that exact commit and
+# attaches the zip and its checksum to the release. A pushed tag with no
+# release yet gets a pre-release with docs/releases/<tag>.md as its notes.
 on:
   push:
     tags: ["v*"]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -59,7 +62,8 @@ jobs:
           zip="release-output/$(cat release-output/ZIP)"
           title="$(head -n 1 docs/releases/$RELEASE_TAG.md | sed 's/^# //')"
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists; its files were kept."
+            # Made on github.com: attach the download to it.
+            gh release upload "$RELEASE_TAG" "$zip" release-output/SHA256SUMS.txt --clobber
             gh release view "$RELEASE_TAG"
           else
             gh release create "$RELEASE_TAG" "$zip" release-output/SHA256SUMS.txt \

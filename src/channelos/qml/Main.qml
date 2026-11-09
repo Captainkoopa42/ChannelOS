@@ -542,9 +542,22 @@ ApplicationWindow {
         return d.toLocaleDateString(Qt.locale(), "ddd, MMM d")
     }
 
-    function showStatus(message) {
+    function showStatus(message, durationMs) {
         statusMessage = message
+        statusTimer.interval = durationMs || 2600
         statusTimer.restart()
+    }
+
+    // Beta 2: tell the user once if a channel restarted during the upgrade.
+    property bool migrationNoticeChecked: false
+    onStartupStateChanged: {
+        if (migrationNoticeChecked || Boolean(startupState.active) || !channelOS
+                || typeof channelOS.takeMigrationNotice !== "function")
+            return
+        migrationNoticeChecked = true
+        var notice = channelOS.takeMigrationNotice()
+        if (notice.length > 0)
+            showStatus(notice, 9000)
     }
 
     function syncDisplayedSettings() {

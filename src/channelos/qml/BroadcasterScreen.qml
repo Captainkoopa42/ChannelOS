@@ -31,6 +31,20 @@ Item {
     property string pendingMutationKind: ""
     property int pendingMutationIndex: 0
     property int editingChannelNumber: 0
+    // Beta 2: whether this channel has a change waiting for the next program.
+    property int scheduleRefresh: 0
+    readonly property var scheduleInfo: {
+        var _ = scheduleRefresh
+        if (editorMode !== "edit" || editingChannelNumber <= 0 || !channelOS
+                || typeof channelOS.channelSchedule !== "function")
+            return ({ quick: false, pending: false })
+        return channelOS.channelSchedule(editingChannelNumber)
+    }
+    function restartEditingChannel() {
+        var result = channelOS.restartChannel(editingChannelNumber)
+        setResult(result)
+        scheduleRefresh += 1
+    }
     property int pendingDeleteChannelNumber: 0
     property string pendingDeleteDisplayNumber: "---"
     property string pendingDeleteName: ""
@@ -1416,6 +1430,60 @@ Item {
                             }
                         }
 
+                        Rectangle {
+                            objectName: "channelScheduleStatus"
+                            visible: Boolean(broadcasterRoot.scheduleInfo.quick)
+                            width: parent.width
+                            height: scheduleRow.implicitHeight + 24
+                            radius: 8
+                            color: broadcasterRoot.panelSoft
+                            border.color: broadcasterRoot.scheduleInfo.pending ? broadcasterRoot.accent : broadcasterRoot.line
+                            border.width: 1
+
+                            Row {
+                                id: scheduleRow
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                anchors.leftMargin: 16
+                                anchors.rightMargin: 12
+                                spacing: 12
+
+                                Column {
+                                    width: parent.width - restartButton.width - 12
+                                    spacing: 4
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    Text {
+                                        text: broadcasterRoot.scheduleInfo.pending ? "Changes waiting" : "On schedule"
+                                        color: broadcasterRoot.scheduleInfo.pending ? broadcasterRoot.accentBright : broadcasterRoot.textPrimary
+                                        font.pixelSize: 15
+                                        font.weight: Font.DemiBold
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap
+                                        color: broadcasterRoot.textSecondary
+                                        font.pixelSize: 13
+                                        text: broadcasterRoot.scheduleInfo.pending
+                                              ? ("Changes take effect after "
+                                                 + (broadcasterRoot.scheduleInfo.afterTitle || "the program airing now")
+                                                 + " (" + broadcasterRoot.scheduleInfo.at + "). Nothing on air is interrupted.")
+                                              : "When this channel's media changes, the change starts after the program airing at that moment, in episode order."
+                                    }
+                                }
+
+                                ChannelButton {
+                                    id: restartButton
+                                    objectName: "restartChannelButton"
+                                    text: "Restart From Beginning…"
+                                    width: 210
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    destructive: true
+                                    onClicked: restartChannelDialog.open()
+                                }
+                            }
+                        }
+
                         Row {
                             width: parent.width
                             spacing: 12
@@ -1505,6 +1573,53 @@ Item {
                 width: parent.width * 0.30
                 horizontalAlignment: Text.AlignRight
             }
+        }
+    }
+
+    Dialog {
+        id: restartChannelDialog
+        objectName: "restartChannelDialog"
+        anchors.centerIn: parent
+        implicitWidth: 540
+        modal: true
+        dim: true
+        padding: 24
+        closePolicy: Popup.CloseOnEscape
+        title: "Restart this channel from the beginning?"
+        palette.window: broadcasterRoot.panelRaised
+        palette.windowText: broadcasterRoot.textPrimary
+        background: Rectangle {
+            radius: 8
+            color: broadcasterRoot.panelRaised
+            border.color: broadcasterRoot.line
+            border.width: 1
+        }
+        footer: DialogButtonBox {
+            spacing: 12
+            padding: 16
+            background: Rectangle {
+                color: broadcasterRoot.panel
+                border.color: broadcasterRoot.line
+                border.width: 1
+            }
+            ChannelButton {
+                text: "Cancel"
+                DialogButtonBox.buttonRole: DialogButtonBox.RejectRole
+            }
+            ChannelButton {
+                text: "Restart Channel"
+                destructive: true
+                DialogButtonBox.buttonRole: DialogButtonBox.AcceptRole
+            }
+        }
+        onAccepted: broadcasterRoot.restartEditingChannel()
+        contentItem: Text {
+            width: 460
+            text: "The channel starts over from its first program right now. Its Guide history and any paused "
+                  + "or rewound spot on it are cleared. Your media and channel settings don't change."
+            color: broadcasterRoot.textSecondary
+            font.pixelSize: 15
+            wrapMode: Text.WordWrap
         }
     }
 

@@ -294,3 +294,31 @@ def test_an_unavailable_slot_stops_the_player_instead_of_erroring(tmp_path: Path
     assert session.sync(now=at + timedelta(minutes=1)).viewer_selection.origin == "unavailable"
     later = session.sync(now=EPOCH + timedelta(hours=2, minutes=1))
     assert episode(later.viewer_selection) == "03" and later.viewer_selection.event.event_type == "program"
+
+
+def test_editor_shows_pending_changes_and_restarts_on_request(tmp_path: Path) -> None:
+    from test_performance_operations import controller_fixture
+    _app, controller, root = controller_fixture(tmp_path)
+    try:
+        assert controller.channelSchedule(7) == {"quick": True, "pending": False}
+        runtime = controller._actions.runtime.channels[7]
+        from channelos.runtime import utc_now
+        now = utc_now()
+        new = root / "04-delta.mp4"
+        new.write_bytes(b"04-delta-owned")
+        library = runtime.channel.library
+        library.upsert_file(new, root, content_sha256=hashlib.sha256(new.read_bytes()).hexdigest(),
+                            probe=MediaProbeResult(duration_seconds=600, container_format="mp4"))
+        controller._reload_lineup()
+        info = controller.channelSchedule(7)
+        assert info["quick"] and info["pending"] and info["afterTitle"] and info["at"]
+        assert info["effectiveMs"] > int(now.timestamp() * 1000)
+        assert controller._actions.runtime.channels[7].epoch_utc == runtime.epoch_utc, "no restart"
+        result = controller.restartChannel(7)
+        assert result["ok"], result
+        restarted = controller._actions.runtime.channels[7]
+        assert restarted.epoch_utc > runtime.epoch_utc
+        assert controller.channelSchedule(7) == {"quick": True, "pending": False}
+        assert controller.takeMigrationNotice() == ""
+    finally:
+        controller.stop()

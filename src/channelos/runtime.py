@@ -29,6 +29,8 @@ from .storage import (
 logger = logging.getLogger(__name__)
 
 RUNTIME_SCHEMA_VERSION = 4
+# Which revision each channel has already recorded as aired (avoids a write per tick).
+_OBSERVED_REVISION: dict[tuple[str, int], int] = {}
 SECONDS_PER_DAY = 86400.0
 DEFAULT_VIEWER_ID = "default"
 
@@ -1135,6 +1137,14 @@ class RuntimeStore:
                 connection.execute("ALTER TABLE viewer_runtime ADD COLUMN revision INTEGER")
             # When this database first ran with schedule revisions: clocks last
             # written before it are Beta 1 clocks (see ChannelRuntime.open).
+            first_beta2_start = connection.execute(
+                "SELECT 1 FROM runtime_meta WHERE key='revisions_since'").fetchone() is None
+            if first_beta2_start:
+                # Remember exactly which clocks Beta 1 left behind. Comparing
+                # timestamps would be fooled by a PC clock that was set back.
+                connection.execute(
+                    "INSERT OR IGNORE INTO channel_beta1_clocks(channel_number, schedule_signature, epoch_utc)"
+                    " SELECT channel_number, schedule_signature, epoch_utc FROM channel_runtime")
             connection.execute("INSERT OR IGNORE INTO runtime_meta(key, value) VALUES('revisions_since', ?)",
                                (datetime_to_text(utc_now()),))
             connection.execute(
@@ -1212,18 +1222,18 @@ class RuntimeStore:
         """
         number = int(channel_number)
         with self.connect() as connection:
-            for table in ("channel_runtime", "viewer_runtime", "channel_revisions", "channel_migrations"):
+            for table in ("channel_runtime", "viewer_runtime", "channel_revisions", "channel_revision_horizon",
+                          "channel_migrations", "channel_beta1_clocks"):
                 connection.execute(f"DELETE FROM {table} WHERE channel_number=?", (number,))
 
     def clock_written_before_revisions(self, channel_number: int) -> bool:
-        """Whether this channel's saved clock was last written by Beta 1."""
+        """Whether this channel's saved clock is still the one Beta 1 left."""
         with self.connect() as connection:
-            row = connection.execute("SELECT updated_at FROM channel_runtime WHERE channel_number=?",
-                                     (int(channel_number),)).fetchone()
-            since = connection.execute("SELECT value FROM runtime_meta WHERE key='revisions_since'").fetchone()
-        if row is None or since is None:
-            return False
-        return datetime_from_text(str(row["updated_at"])) < datetime_from_text(str(since["value"]))
+            row = connection.execute(
+                """SELECT 1 FROM channel_runtime c JOIN channel_beta1_clocks b USING (channel_number)
+                   WHERE c.channel_number=? AND c.schedule_signature=b.schedule_signature
+                   AND c.epoch_utc=b.epoch_utc""", (int(channel_number),)).fetchone()
+        return row is not None
 
     def load_channel(self, channel_number: int) -> PersistedChannelRuntime | None:
         """Load saved Broadcast Clock state without changing its signature.
@@ -1308,7 +1318,7 @@ class RuntimeStore:
                      "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans", "ad_history_review",
                      "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans",
                      "planner_revisions", "planner_checkpoints", "planner_occurrences", "planner_completions", "planner_cycles", "planner_legacy", "planner_manual_releases", "planner_failures",
-                     "channel_revisions", "channel_migrations")
+                     "channel_revisions", "channel_revision_horizon", "channel_migrations", "channel_beta1_clocks")
             for table in order:
                 if table not in tables:
                     continue
@@ -1339,7 +1349,7 @@ class RuntimeStore:
                      "ad_break_history", "ad_view_history", "ad_view_progress", "ad_retired_plans", "ad_history_review",
                      "ad_program_clock", "ad_break_policy_state", "ad_break_catchup_state", "ad_calendar_state", "ad_superseded_plans",
                      "planner_revisions", "planner_checkpoints", "planner_occurrences", "planner_completions", "planner_cycles", "planner_legacy", "planner_manual_releases", "planner_failures",
-                     "channel_revisions", "channel_migrations", "runtime_meta")
+                     "channel_revisions", "channel_revision_horizon", "channel_migrations", "channel_beta1_clocks", "runtime_meta")
             for table in order:
                 for row in payload.get(table, ()):
                     columns = ','.join(row)
@@ -1570,35 +1580,41 @@ def _open_quick_revisions(channel: ResolvedChannel, store: "RuntimeStore", order
             persisted = previous_clock or PersistedChannelRuntime(number, legacy_signature, epoch)
             revision = Revision(number, 0, epoch, epoch, lineup_of(ordered_media), wanted, "transient")
             return _revision_timeline(channel, (revision,)), persisted, None
-        history_unknown = None
+        lineup = lineup_of(ordered_media)
         if previous_clock is None:
-            persisted = store.ensure_channel(number, legacy_signature, now=now)
-            reason = "created"
+            epoch, reason, history_unknown, migration = now, "created", None, None
         elif previous_clock.schedule_signature == legacy_signature:
             # Exactly the lineup that produced this clock: carry it over.
-            persisted = previous_clock
-            reason = "migrated"
-            revisions_module.record_migration(store, number, "kept", old_epoch=previous_clock.epoch_utc,
-                old_signature=previous_clock.schedule_signature, new_epoch=previous_clock.epoch_utc,
-                old_viewer=None, now=now)
+            epoch, reason, history_unknown = previous_clock.epoch_utc, "migrated", None
+            migration = {"path": "kept", "old_epoch": previous_clock.epoch_utc,
+                         "old_signature": previous_clock.schedule_signature}
         else:
             # The saved clock belongs to a lineup we can no longer rebuild.
             viewer = store.load_viewer(number)
             beta1 = store.clock_written_before_revisions(number)
-            revisions_module.record_migration(store, number, "restarted" if beta1 else "mode-change",
-                old_epoch=previous_clock.epoch_utc, old_signature=previous_clock.schedule_signature,
-                new_epoch=now, old_viewer=None if viewer is None else {
-                    "schedule_time_utc": datetime_to_text(viewer.schedule_time_utc),
-                    "observed_at_utc": datetime_to_text(viewer.observed_at_utc),
-                    "running": viewer.running}, now=now)
-            persisted = store.ensure_channel(number, legacy_signature, now=now)
+            epoch = now
             reason = "migrated-restart" if beta1 else "created"
             history_unknown = now if beta1 else None
-        epoch = persisted.epoch_utc
-        revision = Revision(number, 0, epoch, epoch, lineup_of(ordered_media), wanted, reason, history_unknown)
-        revisions_module.write_revision(store, revision, now=now)
+            migration = {"path": "restarted" if beta1 else "mode-change", "old_epoch": previous_clock.epoch_utc,
+                         "old_signature": previous_clock.schedule_signature,
+                         "old_viewer": None if viewer is None else {
+                             "schedule_time_utc": datetime_to_text(viewer.schedule_time_utc),
+                             "observed_at_utc": datetime_to_text(viewer.observed_at_utc),
+                             "running": viewer.running}}
+        revision = Revision(number, 0, epoch, epoch, lineup, wanted, reason, history_unknown)
+        keep_clock = previous_clock is not None and reason == "migrated"
+        # One transaction: an interrupted migration leaves the Beta 1 clock
+        # untouched, so the next start makes the same (honest) decision.
+        revisions_module.write_initial(
+            store, revision, now=now,
+            clock=None if keep_clock else (legacy_signature, epoch),
+            delete_viewer=previous_clock is not None and not keep_clock,
+            migration=migration)
+        persisted = previous_clock if keep_clock else PersistedChannelRuntime(number, legacy_signature, epoch)
         return _revision_timeline(channel, (revision,)), persisted, None
     persisted = previous_clock or PersistedChannelRuntime(number, legacy_signature, revisions[0].effective_utc)
+    if not transient:
+        revisions_module.observe(store, number, now)
     timeline = _revision_timeline(channel, revisions)
     change = None if transient or revisions[-1].content_signature == wanted else wanted
     return timeline, persisted, change
@@ -1608,9 +1624,10 @@ def _apply_quick_change(channel: ResolvedChannel, store: "RuntimeStore", timelin
                         now: datetime, written_at: datetime):
     """Store the pending revision for a lineup change and return the new timeline."""
     from . import channel_revisions as revisions_module
+    observed = revisions_module.observe(store, channel.definition.channel, now)
     revision = revisions_module.plan_change(
         timeline, now=now, new_lineup_media=ordered_media, mode=channel.definition.programming.mode,
-        signature=wanted, channel_number=channel.definition.channel)
+        signature=wanted, channel_number=channel.definition.channel, observed_through=observed)
     replacing = revision.revision == timeline.revisions[-1].revision
     revisions_module.write_revision(store, revision, now=written_at, replace_pending=replacing)
     logger.info("Channel %s: lineup change takes effect at %s", channel.definition.channel,
@@ -1627,6 +1644,10 @@ class ChannelRuntime:
     signature: str
     break_store: BreakPlanStore | None = None
     policy_revision_changed_at: datetime | None = None
+    # A degraded (missing media) or preview runtime: it projects the saved
+    # schedule but never writes scheduling state.
+    transient: bool = False
+    store: "RuntimeStore | None" = None
 
     @classmethod
     def open(
@@ -1805,6 +1826,8 @@ class ChannelRuntime:
             signature=signature,
             break_store=break_store,
             policy_revision_changed_at=policy_revision_changed_at,
+            transient=transient,
+            store=store,
         )
 
     @property
@@ -1854,6 +1877,9 @@ class ChannelRuntime:
         if self.break_store is None:
             return ()
         occurrence_id = self._program_occurrence_id(selection)
+        if self.transient:
+            # Read-only: play breaks already committed, plan nothing new.
+            return self.break_store.plans_for_occurrence(occurrence_id)
         policy_revision = advertising_signature(self.channel)
         occurrence = ProgramOccurrence(
             occurrence_id, self.channel_number, selection.media.asset.asset_id,
@@ -2074,9 +2100,10 @@ class ChannelRuntime:
             self.timeline.catch_up_through(self.epoch_utc, instant)
             selection = self.timeline.selection_at(self.epoch_utc, instant)
         else:
-            self._catch_up_sequential(instant)
+            if not self.transient:
+                self._catch_up_sequential(instant)
             clock_row = self.break_store.clock_at(self.channel_number, instant, scope=self.signature)
-            if clock_row is None:
+            if clock_row is None and not self.transient:
                 base = self.timeline.selection_at(self.epoch_utc, instant)
                 self._ensure_occurrence_plans(base, instant)
                 clock_row = self.break_store.clock_at(self.channel_number, instant, scope=self.signature)
@@ -2130,7 +2157,7 @@ class ChannelRuntime:
                             segment_source_offset_seconds=segment.source_offset_seconds,
                         )
                         break
-        if record_airings:
+        if record_airings and not self.transient:
             self.break_store.reconcile_completed(self.channel_number, through=instant)
         return selection
 
@@ -2190,7 +2217,50 @@ class ChannelRuntime:
         return self.break_store.plans_for_occurrence(occurrence_id)
 
     def broadcast_at(self, at: datetime | None = None) -> BroadcastSelection:
-        return self._selection_at(at or utc_now())
+        instant = at or utc_now()
+        self._note_observed(instant)
+        return self._selection_at(instant)
+
+    def pending_change(self, at: datetime | None = None) -> dict | None:
+        """A lineup change waiting for its boundary, in wall-clock time, else None.
+
+        Revision boundaries live on the timeline's clock, which for channels
+        with ad breaks is program-content time; committed breaks are added
+        back so the editor shows the real time of day.
+        """
+        revisions = getattr(self.timeline, "revisions", None)
+        if not revisions:
+            return None
+        wall_now = require_aware_utc(at or utc_now())
+        content_now = _content_time(self.break_store, self.channel_number, self.epoch_utc, wall_now)
+        latest = revisions[-1]
+        if latest.effective_utc <= content_now:
+            return None
+        effective_wall = wall_now + (latest.effective_utc - content_now)
+        if self.break_store is not None:
+            # Breaks already committed between now and the boundary push it later.
+            for plan in self.break_store.plans_for_channel(self.channel_number, start=wall_now, end=effective_wall):
+                if wall_now <= plan.scheduled_at < effective_wall:
+                    effective_wall += timedelta(seconds=plan.duration_seconds)
+        before = self.timeline.selection_at(None, latest.effective_utc - timedelta(microseconds=1))
+        # With ad breaks, breaks not planned yet can still push it later.
+        return {"effective_utc": effective_wall, "after_title": before.media.location.path.stem,
+                "revision": latest.revision, "approximate": self.break_store is not None}
+
+    def _note_observed(self, at: datetime) -> None:
+        """Live airing passed a revision boundary: that revision is now history."""
+        revisions = getattr(self.timeline, "revisions", None)
+        if not revisions or self.transient or self.store is None:
+            return
+        latest = revisions[-1]
+        key = (str(self.store.database_path), self.channel_number)
+        if latest.effective_utc <= at and _OBSERVED_REVISION.get(key) != latest.revision:
+            from .channel_revisions import observe
+            try:
+                observe(self.store, self.channel_number, at)
+                _OBSERVED_REVISION[key] = latest.revision
+            except Exception:
+                logger.debug("Could not record the schedule horizon", exc_info=True)
 
     def selection_for_viewer_time(self, viewer_time: datetime) -> BroadcastSelection:
         return self.project_at(viewer_time)

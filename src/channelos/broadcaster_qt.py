@@ -1183,23 +1183,20 @@ class BroadcasterCouchController(CouchController):
     def channelSchedule(self, channel_number: int) -> dict[str, object]:
         """Schedule state for the channel editor: whether a change is pending."""
         runtime = self._actions.runtime.channels.get(int(channel_number))
-        revisions = getattr(getattr(runtime, "timeline", None), "revisions", None)
-        if runtime is None or not revisions:
+        if runtime is None or not getattr(getattr(runtime, "timeline", None), "revisions", None):
             return {"quick": False, "pending": False}
-        from .runtime import utc_now
-        now = utc_now()
-        latest = revisions[-1]
-        if latest.effective_utc <= now:
-            return {"quick": True, "pending": False}
         try:
-            before = runtime.project_at(latest.effective_utc - timedelta(microseconds=1))
-            after_title = before.media.location.path.stem
+            pending = runtime.pending_change()
         except Exception:
-            after_title = ""
-        local = latest.effective_utc.astimezone()
+            logger.debug("Pending change unavailable for channel %s", channel_number, exc_info=True)
+            pending = None
+        if pending is None:
+            return {"quick": True, "pending": False}
+        local = pending["effective_utc"].astimezone()
         when = local.strftime("%I:%M %p").lstrip("0")
-        return {"quick": True, "pending": True, "afterTitle": after_title, "at": when,
-                "effectiveMs": int(latest.effective_utc.timestamp() * 1000)}
+        return {"quick": True, "pending": True, "afterTitle": pending["after_title"],
+                "at": ("about " + when) if pending.get("approximate") else when,
+                "effectiveMs": int(pending["effective_utc"].timestamp() * 1000)}
 
     @Slot(int, result="QVariantMap")
     def restartChannel(self, channel_number: int) -> dict[str, object]:

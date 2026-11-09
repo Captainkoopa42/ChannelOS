@@ -41,9 +41,12 @@ class RecoveryWorker(QObject):
                         index=index, availability=availability, root_availability=root_availability)
                     if resolved == self.previous.get(record.channel_number) and record.channel_number not in self.force_channels:
                         continue
+                    # Quick channels open persistently when all their media is
+                    # here, so a rescan queues its lineup change right away; a
+                    # missing file or drive still opens transiently (no writes).
                     runtime = None if resolved is None else _resolved_runtime(record.definition,
                         self.library, self.store, prepared_channel=resolved, index=index,
-                        persistent_when_complete=record.definition.programming.mode=='planner')
+                        persistent_when_complete=record.definition.programming.mode in ('planner', 'sequential', 'shuffle'))
                 except ChannelRuntimeError:
                     logger.exception('Channel %s has no usable recovery timeline', record.channel_number)
                     runtime = None

@@ -185,6 +185,7 @@ def test_missing_media_keeps_its_slot_and_writes_nothing(tmp_path: Path) -> None
     show.open(EPOCH)
     resolved = show.resolved()
     missing = resolved.media[1]
+    missing.location.path.unlink()   # really gone, not just left out
     unplugged = replace(resolved, media=tuple(item for item in resolved.media if item is not missing))
     at = EPOCH + timedelta(hours=1, minutes=15)
     runtime = show.open(at, resolved=unplugged, transient=True)
@@ -215,8 +216,8 @@ def _beta1_clock(show: Show, signature: str, epoch: datetime) -> None:
     with show.store.connect() as connection:
         connection.execute("INSERT INTO channel_runtime(channel_number, schedule_signature, epoch_utc, updated_at)"
                            " VALUES(7, ?, ?, ?)", (signature, datetime_to_text(epoch), datetime_to_text(epoch)))
-        connection.execute("UPDATE runtime_meta SET value=? WHERE key='revisions_since'",
-                           (datetime_to_text(epoch + timedelta(days=30)),))
+        connection.execute("INSERT INTO channel_beta1_clocks(channel_number, schedule_signature, epoch_utc)"
+                           " VALUES(7, ?, ?)", (signature, datetime_to_text(epoch)))
 
 
 def test_beta1_channel_with_the_same_lineup_carries_over_exactly(tmp_path: Path) -> None:
@@ -284,6 +285,7 @@ def test_an_unavailable_slot_stops_the_player_instead_of_erroring(tmp_path: Path
     show = Show(tmp_path, [HOUR, HOUR, HOUR])
     show.open(EPOCH)
     resolved = show.resolved()
+    resolved.media[1].location.path.unlink()
     unplugged = replace(resolved, media=resolved.media[:1] + resolved.media[2:])
     at = EPOCH + timedelta(hours=1, minutes=15)
     runtime = show.open(at, resolved=unplugged, transient=True)
@@ -322,3 +324,169 @@ def test_editor_shows_pending_changes_and_restarts_on_request(tmp_path: Path) ->
         assert controller.takeMigrationNotice() == ""
     finally:
         controller.stop()
+
+
+# ---------------------------------------------------------------------------
+# Regressions from GPT's audit of 72d908b (each failed on that commit).
+
+def test_audit1_a_normal_rescan_queues_the_change_through_the_recovery_worker(tmp_path: Path) -> None:
+    import threading
+    from PySide6.QtGui import QGuiApplication
+    from channelos.broadcaster import BroadcasterService
+    from channelos.recovery_jobs import RecoveryWorker
+    QGuiApplication.instance() or QGuiApplication([])
+    show = Show(tmp_path, [HOUR, HOUR, HOUR])
+    service = BroadcasterService((), tmp_path / "channels", show.library)
+    service.create({"channel": 7, "name": "Sci-Fi Classics", "sources": [str(show.folder)], "mode": "sequential"})
+    definition = service.records[0].definition
+    ChannelRuntime.open(resolve_channel(definition, show.library), show.store)
+    show.add(4, HOUR)
+    worker = RecoveryWorker(show.library, service, show.store, {}, (), threading.Event())
+    results = []
+    worker.completed.connect(results.append)
+    worker.run()
+    assert 7 in results[0]["prepared"]
+    assert len(show.revisions()) == 2, "the rescan itself queued the new lineup"
+
+
+def test_audit2_removing_a_readable_current_item_lets_it_finish(tmp_path: Path) -> None:
+    show = Show(tmp_path, [HOUR, HOUR, HOUR])
+    show.open(EPOCH)
+    now = EPOCH + timedelta(hours=1, minutes=20)          # episode 2 is on
+    resolved = show.resolved()
+    current = resolved.media[1]
+    without = replace(resolved, media=tuple(item for item in resolved.media if item is not current))
+    runtime = show.open(now, resolved=without)
+    on_now = runtime.broadcast_at(now)
+    assert episode(on_now) == "02" and on_now.origin != "unavailable" and on_now.media.location.online
+    assert episode(runtime.broadcast_at(EPOCH + timedelta(hours=2, minutes=1))) == "03"
+    assert episode(runtime.broadcast_at(EPOCH + timedelta(hours=3, minutes=1))) == "01"
+
+
+def test_audit3_a_disconnected_source_keeps_its_schedule_for_when_it_returns(tmp_path: Path) -> None:
+    from channelos.couch import _open_runtimes
+    from channelos.broadcaster import BroadcasterService
+    show = Show(tmp_path, [HOUR, HOUR, HOUR])
+    service = BroadcasterService((), tmp_path / "channels", show.library)
+    service.create({"channel": 7, "name": "Sci-Fi Classics", "sources": [str(show.folder)], "mode": "sequential"})
+    definition = service.records[0].definition
+    reference = ChannelRuntime.open(resolve_channel(definition, show.library), show.store, now=EPOCH)
+    expected = reference.project_at(EPOCH + timedelta(hours=26, minutes=10))
+    saved = show.revisions()
+    # The whole drive goes away: the channel shows as unavailable (no runtime)
+    # and nothing about its schedule is written or compressed.
+    hidden = tmp_path / "unplugged"
+    show.folder.rename(hidden)
+    assert _open_runtimes(service.paths, show.library, show.store) == ()
+    assert show.revisions() == saved and show.store.load_channel(7).epoch_utc == EPOCH
+    hidden.rename(show.folder)
+    back = ChannelRuntime.open(resolve_channel(definition, show.library), show.store,
+                               now=EPOCH + timedelta(hours=26))
+    again = back.project_at(EPOCH + timedelta(hours=26, minutes=10))
+    assert (again.media.asset.asset_id, again.offset_seconds) == (expected.media.asset.asset_id, expected.offset_seconds)
+
+
+def test_audit4_snapshots_and_rollback_carry_revisions_and_the_beta2_marker(tmp_path: Path) -> None:
+    from channelos.runtime_snapshot import channel_snapshot, restore_channel_snapshot
+    show = Show(tmp_path, [HOUR, HOUR, HOUR])
+    show.open(EPOCH)
+    show.add(4, HOUR)
+    show.open(EPOCH + timedelta(minutes=10))
+    assert len(show.revisions()) == 2
+    copy = channel_snapshot(show.store.database_path, tmp_path / "snapshot.db", 7)
+    assert len(channel_revisions.load_revisions(copy, 7)) == 2
+    assert not copy.clock_written_before_revisions(7), "a Beta 2 clock is never mistaken for Beta 1"
+    with show.store.connect() as connection:
+        connection.execute("DELETE FROM channel_revisions WHERE channel_number=7 AND revision=1")
+    restore_channel_snapshot(tmp_path / "snapshot.db", show.store.database_path, 7)
+    assert len(show.revisions()) == 2
+
+
+def test_audit5_a_clock_set_back_never_reopens_an_aired_revision(tmp_path: Path) -> None:
+    show = Show(tmp_path, [HOUR, HOUR, HOUR])
+    show.open(EPOCH)
+    show.add(4, HOUR)
+    runtime = show.open(EPOCH + timedelta(minutes=10))
+    boundary = show.revisions()[1].effective_utc
+    watched_at = boundary + timedelta(minutes=10)
+    watched = runtime.broadcast_at(watched_at)                  # live airing passed the boundary
+    # The PC clock is set back to before the boundary, then the library changes.
+    show.add(5, HOUR)
+    back = show.open(EPOCH + timedelta(minutes=20))
+    revisions = show.revisions()
+    assert len(revisions[1].lineup) == 4, "the revision that aired is unchanged"
+    assert revisions[-1].revision == 2 and revisions[-1].effective_utc > watched_at
+    again = back.project_at(watched_at)
+    assert (episode(again), again.offset_seconds) == (episode(watched), watched.offset_seconds)
+
+
+def test_audit6_an_interrupted_migration_changes_nothing(tmp_path: Path, monkeypatch) -> None:
+    import pytest
+    show = Show(tmp_path, [HOUR, HOUR, HOUR])
+    _beta1_clock(show, "a-lineup-beta-1-can-no-longer-rebuild", EPOCH)
+    real = channel_revisions.lineup_to_text
+    monkeypatch.setattr(channel_revisions, "lineup_to_text", lambda lineup: (_ for _ in ()).throw(OSError("power cut")))
+    with pytest.raises(OSError):
+        show.open(EPOCH + timedelta(days=41))
+    assert show.store.load_channel(7).schedule_signature == "a-lineup-beta-1-can-no-longer-rebuild"
+    assert show.revisions() == () and channel_revisions.pending_notices(show.store) == []
+    monkeypatch.setattr(channel_revisions, "lineup_to_text", real)
+    now = EPOCH + timedelta(days=41, hours=1)
+    runtime = show.open(now)
+    assert show.revisions()[0].history_unknown_before == now
+    guide = GuideService((runtime,)).horizon(now - timedelta(hours=1), now + timedelta(hours=1), generated_at=now)
+    assert guide.rows[0].programs[0].display_label == "Schedule history unavailable"
+
+
+def test_audit7_pending_change_is_reported_on_the_wall_clock_with_ads(tmp_path: Path) -> None:
+    import hashlib as _hashlib
+    from test_ad_broadcast_integration import EPOCH as AD_EPOCH, open_runtime, setup
+    library, definition, _ = setup(tmp_path, break_duration_seconds=15)
+    runtime, store = open_runtime(tmp_path, library, definition)
+    for second in range(0, 400, 5):
+        runtime.broadcast_at(AD_EPOCH + timedelta(seconds=second))
+    runtime.break_store.close()
+    path = tmp_path / "programs" / "added.mp4"
+    path.write_bytes(b"added")
+    library.upsert_file(path, path.parent, content_sha256=_hashlib.sha256(b"added").hexdigest(),
+                        probe=MediaProbeResult(duration_seconds=45, container_format="mp4"))
+    changed_at = AD_EPOCH + timedelta(seconds=400)
+    changed, _ = open_runtime(tmp_path, library, definition, now=changed_at)
+    pending = changed.pending_change(changed_at)
+    assert pending is not None
+    # Walk the real airing: the change must still be pending until the
+    # program it follows has actually finished on the wall clock.
+    activation = None
+    for second in range(0, 600):
+        at = changed_at + timedelta(seconds=second)
+        if changed.broadcast_at(at).media.location.path == path:
+            activation = at
+            break
+    assert activation is not None
+    assert changed.pending_change(activation - timedelta(seconds=15)) is not None
+    assert changed.pending_change(activation - timedelta(seconds=1)) is not None
+    assert changed.pending_change(activation + timedelta(seconds=1)) is None
+    # The shown time can only be early (breaks not planned yet), never late, and says "about".
+    assert pending["approximate"] and pending["effective_utc"] <= activation
+
+
+def test_audit8_a_transient_ad_projection_writes_nothing(tmp_path: Path) -> None:
+    import sqlite3
+    from test_ad_broadcast_integration import EPOCH as AD_EPOCH, setup
+    library, definition, _ = setup(tmp_path, break_duration_seconds=15)
+    store = RuntimeStore(tmp_path / "runtime.sqlite")
+    first = ChannelRuntime.open(resolve_channel(definition, library), store, now=AD_EPOCH)
+    first.broadcast_at(AD_EPOCH + timedelta(seconds=30))
+    first.break_store.close()
+
+    def state():
+        with sqlite3.connect(store.database_path) as connection:
+            return [connection.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+                    for table in ("ad_break_plans", "ad_break_catchup_state", "ad_program_clock", "ad_break_history")]
+
+    before = state()
+    transient = ChannelRuntime.open(resolve_channel(definition, library), store, now=AD_EPOCH, transient=True)
+    for second in range(0, 900, 10):
+        transient.broadcast_at(AD_EPOCH + timedelta(seconds=second))
+        transient.project_at(AD_EPOCH + timedelta(seconds=second))
+    assert state() == before

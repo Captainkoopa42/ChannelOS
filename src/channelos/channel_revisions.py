@@ -54,6 +54,17 @@ CREATE TABLE IF NOT EXISTS channel_revisions (
     PRIMARY KEY (channel_number, revision)
 );
 
+CREATE TABLE IF NOT EXISTS channel_revision_horizon (
+    channel_number INTEGER PRIMARY KEY,
+    observed_through TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS channel_beta1_clocks (
+    channel_number INTEGER PRIMARY KEY,
+    schedule_signature TEXT NOT NULL,
+    epoch_utc TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS channel_migrations (
     channel_number INTEGER PRIMARY KEY,
     path TEXT NOT NULL,
@@ -66,7 +77,7 @@ CREATE TABLE IF NOT EXISTS channel_migrations (
 );
 """
 
-REVISION_TABLES = ("channel_revisions", "channel_migrations")
+REVISION_TABLES = ("channel_revisions", "channel_revision_horizon", "channel_migrations", "channel_beta1_clocks")
 
 
 @dataclass(frozen=True, slots=True)
@@ -175,6 +186,68 @@ def write_revision(store, revision: Revision, *, now: datetime, replace_pending:
              revision.reason, _text(revision.history_unknown_before), _text(now)))
 
 
+def write_initial(store, revision: Revision, *, now: datetime, clock: tuple[str, datetime] | None,
+                  delete_viewer: bool, migration: dict | None) -> None:
+    """A channel's first revision, its clock and its migration record, in one transaction.
+
+    If ChannelOS is interrupted part-way, nothing was written and the next
+    start makes the same decision again (the Beta 1 clock is still there).
+    """
+    with store.connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        number = revision.channel_number
+        if clock is not None:
+            signature, epoch = clock
+            connection.execute(
+                """INSERT INTO channel_runtime(channel_number, schedule_signature, epoch_utc, updated_at)
+                   VALUES(?,?,?,?) ON CONFLICT(channel_number) DO UPDATE SET
+                   schedule_signature=excluded.schedule_signature, epoch_utc=excluded.epoch_utc,
+                   updated_at=excluded.updated_at""",
+                (number, signature, _text(epoch), _text(now)))
+        if delete_viewer:
+            connection.execute("DELETE FROM viewer_runtime WHERE channel_number=?", (number,))
+        if migration is not None:
+            connection.execute(
+                """INSERT OR REPLACE INTO channel_migrations(
+                    channel_number, path, old_epoch_utc, old_signature, new_epoch_utc, old_viewer, migrated_at)
+                    VALUES(?,?,?,?,?,?,?)""",
+                (number, migration["path"], _text(migration.get("old_epoch")), migration.get("old_signature"),
+                 _text(revision.effective_utc),
+                 json.dumps(migration["old_viewer"]) if migration.get("old_viewer") else None, _text(now)))
+        connection.execute(
+            """INSERT INTO channel_revisions(
+                channel_number, revision, effective_utc, virtual_epoch_utc, lineup,
+                content_signature, reason, history_unknown_before, created_at)
+                VALUES(?,?,?,?,?,?,?,?,?)""",
+            (number, revision.revision, _text(revision.effective_utc), _text(revision.virtual_epoch_utc),
+             lineup_to_text(revision.lineup), revision.content_signature, revision.reason,
+             _text(revision.history_unknown_before), _text(now)))
+        connection.execute(
+            "INSERT OR REPLACE INTO channel_revision_horizon(channel_number, observed_through) VALUES(?,?)",
+            (number, _text(now)))
+    if migration is not None:
+        logger.info("Channel %s migrated to schedule revisions: %s (old epoch %s, new epoch %s)",
+                    revision.channel_number, migration["path"], migration.get("old_epoch"), revision.effective_utc)
+
+
+def observe(store, channel_number: int, now: datetime) -> datetime:
+    """Record that the schedule has been seen up to ``now``; return the high-water mark.
+
+    A revision that took effect at or before this mark is history, even if the
+    PC clock is later set back, so it is never treated as pending again.
+    """
+    with store.connect() as connection:
+        row = connection.execute("SELECT observed_through FROM channel_revision_horizon WHERE channel_number=?",
+                                 (int(channel_number),)).fetchone()
+        seen = _dt(row["observed_through"]) if row else None
+        if seen is None or now > seen:
+            connection.execute(
+                "INSERT OR REPLACE INTO channel_revision_horizon(channel_number, observed_through) VALUES(?,?)",
+                (int(channel_number), _text(now)))
+            return now
+    return seen
+
+
 def record_migration(store, channel_number: int, path: str, *, old_epoch, old_signature,
                      new_epoch: datetime, old_viewer: dict | None, now: datetime) -> None:
     with store.connect() as connection:
@@ -225,6 +298,18 @@ def is_unavailable(media: IndexedMedia) -> bool:
     return str(media.location.path).startswith(UNAVAILABLE_ASSET_PREFIX) or not media.location.online
 
 
+def _readable(item: IndexedMedia) -> bool:
+    """A file that left the channel's media but can still be played.
+
+    Removing a show from a channel is a change for the *next* revision; until
+    then the program already scheduled keeps playing if its file is there.
+    """
+    try:
+        return bool(item.location.online) and Path(item.location.path).is_file()
+    except OSError:
+        return False
+
+
 def resolve_lineup(lineup: Sequence[LineupEntry], available: dict[str, IndexedMedia],
                    lookup=None) -> tuple[IndexedMedia, ...]:
     """Media for a frozen lineup, with frozen durations.
@@ -238,7 +323,7 @@ def resolve_lineup(lineup: Sequence[LineupEntry], available: dict[str, IndexedMe
         item = available.get(entry.asset_id)
         if item is None and lookup is not None:
             item = lookup(entry.asset_id)
-            if item is not None:
+            if item is not None and not _readable(item):
                 item = replace(item, location=replace(item.location, online=False))
         if item is None:
             item = unavailable_media(entry.asset_id, entry.duration_seconds)
@@ -313,14 +398,18 @@ class RevisionTimeline:
 # Planning a change
 
 def plan_change(timeline: RevisionTimeline, *, now: datetime, new_lineup_media: Sequence[IndexedMedia],
-                mode: str, signature: str, channel_number: int) -> Revision:
+                mode: str, signature: str, channel_number: int, observed_through: datetime | None = None) -> Revision:
     """The revision that applies a lineup change after the program airing now.
 
     If a change is already pending, its boundary is kept and only its lineup
     is replaced, so several edits before the boundary merge predictably.
+    ``observed_through`` is the latest time the schedule was seen: if the PC
+    clock moved back, a revision that already took effect is never reopened.
     """
     revisions = timeline.revisions
     latest = revisions[-1]
+    if observed_through is not None and observed_through > now:
+        now = observed_through
     pending = latest.effective_utc > now
     if pending:
         boundary = latest.effective_utc

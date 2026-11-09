@@ -15,6 +15,7 @@ CHANNEL_TABLES = (
     'ad_history_review', 'ad_program_clock', 'ad_break_policy_state',
     'ad_break_catchup_state', 'ad_calendar_state', 'ad_superseded_plans',
     'planner_revisions', 'planner_checkpoints', 'planner_occurrences', 'planner_completions', 'planner_cycles', 'planner_legacy', 'planner_manual_releases', 'planner_failures',
+    'channel_revisions', 'channel_revision_horizon', 'channel_migrations', 'channel_beta1_clocks',
 )
 
 
@@ -61,6 +62,13 @@ def channel_snapshot(source_path, target_path, channel_number: int) -> RuntimeSt
                         rows = source.execute(f'SELECT * FROM {table} WHERE {where}', (int(channel_number),))
                         destination.connection.executemany(
                             f"INSERT OR REPLACE INTO {table}({','.join(columns)}) VALUES({','.join('?' for _ in columns)})", rows)
+                    # The snapshot is a copy of this database, not a new one: keep
+                    # its Beta 2 start so its clocks are never mistaken for Beta 1.
+                    since = source.execute("SELECT value FROM runtime_meta WHERE key='revisions_since'").fetchone() \
+                        if 'runtime_meta' in tables else None
+                    if since is not None:
+                        destination.connection.execute(
+                            "INSERT OR REPLACE INTO runtime_meta(key, value) VALUES('revisions_since', ?)", (since[0],))
         target._break_schema_ready = True
         target._snapshot_portable = find_setup(source_path)
         return target

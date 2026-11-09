@@ -29,7 +29,7 @@ def test_shared_channel_button_covers_interaction_and_semantic_states() -> None:
 @pytest.mark.parametrize(
     ("filename", "expected_count"),
     [
-        ("BroadcasterScreen.qml", 17),  # New/Open Planner moved into Studio
+        ("BroadcasterScreen.qml", 20),  # + Restart From Beginning and its dialog (Beta 2)
         ("LibraryManagerScreen.qml", 9),
         ("LibraryScreen.qml", 4),
     ],
@@ -50,6 +50,6 @@ def test_destructive_actions_use_the_warning_button_state() -> None:
     broadcaster = (QML_ROOT / "BroadcasterScreen.qml").read_text(encoding="utf-8")
     manager = (QML_ROOT / "LibraryManagerScreen.qml").read_text(encoding="utf-8")
 
-    assert broadcaster.count("destructive: true") == 4
+    assert broadcaster.count("destructive: true") == 6  # Delete x2, Restart x2
     assert manager.count("destructive: true") == 2
     assert "palette.buttonText: broadcasterRoot.danger" not in broadcaster

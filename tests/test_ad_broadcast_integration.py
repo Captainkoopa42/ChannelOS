@@ -443,12 +443,13 @@ def test_fixed_slot_falls_back_to_timed_filler_without_starting_next_show_early(
     assert sum(runtime.break_store.play_counts().values()) == 1
 
 
-def test_program_schedule_edit_retires_old_clock_and_preserves_completed_history(tmp_path):
+def test_program_schedule_edit_keeps_the_clock_and_completed_history(tmp_path):
     import hashlib
     from channelos.probe import MediaProbeResult
     library, definition, _ = setup(tmp_path, break_duration_seconds=10)
     original, _ = open_runtime(tmp_path, library, definition)
-    original.broadcast_at(EPOCH + timedelta(seconds=80))
+    edit_at = EPOCH + timedelta(seconds=80)
+    before = original.broadcast_at(edit_at)
     prior_counts = original.break_store.play_counts()
     assert sum(prior_counts.values()) == 1
     original.break_store.close()
@@ -456,12 +457,15 @@ def test_program_schedule_edit_retires_old_clock_and_preserves_completed_history
     path.write_bytes(b'second')
     library.upsert_file(path, path.parent, content_sha256=hashlib.sha256(b'second').hexdigest(),
                         probe=MediaProbeResult(duration_seconds=45, container_format='mp4'))
-    reset_at = EPOCH + timedelta(seconds=80)
-    changed, _ = open_runtime(tmp_path, library, definition, now=reset_at)
-    assert changed.epoch_utc == reset_at
-    assert changed.broadcast_at(reset_at + timedelta(seconds=1)).offset_seconds == 1
+    changed, _ = open_runtime(tmp_path, library, definition, now=edit_at)
+    # Adding a program never restarts the channel or interrupts what is on.
+    assert changed.epoch_utc == EPOCH
+    now = changed.broadcast_at(edit_at)
+    assert (now.media.asset.asset_id, now.offset_seconds) == (before.media.asset.asset_id, before.offset_seconds)
     assert changed.break_store.play_counts() == prior_counts
-    assert changed.break_store.connection.execute('SELECT COUNT(*) FROM ad_retired_plans').fetchone()[0] > 0
+    # The new program joins the lineup after the program airing now.
+    later = {changed.project_at(edit_at + timedelta(seconds=s)).media.location.path for s in range(0, 600, 5)}
+    assert path in later
 
 
 def test_between_program_break_follows_content_borrow_without_crossing_next_show(tmp_path):

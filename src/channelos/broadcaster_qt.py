@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1177,6 +1178,64 @@ class BroadcasterCouchController(CouchController):
             ValueError,
         ) as exc:
             return self._error(exc)
+
+    @Slot(int, result="QVariantMap")
+    def channelSchedule(self, channel_number: int) -> dict[str, object]:
+        """Schedule state for the channel editor: whether a change is pending."""
+        runtime = self._actions.runtime.channels.get(int(channel_number))
+        if runtime is None or not getattr(getattr(runtime, "timeline", None), "revisions", None):
+            return {"quick": False, "pending": False}
+        try:
+            pending = runtime.pending_change()
+        except Exception:
+            logger.debug("Pending change unavailable for channel %s", channel_number, exc_info=True)
+            pending = None
+        if pending is None:
+            return {"quick": True, "pending": False}
+        local = pending["effective_utc"].astimezone()
+        when = local.strftime("%I:%M %p").lstrip("0")
+        return {"quick": True, "pending": True, "afterTitle": pending["after_title"],
+                "at": ("about " + when) if pending.get("approximate") else when,
+                "effectiveMs": int(pending["effective_utc"].timestamp() * 1000)}
+
+    @Slot(int, result="QVariantMap")
+    def restartChannel(self, channel_number: int) -> dict[str, object]:
+        """Start a quick channel over from its first program, on purpose."""
+        number = int(channel_number)
+        record = next((item for item in self._broadcaster.records if item.channel_number == number), None)
+        if record is None:
+            return {"ok": False, "message": f"Channel {number} was not found."}
+        if record.definition.programming.mode not in ("sequential", "shuffle"):
+            return {"ok": False, "message": "Only Sequential and Shuffle channels can restart from the beginning."}
+        try:
+            from .media_resilience import _resolved_runtime
+            self._runtime_store.restart_channel(number)
+            runtime = _resolved_runtime(record.definition, self._library, self._runtime_store,
+                                        persistent_when_complete=True, verify_files=True)
+            if runtime is None:
+                return {"ok": False, "message": "This channel has no playable media right now."}
+            self._reload_lineup(prepared={number: runtime})
+            self.refreshBroadcaster()
+        except (BroadcasterError, ChannelRuntimeError, GuideError, OSError, PlaybackError, ValueError) as exc:
+            return self._error(exc)
+        return {"ok": True, "message": f"Channel {record.definition.display_number} restarted from its first program."}
+
+    @Slot(result=str)
+    def takeMigrationNotice(self) -> str:
+        """One-time message for channels that restarted when upgrading from Beta 1."""
+        from .channel_revisions import mark_notices_shown, pending_notices
+        try:
+            notices = pending_notices(self._runtime_store)
+            if not notices:
+                return ""
+            mark_notices_shown(self._runtime_store)
+        except Exception:
+            return ""
+        numbers = [str(item["channelNumber"]) for item in notices]
+        names = "Channel " + numbers[0] if len(numbers) == 1 else "Channels " + ", ".join(numbers[:-1]) + " and " + numbers[-1]
+        verb = "its" if len(numbers) == 1 else "their"
+        return (f"{names}: {verb} lineup changed under Beta 1, so {'it' if len(numbers) == 1 else 'they'} "
+                "restarted from the beginning. Channels won't restart on their own any more.")
 
     @Slot(int, result="QVariantMap")
     def deleteChannel(self, channel_number: int) -> dict[str, object]:

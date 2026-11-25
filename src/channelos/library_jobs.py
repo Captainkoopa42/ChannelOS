@@ -1,8 +1,11 @@
 """Read-only source preflight, before any index mutation is authorized."""
+import logging
 from pathlib import Path
 from PySide6.QtCore import QObject, Signal, Slot
 from .scanner import MediaScanner, ScanCancelled
 from .probe import NullMediaProbe
+
+logger = logging.getLogger(__name__)
 
 
 class SourcePreflightWorker(QObject):
@@ -30,6 +33,7 @@ class SourcePreflightWorker(QObject):
         except ScanCancelled:
             self.cancelled.emit()
         except Exception as exc:
+            logger.warning('Library preflight failed', exc_info=True)
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()

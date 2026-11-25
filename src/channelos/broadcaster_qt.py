@@ -5,7 +5,6 @@ import sys
 import threading
 import time
 from contextlib import contextmanager
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -300,6 +299,7 @@ class BroadcasterCouchController(CouchController):
                 try:
                     now_next = self._service.now_next(number)
                 except Exception:
+                    logger.debug('Now/Next unavailable for channel %s', number, exc_info=True)
                     channel["nowTitle"] = ""
                     channel["nextTitle"] = ""
                     continue
@@ -1230,6 +1230,7 @@ class BroadcasterCouchController(CouchController):
                 return ""
             mark_notices_shown(self._runtime_store)
         except Exception:
+            logger.warning('Upgrade notice could not be read', exc_info=True)
             return ""
         numbers = [str(item["channelNumber"]) for item in notices]
         names = "Channel " + numbers[0] if len(numbers) == 1 else "Channels " + ", ".join(numbers[:-1]) + " and " + numbers[-1]

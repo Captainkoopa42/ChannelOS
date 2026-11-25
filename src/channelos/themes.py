@@ -241,7 +241,7 @@ class ThemeStore:
     def load(self) -> list[CustomTheme]:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
+        except (OSError, ValueError):  # ValueError covers bad JSON and bad encoding (e.g. UTF-16)
             return []
         items = raw.get("themes", []) if isinstance(raw, dict) else []
         themes, seen = [], set()

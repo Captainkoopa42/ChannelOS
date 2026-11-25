@@ -1,6 +1,7 @@
 """Serialized background channel mutations with a GUI checkpoint before commit."""
 from __future__ import annotations
 
+import logging
 import copy
 import tempfile
 import threading
@@ -15,6 +16,8 @@ from .performance import operation
 from .runtime import RuntimeStore
 from .runtime_jobs import release_runtime
 from .runtime_snapshot import channel_snapshot, restore_channel_snapshot
+
+logger = logging.getLogger(__name__)
 
 
 class MutationCancelled(Exception):
@@ -158,6 +161,7 @@ class ChannelMutationWorker(QObject):
         except MutationCancelled:
             self.cancelled.emit()
         except Exception as exc:
+            logger.warning('Channel preparation failed', exc_info=True)
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
@@ -281,6 +285,7 @@ def install_channel_operations_support(module):
                 self._mutation_state(active=False, phase='complete', cancellable=False, message=message)
                 self.channelMutationCompleted.emit(response)
             except Exception as exc:
+                logger.warning('Channel change could not be applied; restoring', exc_info=True)
                 if runtime is not None and self._actions.runtime.channels.get(runtime.channel_number) is not runtime and runtime.break_store is not None:
                     runtime.break_store.close()
                 payload['error'] = str(exc)
@@ -301,6 +306,7 @@ def install_channel_operations_support(module):
                 self._restore_mutation_playback()
                 self.refreshBroadcaster()
             except Exception as recovery:
+                logger.error('Channel restore after a failed change also failed', exc_info=True)
                 message += ' Recovery: ' + str(recovery)
             self._mutation_state(active=False, phase='failed', cancellable=False, message=message)
             self.channelMutationCompleted.emit({'ok': False, 'kind': self._channel_mutation['kind'],

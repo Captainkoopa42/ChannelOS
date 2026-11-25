@@ -59,7 +59,7 @@ from .settings import (
     SettingsStore,
 )
 from .television import TelevisionSession
-from .profiles import PROFILE_IDS, PROFILE_NAMES, VOLUME_LIMITS, ProfileStore, valid_pin
+from .profiles import PROFILE_IDS, PROFILE_NAMES, VOLUME_LIMITS, ProfileStore
 from .themes import (
     CUSTOM_PREFIX,
     PRESETS,

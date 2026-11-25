@@ -140,6 +140,7 @@ def run_first_run_setup(data_directory: str | Path) -> int:
             temporary.write_text(json.dumps({'root': summary['root']}), encoding='utf-8')
             temporary.replace(path)
         except Exception as exc:
+            logger.error('Portable setup could not open', exc_info=True)
             QMessageBox.critical(None, 'Setup could not open', str(exc))
             return 6
         return FIRST_RUN_OPEN_PORTABLE

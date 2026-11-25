@@ -59,7 +59,7 @@ from .settings import (
     SettingsStore,
 )
 from .television import TelevisionSession
-from .profiles import PROFILE_IDS, PROFILE_NAMES, VOLUME_LIMITS, ProfileStore
+from .profiles import PROFILE_IDS, PROFILE_NAMES, VOLUME_LIMITS, PinThrottle, ProfileStore
 from .themes import (
     CUSTOM_PREFIX,
     PRESETS,
@@ -221,6 +221,7 @@ class CouchController(QObject):
         self._theme_store = ThemeStore(self._settings_store.path.parent / "themes")
         self._profile_store = ProfileStore(self._settings_store.path.parent / "profiles.json")
         self._profiles = self._profile_store.load()
+        self._pin_throttle = PinThrottle()
         if self._profile_channel_filter() is not None:
             self._actions.set_channel_filter(self._profile_channel_filter())
             self._service = self._actions.service
@@ -1752,8 +1753,14 @@ class CouchController(QObject):
         """The PIN pad: the right PIN leaves a locked profile for Home."""
         if not self._profiles.current.locked:
             return {"ok": True, "message": ""}
+        wait = self._pin_throttle.seconds_left()
+        if wait:
+            return {"ok": False, "message": f"Too many wrong PINs. Try again in {wait} seconds."}
         if not self._profiles.check_pin(str(pin)):
-            return {"ok": False, "message": "Wrong PIN"}
+            self._pin_throttle.record_failure()
+            wait = self._pin_throttle.seconds_left()
+            return {"ok": False, "message": f"Wrong PIN. Try again in {wait} seconds." if wait else "Wrong PIN"}
+        self._pin_throttle.record_success()
         from dataclasses import replace as dc_replace
         name = self._profiles.current.name
         try:

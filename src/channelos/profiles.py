@@ -15,9 +15,10 @@ import hashlib
 import hmac
 import json
 import os
+import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 PROFILE_IDS = ("home", "kids", "daycare", "lobby")
 PROFILE_NAMES = {"home": "Home", "kids": "Kids", "daycare": "Daycare", "lobby": "Lobby"}
@@ -120,6 +121,40 @@ def _is_hex(value: str) -> bool:
     except ValueError:
         return False
     return True
+
+
+class PinThrottle:
+    """Slow down guessing on the PIN pad.
+
+    A four-digit PIN has only 10,000 values, so a patient child could try
+    them all. The first few mistakes are free; after that each wrong PIN
+    starts a cooldown that doubles up to five minutes. A right PIN resets it.
+    Kept in memory only: it is a speed bump, not a vault.
+    """
+
+    FREE_ATTEMPTS = 5
+    FIRST_COOLDOWN = 30.0
+    MAX_COOLDOWN = 300.0
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._failures = 0
+        self._blocked_until = 0.0
+
+    def seconds_left(self) -> int:
+        remaining = self._blocked_until - self._clock()
+        return max(0, int(remaining + 0.999))
+
+    def record_failure(self) -> None:
+        self._failures += 1
+        extra = self._failures - self.FREE_ATTEMPTS
+        if extra > 0:
+            cooldown = min(self.MAX_COOLDOWN, self.FIRST_COOLDOWN * 2 ** (extra - 1))
+            self._blocked_until = self._clock() + cooldown
+
+    def record_success(self) -> None:
+        self._failures = 0
+        self._blocked_until = 0.0
 
 
 def valid_pin(pin: str) -> bool:

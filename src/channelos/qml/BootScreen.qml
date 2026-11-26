@@ -208,6 +208,7 @@ Item {
             // Antennas spring behind the hop (they lag the body).
             Image {
                 objectName: "bootMascot_antenna_left"
+                readonly property bool assetReady: status === Image.Ready
                 source: Qt.resolvedUrl("../assets/mascot/antenna_left.png")
                 anchors.fill: parent
                 smooth: true
@@ -220,6 +221,7 @@ Item {
             }
             Image {
                 objectName: "bootMascot_antenna_right"
+                readonly property bool assetReady: status === Image.Ready
                 source: Qt.resolvedUrl("../assets/mascot/antenna_right.png")
                 anchors.fill: parent
                 smooth: true
@@ -232,6 +234,7 @@ Item {
             }
             Image {
                 objectName: "bootMascot_body"
+                readonly property bool assetReady: status === Image.Ready
                 source: Qt.resolvedUrl("../assets/mascot/body.png")
                 anchors.fill: parent
                 smooth: true

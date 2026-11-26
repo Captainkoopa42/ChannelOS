@@ -125,8 +125,7 @@ def test_every_loading_style_renders_without_qml_warnings(style: str) -> None:
                 image = item.findChild(QObject, f"bootMascot_{layer}")
                 assert image is not None, layer
                 assert image.property("visible"), layer
-                status = image.property("status")
-                assert getattr(status, "value", status) == 1, layer  # Image.Ready
+                assert image.property("assetReady") is True, layer
             assert mascot.property("hop") == 0
             assert mascot.property("landing") == 0
             beat = mascot.property("beat")

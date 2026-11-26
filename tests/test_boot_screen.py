@@ -114,10 +114,29 @@ def test_every_loading_style_renders_without_qml_warnings(style: str) -> None:
         if directory:
             Path(directory).mkdir(parents=True, exist_ok=True)
             window.grabWindow().save(str(Path(directory) / f"boot-{style}.png"))
-        # Reduced Motion swaps the dancing TV for the fill bar.
+        # Reduced Motion preserves the selected style and freezes mascot motion.
         item.setProperty("reducedMotion", True)
         app.processEvents()
-        assert item.property("effectiveStyle") == ("bar" if style == "tv" else style)
+        assert item.property("effectiveStyle") == style
+        assert [name for name in visible if item.findChild(QObject, name).property("visible")] == [expected]
+        if style == "tv":
+            mascot = item.findChild(QObject, "bootTv")
+            for layer in ("body", "antenna_left", "antenna_right"):
+                image = item.findChild(QObject, f"bootMascot_{layer}")
+                assert image is not None, layer
+                assert image.property("visible"), layer
+                status = image.property("status")
+                assert getattr(status, "value", status) == 1, layer  # Image.Ready
+            assert mascot.property("hop") == 0
+            assert mascot.property("landing") == 0
+            beat = mascot.property("beat")
+            for _ in range(10):
+                app.processEvents()
+                time.sleep(0.02)
+            assert mascot.property("beat") == beat
+            item.setProperty("reducedMotion", False)
+            app.processEvents()
+            assert mascot.property("visible")
         window.close()
         del item, component
         app.processEvents()

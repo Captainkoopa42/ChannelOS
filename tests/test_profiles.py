@@ -10,7 +10,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from channelos.control import ControlCommand, ControlIntent
-from channelos.profiles import DEFAULTS, ProfileStore, valid_pin
+from channelos.profiles import DEFAULTS, PinThrottle, ProfileStore, valid_pin
 
 QML = Path(__file__).resolve().parents[1] / "src" / "channelos" / "qml"
 
@@ -107,6 +107,43 @@ def test_kids_profile_filters_channels_and_needs_the_pin_to_leave(tmp_path: Path
         assert controller.unlockProfile("4321")["ok"]
     finally:
         controller.stop()
+
+
+def test_pin_pad_cools_down_after_repeated_wrong_guesses(tmp_path: Path) -> None:
+    app, controller = _fixture(tmp_path)
+    try:
+        assert controller.setProfilePin("4321")["ok"]
+        assert controller.updateProfile("kids", json.dumps({"channels": [7]}))["ok"]
+        assert controller.activateProfile("kids")["ok"]
+        clock = [1000.0]
+        controller._pin_throttle = PinThrottle(clock=lambda: clock[0])
+
+        for _ in range(PinThrottle.FREE_ATTEMPTS):
+            assert controller.unlockProfile("0000")["message"] == "Wrong PIN"
+        assert "30 seconds" in controller.unlockProfile("0000")["message"]
+        # Even the right PIN waits out the cooldown, so guessing cannot race it.
+        blocked = controller.unlockProfile("4321")
+        assert not blocked["ok"] and "Too many" in blocked["message"]
+        assert controller.profile["id"] == "kids"
+
+        clock[0] += 31
+        assert controller.unlockProfile("4321")["ok"]
+        assert controller.profile["id"] == "home"
+    finally:
+        controller.stop()
+
+
+def test_pin_throttle_doubles_and_caps() -> None:
+    clock = [0.0]
+    throttle = PinThrottle(clock=lambda: clock[0])
+    waits = []
+    for _ in range(PinThrottle.FREE_ATTEMPTS + 6):
+        throttle.record_failure()
+        waits.append(throttle.seconds_left())
+    assert waits[:PinThrottle.FREE_ATTEMPTS] == [0] * PinThrottle.FREE_ATTEMPTS
+    assert waits[PinThrottle.FREE_ATTEMPTS:] == [30, 60, 120, 240, 300, 300]
+    throttle.record_success()
+    assert throttle.seconds_left() == 0
 
 
 def _router(tmp_path: Path, profile: str, changes: dict):

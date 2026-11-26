@@ -1,4 +1,5 @@
 """Cancellable worker bridge. Planner drafts never run expensive work on Qt."""
+import logging
 import copy
 import json
 import threading
@@ -12,6 +13,8 @@ from PySide6.QtWidgets import QFileDialog
 
 from .broadcast_planner.engine import PlannerCancelled
 from .broadcast_planner.service import PlannerService
+
+logger = logging.getLogger(__name__)
 
 
 class _Task(QObject):
@@ -32,6 +35,7 @@ class _Task(QObject):
             pass
         except Exception as exc:
             if not self.cancel.is_set():
+                logger.warning('Planner %s failed', self.action, exc_info=True)
                 self.result.emit(self.generation,self.action,json.dumps({'ok':False,'message':str(exc)}))
         finally:
             self.finished.emit()

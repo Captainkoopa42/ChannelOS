@@ -10,6 +10,7 @@ from bisect import bisect_right
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .ad_breaks import PlannedAd
 from .ad_break_engine import (
@@ -25,6 +26,9 @@ from .storage import (
     configure_sqlite_connection,
     prepare_database,
 )
+
+if TYPE_CHECKING:
+    from .channel_revisions import RevisionTimeline
 
 logger = logging.getLogger(__name__)
 
@@ -1547,7 +1551,7 @@ def _revision_timeline(channel: ResolvedChannel, revisions) -> "RevisionTimeline
                     for item in channel.library.list_cached_media():
                         cached.setdefault(item.asset.asset_id, item)
                 except Exception:
-                    pass
+                    logger.warning('Cached media lookup failed; revision items may show as unavailable', exc_info=True)
         return cached.get(asset_id)
 
     timelines = [SequentialTimeline(resolve_lineup(revision.lineup, available, lookup)) for revision in revisions]
@@ -2348,7 +2352,8 @@ class TelevisionRuntime:
                     revision_at = getattr(channel.timeline, "revision_at", None)
                     revision = revision_at(at).revision if revision_at else None
                 except Exception:
-                    pass   # the clock itself is what matters; the labels are a bonus
+                    # the clock itself is what matters; the labels are a bonus
+                    logger.debug('Viewer labels unavailable', exc_info=True)
             self.store.save_viewer(self.current_channel, self._viewer, now=now,
                                    asset_id=asset_id, revision=revision)
 

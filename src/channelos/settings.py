@@ -328,7 +328,7 @@ class SettingsStore:
     def load(self) -> CouchSettings:
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
+        except (OSError, ValueError):  # ValueError covers bad JSON and bad encoding (e.g. UTF-16)
             return CouchSettings()
         if not isinstance(raw, dict):
             return CouchSettings()

@@ -144,6 +144,7 @@ class SetupWorker(QObject):
                     broadcaster._deferred_startup = True
                     self.ready.emit((library, store, broadcaster))
         except Exception as exc:
+            logger.error('Startup could not open the setup', exc_info=True)
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
@@ -211,6 +212,7 @@ class DataWorker(QObject):
                         remaining.append(release_runtime(runtime))
                 self.completed.emit(remaining)
         except Exception as exc:
+            logger.error('Startup could not load the remaining channels', exc_info=True)
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
@@ -531,6 +533,7 @@ def launch(module, paths, db, state_db, channels_dir, *, windowed=False):
                 self.changed.emit()
                 window.close()
             except Exception as exc:
+                logger.error('Startup could not hand over to the couch window', exc_info=True)
                 self.failed(str(exc))
 
         @Slot(str)

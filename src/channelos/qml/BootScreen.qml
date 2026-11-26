@@ -13,9 +13,8 @@ Item {
     property real progress: 0
     property string message: "Tuning in…"
     property bool running: visible
-    readonly property string effectiveStyle: reducedMotion && loadingStyle === "tv" ? "bar" : loadingStyle
+    readonly property string effectiveStyle: loadingStyle
     readonly property real shownProgress: Math.max(0, Math.min(1, progress))
-    readonly property url mascotBase: Qt.resolvedUrl("../assets/mascot/")
 
     Rectangle {
         anchors.fill: parent
@@ -50,7 +49,7 @@ Item {
         Timer {
             interval: boot.reducedMotion ? 400 : 70
             repeat: true
-            running: boot.running && boot.showStatic
+            running: boot.running && boot.showStatic && !boot.reducedMotion
             onTriggered: noise.frame = (noise.frame + 1 + Math.floor(Math.random() * 3)) % 12
         }
     }
@@ -171,13 +170,13 @@ Item {
         property int beats: 0
         SequentialAnimation {
             loops: Animation.Infinite
-            running: dance.visible && boot.running
+            running: dance.visible && boot.running && !boot.reducedMotion
             // One hop every two beats of the boot jig (160 BPM).
             NumberAnimation { target: dance; property: "beat"; from: 0; to: 1; duration: 750 }
             ScriptAction { script: dance.beats += 1 }
         }
-        readonly property real hop: Math.sin(beat * Math.PI)                       // 0..1..0
-        readonly property real landing: Math.max(0, 1 - beat / 0.18)               // squash after landing
+        readonly property real hop: boot.reducedMotion ? 0 : Math.sin(beat * Math.PI)                       // 0..1..0
+        readonly property real landing: boot.reducedMotion ? 0 : Math.max(0, 1 - beat / 0.18)               // squash after landing
         readonly property real swayTarget: (beats % 2 === 0 ? 1 : -1)
 
         // Shadow shrinks as the TV rises.
@@ -195,9 +194,9 @@ Item {
             id: tv
             width: dance.size
             height: dance.size
-            x: dance.swayTarget * dance.size * 0.035 * Math.sin(dance.beat * Math.PI)
+            x: dance.swayTarget * dance.size * 0.035 * dance.hop
             y: -dance.size * 0.16 * dance.hop
-            rotation: dance.swayTarget * 5 * Math.sin(dance.beat * Math.PI)
+            rotation: dance.swayTarget * 5 * dance.hop
             transformOrigin: Item.Bottom
             transform: Scale {
                 origin.x: tv.width / 2
@@ -208,29 +207,32 @@ Item {
 
             // Antennas spring behind the hop (they lag the body).
             Image {
-                source: boot.mascotBase + "antenna_left.png"
+                objectName: "bootMascot_antenna_left"
+                source: Qt.resolvedUrl("../assets/mascot/antenna_left.png")
                 anchors.fill: parent
                 smooth: true
                 mipmap: false
                 transform: Rotation {
                     origin.x: 240 * dance.unit
                     origin.y: 110 * dance.unit
-                    angle: -14 * Math.sin((dance.beat - 0.18) * Math.PI * 2)
+                    angle: boot.reducedMotion ? 0 : -14 * Math.sin((dance.beat - 0.18) * Math.PI * 2)
                 }
             }
             Image {
-                source: boot.mascotBase + "antenna_right.png"
+                objectName: "bootMascot_antenna_right"
+                source: Qt.resolvedUrl("../assets/mascot/antenna_right.png")
                 anchors.fill: parent
                 smooth: true
                 mipmap: false
                 transform: Rotation {
                     origin.x: 272 * dance.unit
                     origin.y: 110 * dance.unit
-                    angle: 14 * Math.sin((dance.beat - 0.3) * Math.PI * 2)
+                    angle: boot.reducedMotion ? 0 : 14 * Math.sin((dance.beat - 0.3) * Math.PI * 2)
                 }
             }
             Image {
-                source: boot.mascotBase + "body.png"
+                objectName: "bootMascot_body"
+                source: Qt.resolvedUrl("../assets/mascot/body.png")
                 anchors.fill: parent
                 smooth: true
                 mipmap: false
@@ -249,7 +251,7 @@ Item {
                     radius: 3 * dance.unit
                     color: Theme.v("#061633")
                     opacity: 0.78 * (1 - lit)
-                    Behavior on opacity { NumberAnimation { duration: 240 } }
+                    Behavior on opacity { enabled: !boot.reducedMotion; NumberAnimation { duration: 240 } }
                 }
             }
             // Power light blinks to the beat.
@@ -260,7 +262,7 @@ Item {
                 height: 12 * dance.unit
                 radius: 4 * dance.unit
                 color: Theme.v("#0a2a0a")
-                opacity: dance.beats % 2 === 0 ? 0 : 0.75
+                opacity: boot.reducedMotion || dance.beats % 2 === 0 ? 0 : 0.75
             }
         }
 
